@@ -1,0 +1,13 @@
+services:
+  simkeeper:
+    build: .
+    container_name: simkeeper
+    ports:
+      - "3000:3000"
+    environment:
+      PUID: 1000
+      PGID: 1000
+      SIMKEEPER_COOKIE_SECURE: "false"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
