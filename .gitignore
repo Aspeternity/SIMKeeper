@@ -1,0 +1,10 @@
+node_modules
+.next
+.env
+.env.local
+npm-debug.log*
+data/*.db
+data/*.db-*
+data/.session-secret
+data/backups/*
+!data/backups/.gitkeep
