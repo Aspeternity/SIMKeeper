@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createSession, getAdminCount, verifyCredentials } from "@/lib/auth";
+import { authenticate, createSession, getAdminCount } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +21,7 @@ export async function POST(request: NextRequest) {
 
   const username = String(formData.get("username") ?? "").trim();
   const password = String(formData.get("password") ?? "");
-  const user = await verifyCredentials(username, password);
+  const user = await authenticate(username, password);
 
   if (!user) return redirectTo(request, "/login", "用户名或密码错误");
 
