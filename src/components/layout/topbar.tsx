@@ -1,5 +1,4 @@
 import { Bell, LogOut } from "lucide-react";
-import { logoutAction } from "@/actions/auth";
 import { Button } from "@/components/ui/button";
 
 export function Topbar({ username }: { username: string }) {
@@ -17,8 +16,8 @@ export function Topbar({ username }: { username: string }) {
           <div className="text-sm font-medium">{username}</div>
           <div className="text-xs text-slate-400">Administrator</div>
         </div>
-        <form action={logoutAction}>
-          <Button variant="secondary" className="gap-2">
+        <form action="/api/auth/logout" method="post">
+          <Button variant="secondary" className="gap-2" type="submit">
             <LogOut className="h-4 w-4" />
             <span className="hidden sm:inline">退出</span>
           </Button>

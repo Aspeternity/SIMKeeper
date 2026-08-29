@@ -1,6 +1,5 @@
 import { LogIn, Smartphone } from "lucide-react";
 import { redirect } from "next/navigation";
-import { loginAction } from "@/actions/auth";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -40,11 +39,11 @@ export default async function LoginPage({
 
           {error ? (
             <div className="mb-5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">
-              {decodeURIComponent(error)}
+              {error}
             </div>
           ) : null}
 
-          <form action={loginAction} className="space-y-4">
+          <form action="/api/auth/login" method="post" className="space-y-4">
             <label className="block space-y-2">
               <span className="text-sm font-medium">用户名</span>
               <Input name="username" autoComplete="username" required />
