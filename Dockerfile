@@ -8,6 +8,7 @@ RUN npm install
 
 FROM node:22-bookworm-slim AS builder
 WORKDIR /app
+ENV SIMKEEPER_BUILD_TIME=true
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
