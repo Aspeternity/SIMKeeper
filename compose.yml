@@ -1,0 +1,20 @@
+services:
+  simkeeper:
+    image: ghcr.io/aspeternity/simkeeper:latest
+    container_name: simkeeper
+    ports:
+      - "3000:3000"
+    environment:
+      PUID: 1000
+      PGID: 1000
+      # 直接通过 HTTP :3000 访问时保持 false；经 HTTPS 反代后可改为 true。
+      SIMKEEPER_COOKIE_SECURE: "false"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
