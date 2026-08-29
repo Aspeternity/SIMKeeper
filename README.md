@@ -73,7 +73,7 @@ http://HOST:3000
 → Dashboard
 ```
 
-只有 smoke test 通过后，才会构建并发布 `linux/amd64` 与 `linux/arm64` 镜像到 GHCR。
+只有 smoke test 通过后，才会发布经过验证的 `linux/amd64` 镜像到 GHCR。alpha 开发阶段优先保证 x86_64 部署与迭代速度；ARM64 会在功能稳定后改为独立构建任务，避免 QEMU 编译 `better-sqlite3` 拖慢每次提交。
 
 工作流同时启用了 concurrency；有新提交时会取消同分支旧构建，避免旧提交晚完成后覆盖 `latest`。
 
