@@ -5,6 +5,10 @@ import { Topbar } from "@/components/layout/topbar";
 import { Card } from "@/components/ui/card";
 import { getCurrentUser, hasAdmin } from "@/lib/auth";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 function AuthGate({ mode }: { mode: "setup" | "login" }) {
   const needsSetup = mode === "setup";
 

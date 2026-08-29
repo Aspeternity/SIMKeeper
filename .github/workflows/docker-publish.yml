@@ -45,7 +45,7 @@ jobs:
       - name: Smoke test authentication flow
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
 
           container="simkeeper-smoke"
           tmp="$(mktemp -d)"
@@ -59,6 +59,34 @@ jobs:
           }
           trap cleanup EXIT
 
+          dump_state() {
+            echo "----- container logs -----"
+            docker logs "$container" 2>&1 || true
+            echo "----- response headers -----"
+            cat "$headers" 2>/dev/null || true
+            echo "----- cookie jar -----"
+            cat "$cookies" 2>/dev/null || true
+            for file in "$tmp"/*.html; do
+              [ -f "$file" ] || continue
+              echo "----- $file -----"
+              head -c 4000 "$file" || true
+              echo
+            done
+          }
+
+          fail() {
+            echo "::error::$1"
+            dump_state
+            exit 1
+          }
+
+          expect_header() {
+            local pattern="$1"
+            local description="$2"
+            grep -Eiq "$pattern" "$headers" || fail "$description"
+          }
+
+          echo "[1/7] Starting disposable SIMKeeper container"
           mkdir -p "$tmp/data"
           docker run -d \
             --name "$container" \
@@ -67,63 +95,74 @@ jobs:
             -e PUID="$(id -u)" \
             -e PGID="$(id -g)" \
             -v "$tmp/data:/app/data" \
-            simkeeper:smoke >/dev/null
+            simkeeper:smoke >/dev/null || fail "Unable to start smoke-test container"
 
+          echo "[2/7] Waiting for health endpoint"
           ready=0
-          for _ in $(seq 1 30); do
-            if curl -fsS "$base/api/health" >/dev/null; then
+          for _ in $(seq 1 40); do
+            if curl -fsS --max-time 2 "$base/api/health" >"$tmp/health.json" 2>/dev/null; then
               ready=1
               break
             fi
             sleep 1
           done
+          [ "$ready" -eq 1 ] || fail "SIMKeeper did not become healthy"
+          cat "$tmp/health.json"
+          echo
 
-          if [ "$ready" -ne 1 ]; then
-            docker logs "$container"
-            exit 1
-          fi
+          echo "[3/7] Verifying fresh instance setup page"
+          status="$(curl -sS --max-time 5 -o "$tmp/setup.html" -w '%{http_code}' "$base/setup")" || fail "GET /setup failed"
+          [ "$status" = "200" ] || fail "GET /setup returned HTTP $status"
+          grep -q '创建管理员账户' "$tmp/setup.html" || fail "Fresh /setup page does not show administrator creation form"
 
-          status="$(curl -sS -o "$tmp/setup.html" -w '%{http_code}' "$base/setup")"
-          test "$status" = "200"
-
-          curl -sS -D "$headers" -o /dev/null -c "$cookies" \
+          echo "[4/7] Creating administrator and validating session cookie"
+          : > "$headers"
+          curl -sS --max-time 10 -D "$headers" -o /dev/null -c "$cookies" \
             -X POST \
             --data-urlencode 'username=smokeadmin' \
             --data-urlencode 'password=smoke-test-123' \
             --data-urlencode 'confirmPassword=smoke-test-123' \
-            "$base/api/auth/setup"
+            "$base/api/auth/setup" || fail "POST /api/auth/setup failed"
+          expect_header '^HTTP/[^ ]+ 303' "Setup did not return HTTP 303"
+          expect_header '^location: /[[:space:]]*$' "Setup Location header is not relative root /"
+          expect_header '^set-cookie: simkeeper_session=' "Setup response did not set session cookie"
+          grep -q 'simkeeper_session' "$cookies" || fail "Session cookie was not written to curl cookie jar"
 
-          grep -Eq '^HTTP/[^ ]+ 303' "$headers"
-          grep -Eiq '^location: /[[:space:]]*$' "$headers"
-          grep -Eiq '^set-cookie: simkeeper_session=' "$headers"
+          echo "[5/7] Verifying authenticated Dashboard"
+          status="$(curl -sS --max-time 5 -b "$cookies" -o "$tmp/dashboard.html" -w '%{http_code}' "$base/")" || fail "Authenticated GET / failed"
+          [ "$status" = "200" ] || fail "Authenticated GET / returned HTTP $status"
+          grep -q '你的号码生命周期' "$tmp/dashboard.html" || fail "Authenticated Dashboard content was not rendered"
+          if grep -q '需要登录' "$tmp/dashboard.html" || grep -q '需要完成首次初始化' "$tmp/dashboard.html"; then
+            fail "Authenticated Dashboard incorrectly rendered an auth gate"
+          fi
 
-          status="$(curl -sS -b "$cookies" -o "$tmp/dashboard.html" -w '%{http_code}' "$base/")"
-          test "$status" = "200"
-          grep -q '你的号码生命周期' "$tmp/dashboard.html"
-
+          echo "[6/7] Logging out and verifying unauthenticated gate"
           : > "$headers"
-          curl -sS -D "$headers" -o /dev/null -b "$cookies" -c "$cookies" \
-            -X POST "$base/api/auth/logout"
-          grep -Eq '^HTTP/[^ ]+ 303' "$headers"
-          grep -Eiq '^location: /login[[:space:]]*$' "$headers"
+          curl -sS --max-time 5 -D "$headers" -o /dev/null -b "$cookies" -c "$cookies" \
+            -X POST "$base/api/auth/logout" || fail "POST /api/auth/logout failed"
+          expect_header '^HTTP/[^ ]+ 303' "Logout did not return HTTP 303"
+          expect_header '^location: /login[[:space:]]*$' "Logout Location header is not /login"
 
-          status="$(curl -sS -b "$cookies" -o "$tmp/gate.html" -w '%{http_code}' "$base/")"
-          test "$status" = "200"
-          grep -q '需要登录' "$tmp/gate.html"
+          status="$(curl -sS --max-time 5 -b "$cookies" -o "$tmp/gate.html" -w '%{http_code}' "$base/")" || fail "Unauthenticated GET / failed"
+          [ "$status" = "200" ] || fail "Unauthenticated GET / returned HTTP $status"
+          grep -q '需要登录' "$tmp/gate.html" || fail "Logged-out Dashboard did not render login gate"
 
+          echo "[7/7] Logging back in and verifying Dashboard again"
           : > "$headers"
-          curl -sS -D "$headers" -o /dev/null -b "$cookies" -c "$cookies" \
+          curl -sS --max-time 10 -D "$headers" -o /dev/null -b "$cookies" -c "$cookies" \
             -X POST \
             --data-urlencode 'username=smokeadmin' \
             --data-urlencode 'password=smoke-test-123' \
-            "$base/api/auth/login"
-          grep -Eq '^HTTP/[^ ]+ 303' "$headers"
-          grep -Eiq '^location: /[[:space:]]*$' "$headers"
-          grep -Eiq '^set-cookie: simkeeper_session=' "$headers"
+            "$base/api/auth/login" || fail "POST /api/auth/login failed"
+          expect_header '^HTTP/[^ ]+ 303' "Login did not return HTTP 303"
+          expect_header '^location: /[[:space:]]*$' "Login Location header is not relative root /"
+          expect_header '^set-cookie: simkeeper_session=' "Login response did not set session cookie"
 
-          status="$(curl -sS -b "$cookies" -o "$tmp/dashboard-after-login.html" -w '%{http_code}' "$base/")"
-          test "$status" = "200"
-          grep -q '你的号码生命周期' "$tmp/dashboard-after-login.html"
+          status="$(curl -sS --max-time 5 -b "$cookies" -o "$tmp/dashboard-after-login.html" -w '%{http_code}' "$base/")" || fail "Post-login GET / failed"
+          [ "$status" = "200" ] || fail "Post-login GET / returned HTTP $status"
+          grep -q '你的号码生命周期' "$tmp/dashboard-after-login.html" || fail "Dashboard was not rendered after login"
+
+          echo "Authentication smoke test passed."
 
       - name: Log in to GHCR
         uses: docker/login-action@v3

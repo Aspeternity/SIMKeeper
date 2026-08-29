@@ -1,6 +1,10 @@
 import { AlertTriangle, CheckCircle2, Clock3, Plus, Smartphone } from "lucide-react";
 import { Card } from "@/components/ui/card";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 const stats = [
   { label: "号码总数", value: "0", icon: Smartphone },
   { label: "正常", value: "0", icon: CheckCircle2 },
