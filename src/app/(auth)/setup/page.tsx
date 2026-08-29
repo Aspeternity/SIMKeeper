@@ -1,9 +1,9 @@
+import Link from "next/link";
 import { ShieldCheck, Smartphone } from "lucide-react";
-import { redirect } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { getAdminCount } from "@/lib/auth";
+import { hasAdmin } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +12,7 @@ export default async function SetupPage({
 }: {
   searchParams: Promise<{ error?: string }>;
 }) {
-  if (getAdminCount() > 0) redirect("/login");
+  const initialized = hasAdmin();
   const { error } = await searchParams;
 
   return (
@@ -33,32 +33,49 @@ export default async function SetupPage({
               首次初始化
             </div>
             <h2 className="text-xl font-semibold">创建管理员账户</h2>
-            <p className="mt-1 text-sm leading-6 text-slate-500">
-              账户信息保存在本机 SQLite 数据库中，不需要在 Compose 里预设用户名和密码。
-            </p>
           </div>
 
-          {error ? (
-            <div className="mb-5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">
-              {error}
+          {initialized ? (
+            <div className="space-y-4">
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm leading-6 text-emerald-800">
+                此实例已经完成初始化，不会再次创建管理员账户。
+              </div>
+              <Link
+                href="/login"
+                className="inline-flex h-10 w-full items-center justify-center rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800"
+              >
+                前往登录
+              </Link>
             </div>
-          ) : null}
+          ) : (
+            <>
+              <p className="mb-5 text-sm leading-6 text-slate-500">
+                账户信息保存在本机 SQLite 数据库中，不需要在 Compose 里预设用户名和密码。
+              </p>
 
-          <form action="/api/auth/setup" method="post" className="space-y-4">
-            <label className="block space-y-2">
-              <span className="text-sm font-medium">用户名</span>
-              <Input name="username" autoComplete="username" placeholder="admin" minLength={3} maxLength={32} required />
-            </label>
-            <label className="block space-y-2">
-              <span className="text-sm font-medium">密码</span>
-              <Input name="password" type="password" autoComplete="new-password" placeholder="至少 8 个字符" minLength={8} required />
-            </label>
-            <label className="block space-y-2">
-              <span className="text-sm font-medium">确认密码</span>
-              <Input name="confirmPassword" type="password" autoComplete="new-password" minLength={8} required />
-            </label>
-            <Button className="mt-2 w-full" type="submit">创建管理员</Button>
-          </form>
+              {error ? (
+                <div className="mb-5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">
+                  {error}
+                </div>
+              ) : null}
+
+              <form action="/api/auth/setup" method="post" className="space-y-4">
+                <label className="block space-y-2">
+                  <span className="text-sm font-medium">用户名</span>
+                  <Input name="username" autoComplete="username" placeholder="admin" minLength={3} maxLength={32} required />
+                </label>
+                <label className="block space-y-2">
+                  <span className="text-sm font-medium">密码</span>
+                  <Input name="password" type="password" autoComplete="new-password" placeholder="至少 8 个字符" minLength={8} required />
+                </label>
+                <label className="block space-y-2">
+                  <span className="text-sm font-medium">确认密码</span>
+                  <Input name="confirmPassword" type="password" autoComplete="new-password" minLength={8} required />
+                </label>
+                <Button className="mt-2 w-full" type="submit">创建管理员</Button>
+              </form>
+            </>
+          )}
         </Card>
       </div>
     </main>

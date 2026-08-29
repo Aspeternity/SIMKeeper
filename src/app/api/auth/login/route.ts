@@ -1,6 +1,13 @@
-import { NextRequest } from "next/server";
-import { authenticate, createSession, getAdminCount } from "@/lib/auth";
+import { NextRequest, NextResponse } from "next/server";
+import {
+  authenticate,
+  createSessionToken,
+  getSessionCookieOptions,
+  hasAdmin,
+  SESSION_COOKIE_NAME,
+} from "@/lib/auth";
 
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function redirectTo(pathname: string, error?: string) {
@@ -8,14 +15,19 @@ function redirectTo(pathname: string, error?: string) {
   if (error) search.set("error", error);
   const location = search.size > 0 ? `${pathname}?${search.toString()}` : pathname;
 
-  return new Response(null, {
+  return new NextResponse(null, {
     status: 303,
-    headers: { Location: location },
+    headers: {
+      Location: location,
+      "Cache-Control": "no-store",
+    },
   });
 }
 
 export async function POST(request: NextRequest) {
-  if (getAdminCount() === 0) return redirectTo("/setup");
+  if (!hasAdmin()) {
+    return redirectTo("/setup", "请先创建管理员账户");
+  }
 
   let formData: FormData;
   try {
@@ -28,8 +40,12 @@ export async function POST(request: NextRequest) {
   const password = String(formData.get("password") ?? "");
   const user = await authenticate(username, password);
 
-  if (!user) return redirectTo("/login", "用户名或密码错误");
+  if (!user) {
+    return redirectTo("/login", "用户名或密码错误");
+  }
 
-  await createSession(user);
-  return redirectTo("/");
+  const token = await createSessionToken(user);
+  const response = redirectTo("/");
+  response.cookies.set(SESSION_COOKIE_NAME, token, getSessionCookieOptions());
+  return response;
 }

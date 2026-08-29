@@ -1,9 +1,9 @@
+import Link from "next/link";
 import { LogIn, Smartphone } from "lucide-react";
-import { redirect } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { getAdminCount, getCurrentUser } from "@/lib/auth";
+import { hasAdmin } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -12,9 +12,7 @@ export default async function LoginPage({
 }: {
   searchParams: Promise<{ error?: string }>;
 }) {
-  if (getAdminCount() === 0) redirect("/setup");
-  const currentUser = await getCurrentUser();
-  if (currentUser) redirect("/");
+  const initialized = hasAdmin();
   const { error } = await searchParams;
 
   return (
@@ -37,23 +35,39 @@ export default async function LoginPage({
             <h2 className="text-xl font-semibold">登录 SIMKeeper</h2>
           </div>
 
-          {error ? (
-            <div className="mb-5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">
-              {error}
+          {!initialized ? (
+            <div className="space-y-4">
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-sm leading-6 text-amber-800">
+                当前实例还没有管理员账户，请先完成首次初始化。
+              </div>
+              <Link
+                href="/setup"
+                className="inline-flex h-10 w-full items-center justify-center rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800"
+              >
+                前往初始化
+              </Link>
             </div>
-          ) : null}
+          ) : (
+            <>
+              {error ? (
+                <div className="mb-5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">
+                  {error}
+                </div>
+              ) : null}
 
-          <form action="/api/auth/login" method="post" className="space-y-4">
-            <label className="block space-y-2">
-              <span className="text-sm font-medium">用户名</span>
-              <Input name="username" autoComplete="username" required />
-            </label>
-            <label className="block space-y-2">
-              <span className="text-sm font-medium">密码</span>
-              <Input name="password" type="password" autoComplete="current-password" required />
-            </label>
-            <Button className="mt-2 w-full" type="submit">登录</Button>
-          </form>
+              <form action="/api/auth/login" method="post" className="space-y-4">
+                <label className="block space-y-2">
+                  <span className="text-sm font-medium">用户名</span>
+                  <Input name="username" autoComplete="username" required />
+                </label>
+                <label className="block space-y-2">
+                  <span className="text-sm font-medium">密码</span>
+                  <Input name="password" type="password" autoComplete="current-password" required />
+                </label>
+                <Button className="mt-2 w-full" type="submit">登录</Button>
+              </form>
+            </>
+          )}
         </Card>
       </div>
     </main>
