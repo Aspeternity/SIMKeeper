@@ -35,6 +35,7 @@ export default function ServicesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
+  const [simFilter, setSimFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("active");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [importanceFilter, setImportanceFilter] = useState("all");
@@ -63,6 +64,7 @@ export default function ServicesPage() {
   const filtered = useMemo(() => {
     const search = query.trim().toLowerCase();
     return bindings.filter((binding) => {
+      const matchesSim = simFilter === "all" || binding.simId === Number(simFilter);
       const matchesStatus = statusFilter === "all" || binding.status === statusFilter;
       const matchesCategory = categoryFilter === "all" || binding.category === categoryFilter;
       const matchesImportance = importanceFilter === "all" || binding.importance === importanceFilter;
@@ -74,9 +76,14 @@ export default function ServicesPage() {
         binding.carrierName,
         binding.notes || "",
       ].some((value) => value.toLowerCase().includes(search));
-      return matchesStatus && matchesCategory && matchesImportance && matchesSearch;
+      return matchesSim && matchesStatus && matchesCategory && matchesImportance && matchesSearch;
     });
-  }, [bindings, categoryFilter, importanceFilter, query, statusFilter]);
+  }, [bindings, categoryFilter, importanceFilter, query, simFilter, statusFilter]);
+
+  const selectedSim = useMemo(
+    () => (simFilter === "all" ? null : sims.find((sim) => sim.id === Number(simFilter)) ?? null),
+    [simFilter, sims],
+  );
 
   async function deleteBinding(binding: BoundServiceRecord) {
     if (!window.confirm(`确定删除“${binding.serviceName}”的绑定记录吗？如果只是已经换绑，建议改为“已迁移”以保留历史。`)) return;
@@ -97,7 +104,7 @@ export default function ServicesPage() {
         <div>
           <div className="flex items-center gap-2 text-sm font-medium text-slate-500"><Link2 className="h-4 w-4" />号码关系</div>
           <h2 className="mt-2 text-2xl font-semibold tracking-tight">绑定服务</h2>
-          <p className="mt-1 text-sm text-slate-500">记录每个号码绑定的账号和业务。号码准备停用或换号前，可以先检查关键绑定是否已经迁移。</p>
+          <p className="mt-1 text-sm text-slate-500">记录每个号码绑定的账号和业务。可以按号码快速查看某张卡当前和历史上的全部绑定关系。</p>
         </div>
         <button type="button" onClick={() => setEditing(null)} disabled={!sims.length} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"><Plus className="h-4 w-4" />新增绑定</button>
       </div>
@@ -108,9 +115,20 @@ export default function ServicesPage() {
         <div className="flex flex-col gap-3 border-b p-4 xl:flex-row xl:items-center xl:justify-between">
           <div>
             <div className="font-medium">绑定关系</div>
-            <div className="mt-1 text-xs text-slate-400">显示 {filtered.length} / {bindings.length} 条记录</div>
+            <div className="mt-1 text-xs text-slate-400">
+              显示 {filtered.length} / {bindings.length} 条记录
+              {selectedSim ? ` · 当前号码：${selectedSim.label}${selectedSim.phoneNumber ? ` · ${selectedSim.phoneNumber}` : ""}` : ""}
+            </div>
           </div>
           <div className="flex flex-col gap-2 md:flex-row md:flex-wrap xl:justify-end">
+            <select value={simFilter} onChange={(event) => setSimFilter(event.target.value)} className="h-10 max-w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-600 outline-none focus:border-slate-400 md:max-w-64">
+              <option value="all">全部号码</option>
+              {sims.map((sim) => (
+                <option key={sim.id} value={sim.id}>
+                  {sim.label}{sim.phoneNumber ? ` · ${sim.phoneNumber}` : ""}
+                </option>
+              ))}
+            </select>
             <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-600 outline-none focus:border-slate-400">
               <option value="all">全部状态</option>
               {SERVICE_BINDING_STATUSES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
@@ -142,7 +160,7 @@ export default function ServicesPage() {
           <div className="flex min-h-72 flex-col items-center justify-center px-6 text-center">
             <Link2 className="h-6 w-6 text-slate-300" />
             <div className="mt-3 text-sm font-medium text-slate-600">{bindings.length ? "没有匹配的绑定记录" : "还没有绑定服务"}</div>
-            <p className="mt-1 text-xs text-slate-400">添加后，可以在号码详情和这里统一查看。</p>
+            <p className="mt-1 text-xs text-slate-400">{selectedSim ? `“${selectedSim.label}”在当前筛选条件下没有绑定记录。` : "添加后，可以在号码详情和这里统一查看。"}</p>
           </div>
         ) : (
           <div className="divide-y divide-slate-100">
