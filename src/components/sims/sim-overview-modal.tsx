@@ -565,7 +565,7 @@ export function SimOverviewModal({
           <section className="space-y-3 border-t pt-6">
             <SectionHeader
               title="实名信息"
-              description="备份号码开户 / KYC 时使用的实名主体和证件资料。"
+              description="备份号码开户 / KYC 时使用的实名主体、证件或辅助材料。"
               icon={<UserRoundCheck className="h-4 w-4" />}
               open={identityOpen}
               onToggle={() => setIdentityOpen((value) => !value)}
@@ -581,9 +581,9 @@ export function SimOverviewModal({
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                   <DetailItem label="实名状态" value={getIdentityStatusLabel(sim.identityStatus)} />
                   <DetailItem label="实名姓名 / 主体" value={sim.identityName || "未记录"} />
-                  <DetailItem label="证件类型" value={getIdentityDocumentTypeLabel(sim.identityDocumentType)} />
-                  <DetailItem label="证件号码" value={sim.identityDocumentNumber || "未记录"} />
-                  <DetailItem label="证件国家 / 地区" value={sim.identityCountryCode ? countryLabel(sim.identityCountryCode) : "未记录"} />
+                  <DetailItem label="证件 / 材料类型" value={getIdentityDocumentTypeLabel(sim.identityDocumentType, sim.identityDocumentTypeCustom)} />
+                  <DetailItem label="证件 / 材料编号" value={sim.identityDocumentNumber || "未记录"} />
+                  <DetailItem label="证件 / 材料国家 / 地区" value={sim.identityCountryCode ? countryLabel(sim.identityCountryCode) : "未记录"} />
                 </div>
                 {sim.identityNotes ? <CopyBlock label="实名备注" value={sim.identityNotes} /> : null}
               </>
