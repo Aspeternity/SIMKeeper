@@ -4,18 +4,17 @@ import { z } from "zod";
 import { db } from "@/db";
 import { carriers } from "@/db/schema";
 import { getCurrentUser } from "@/lib/auth";
+import { getCountryRegion } from "@/lib/countries";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const carrierSchema = z.object({
   name: z.string().trim().min(1, "请输入运营商名称").max(80, "运营商名称不能超过 80 个字符"),
-  country: z.string().trim().min(1, "请输入国家或地区").max(80, "国家或地区不能超过 80 个字符"),
   countryCode: z
     .string()
     .trim()
-    .min(2, "请输入国家/地区代码")
-    .max(8, "国家/地区代码不能超过 8 个字符")
+    .length(2, "请选择国家或地区")
     .transform((value) => value.toUpperCase()),
   website: z.string().trim().max(200, "官网地址不能超过 200 个字符").optional().default(""),
   notes: z.string().trim().max(500, "备注不能超过 500 个字符").optional().default(""),
@@ -27,6 +26,36 @@ async function requireUser() {
     return NextResponse.json({ error: "登录状态已失效，请重新登录" }, { status: 401 });
   }
   return null;
+}
+
+function parseCarrierPayload(body: unknown) {
+  const parsed = carrierSchema.safeParse(body);
+  if (!parsed.success) {
+    return {
+      error: NextResponse.json(
+        { error: parsed.error.issues[0]?.message ?? "提交的数据不正确" },
+        { status: 400 },
+      ),
+      data: null,
+    };
+  }
+
+  const region = getCountryRegion(parsed.data.countryCode);
+  if (!region) {
+    return {
+      error: NextResponse.json({ error: "请选择有效的国家或地区" }, { status: 400 }),
+      data: null,
+    };
+  }
+
+  return {
+    error: null,
+    data: {
+      ...parsed.data,
+      country: region.name,
+      countryCode: region.code,
+    },
+  };
 }
 
 export async function GET() {
@@ -46,10 +75,8 @@ export async function POST(request: NextRequest) {
   const unauthorized = await requireUser();
   if (unauthorized) return unauthorized;
 
-  const parsed = carrierSchema.safeParse(await request.json().catch(() => null));
-  if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "提交的数据不正确" }, { status: 400 });
-  }
+  const parsed = parseCarrierPayload(await request.json().catch(() => null));
+  if (parsed.error || !parsed.data) return parsed.error;
 
   const duplicate = db
     .select({ id: carriers.id })
@@ -87,10 +114,8 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: "无效的运营商 ID" }, { status: 400 });
   }
 
-  const parsed = carrierSchema.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "提交的数据不正确" }, { status: 400 });
-  }
+  const parsed = parseCarrierPayload(body);
+  if (parsed.error || !parsed.data) return parsed.error;
 
   const current = db.select({ id: carriers.id }).from(carriers).where(eq(carriers.id, id)).get();
   if (!current) {
