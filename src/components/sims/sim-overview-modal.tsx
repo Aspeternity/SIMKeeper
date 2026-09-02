@@ -11,12 +11,18 @@ import {
   Pencil,
   ReceiptText,
   Smartphone,
+  UserRoundCheck,
   X,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { ModalPortal } from "@/components/ui/modal-portal";
 import { COUNTRY_REGIONS } from "@/lib/countries";
-import { getSimStatusLabel, getSimTypeLabel } from "@/lib/sim-options";
+import {
+  getIdentityDocumentTypeLabel,
+  getIdentityStatusLabel,
+  getSimStatusLabel,
+  getSimTypeLabel,
+} from "@/lib/sim-options";
 import type { SimRecord } from "@/lib/sim-types";
 import {
   DESTINATION_SPECIAL_OPTIONS,
@@ -461,6 +467,7 @@ export function SimOverviewModal({
   const [loadingTariff, setLoadingTariff] = useState(Boolean(sim.tariffId));
   const [tariffError, setTariffError] = useState("");
   const [basicOpen, setBasicOpen] = useState(true);
+  const [identityOpen, setIdentityOpen] = useState(true);
   const [tariffOpen, setTariffOpen] = useState(true);
 
   useEffect(() => {
@@ -551,6 +558,34 @@ export function SimOverviewModal({
                   <DetailItem label="状态" value={getSimStatusLabel(sim.status)} />
                 </div>
                 {sim.notes ? <CopyBlock label="号码备注" value={sim.notes} /> : null}
+              </>
+            ) : null}
+          </section>
+
+          <section className="space-y-3 border-t pt-6">
+            <SectionHeader
+              title="实名信息"
+              description="备份号码开户 / KYC 时使用的实名主体和证件资料。"
+              icon={<UserRoundCheck className="h-4 w-4" />}
+              open={identityOpen}
+              onToggle={() => setIdentityOpen((value) => !value)}
+              action={(
+                <button type="button" onClick={onEdit} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50">
+                  <Pencil className="h-3.5 w-3.5" />编辑实名信息
+                </button>
+              )}
+            />
+
+            {identityOpen ? (
+              <>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <DetailItem label="实名状态" value={getIdentityStatusLabel(sim.identityStatus)} />
+                  <DetailItem label="实名姓名 / 主体" value={sim.identityName || "未记录"} />
+                  <DetailItem label="证件类型" value={getIdentityDocumentTypeLabel(sim.identityDocumentType)} />
+                  <DetailItem label="证件号码" value={sim.identityDocumentNumber || "未记录"} />
+                  <DetailItem label="证件国家 / 地区" value={sim.identityCountryCode ? countryLabel(sim.identityCountryCode) : "未记录"} />
+                </div>
+                {sim.identityNotes ? <CopyBlock label="实名备注" value={sim.identityNotes} /> : null}
               </>
             ) : null}
           </section>
