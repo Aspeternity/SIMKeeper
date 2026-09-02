@@ -27,6 +27,7 @@
 - Standard billing-unit catalogs for calls, SMS and data usage
 - Compatibility display for legacy freeform tariff text until it is reconfirmed in structured form
 - Structured plan overview fields for prepaid/postpaid type, recurring fee, billing period, administration fee and auto-renew status
+- One-time SIM/eSIM purchase cost stored separately from recurring fees
 - Structured included allowances for voice minutes, SMS units and data volume
 - Dedicated unlimited-in-plan tariff state for unlimited voice/data entitlements
 - Plan fee/type/renewal summaries directly on the number list
@@ -36,6 +37,7 @@
 - Package/pass tariff rules with price, included allowance, validity period and renewal behavior
 - Country/region selectors for destination and roaming rules, including home/current/other destination shortcuts
 - Conditional incoming-SMS summaries that surface as `按条件` on the number list
+- Optional custom tariff items for carrier-specific fees not covered by the common template
 
 ### Changed
 
@@ -58,6 +60,11 @@
 - Existing databases are upgraded in place with tariff-plan metadata columns without rebuilding SIM or tariff records
 - Complex carrier tariffs such as network-specific SMS rates, roaming destination tiers and regional data passes no longer need to be flattened into notes
 - Conditional tariff storage is additive, so existing default-rate records continue working without migration or data loss
+- Tariff editor now defaults to a compact common template with only local calls/SMS/data and roaming incoming SMS visible
+- International and roaming service rows are now opt-in extension items instead of being permanently expanded
+- Advanced conditional rules and optional passes are hidden behind per-service `特殊规则` controls
+- Monetary values and billing units now appear after the numeric input rather than before it
+- Tariff modal is rendered through a document-body portal with background scroll locking to remove the top-edge gap and keep header/footer stable
 
 ## v0.1.0-alpha.2
 
