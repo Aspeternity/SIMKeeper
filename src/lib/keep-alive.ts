@@ -15,8 +15,14 @@ export const KEEP_ALIVE_ACTIVITY_TYPES = [
   { value: "other", label: "其他记录" },
 ] as const;
 
+export const KEEP_ALIVE_DUE_DATE_SOURCES = [
+  { value: "sim_validity", label: "跟随号码有效期" },
+  { value: "independent", label: "独立日期" },
+] as const;
+
 export type KeepAliveIntervalUnit = (typeof KEEP_ALIVE_INTERVAL_UNITS)[number]["value"];
 export type KeepAliveActivityType = (typeof KEEP_ALIVE_ACTIVITY_TYPES)[number]["value"];
+export type KeepAliveDueDateSource = (typeof KEEP_ALIVE_DUE_DATE_SOURCES)[number]["value"];
 
 export type KeepAliveRuleStatus = "disabled" | "unscheduled" | "ok" | "due_soon" | "grace" | "overdue";
 
@@ -27,6 +33,22 @@ export function getKeepAliveActivityLabel(value: string) {
 export function getKeepAliveIntervalLabel(value: number, unit: string) {
   const unitLabel = KEEP_ALIVE_INTERVAL_UNITS.find((item) => item.value === unit)?.label ?? unit;
   return `${value} ${unitLabel}`;
+}
+
+export function getKeepAliveDueDateSourceLabel(value: string) {
+  return KEEP_ALIVE_DUE_DATE_SOURCES.find((item) => item.value === value)?.label ?? value;
+}
+
+export function resolveKeepAliveRuleDueDate({
+  dueDateSource,
+  nextDueDate,
+  simValidUntil,
+}: {
+  dueDateSource: string | null | undefined;
+  nextDueDate: string | null | undefined;
+  simValidUntil: string | null | undefined;
+}) {
+  return dueDateSource === "sim_validity" ? simValidUntil || null : nextDueDate || null;
 }
 
 export function parseQualifyingActions(value: string | null | undefined): string[] {
