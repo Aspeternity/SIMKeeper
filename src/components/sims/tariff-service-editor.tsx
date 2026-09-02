@@ -177,8 +177,8 @@ function ConditionalRuleEditor({
     <div className="rounded-2xl border border-indigo-100 bg-indigo-50/30 p-3.5">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <div className="text-xs font-semibold text-indigo-700">条件资费 #{index + 1}</div>
-          <div className="mt-0.5 text-[11px] text-slate-400">相同条件类型按“任一”匹配，不同条件类型需要同时满足。</div>
+          <div className="text-xs font-semibold text-indigo-700">资费规则 / 通行证 #{index + 1}</div>
+          <div className="mt-0.5 text-[11px] text-slate-400">同类条件按“任一”匹配，不同条件类型同时满足；通行证可不设置条件。</div>
         </div>
         <button type="button" onClick={onRemove} className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs text-rose-600 transition hover:bg-rose-50">
           <Trash2 className="h-3.5 w-3.5" />删除规则
@@ -186,6 +186,11 @@ function ConditionalRuleEditor({
       </div>
 
       <div className="mt-3 space-y-2">
+        {value.conditions.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-indigo-200 bg-white/70 px-3 py-2.5 text-xs text-slate-500">
+            无适用条件：该通行证作为此项目的全局可选产品记录。如只适用于特定地区或目的地，可继续添加条件。
+          </div>
+        ) : null}
         {value.conditions.map((condition, conditionIndex) => (
           <ConditionEditor
             key={`${conditionIndex}-${condition.type}`}
@@ -193,11 +198,11 @@ function ConditionalRuleEditor({
             value={condition}
             onChange={(next) => updateCondition(conditionIndex, next)}
             onRemove={() => onChange({ ...value, conditions: value.conditions.filter((_, itemIndex) => itemIndex !== conditionIndex) })}
-            removable={value.conditions.length > 1}
+            removable={value.conditions.length > 1 || isPackage}
           />
         ))}
         <button type="button" onClick={addCondition} className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-medium text-indigo-700 transition hover:bg-indigo-50">
-          <Plus className="h-3.5 w-3.5" />添加条件
+          <Plus className="h-3.5 w-3.5" />添加适用条件
         </button>
       </div>
 
@@ -223,6 +228,11 @@ function ConditionalRuleEditor({
                 validityValue: "",
                 validityUnit: "",
                 autoRenew: "unknown",
+                conditions: mode === "package" ? [] : value.conditions.length ? value.conditions : [{
+                  type: (getConditionTypesForService(serviceCode)[0]?.value ?? "time_window") as TariffRuleConditionType,
+                  value: defaultConditionValue((getConditionTypesForService(serviceCode)[0]?.value ?? "time_window") as TariffRuleConditionType),
+                  value2: "",
+                }],
               });
             }}
             className={selectClass}
@@ -340,7 +350,7 @@ export function TariffServiceEditor({
         className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-dashed border-indigo-200 px-3 text-xs font-medium text-indigo-700 transition hover:border-indigo-300 hover:bg-indigo-50"
       >
         <Plus className="h-3.5 w-3.5" />
-        添加条件资费
+        添加条件资费 / 通行证
       </button>
     </div>
   );
