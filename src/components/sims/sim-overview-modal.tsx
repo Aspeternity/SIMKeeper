@@ -1,8 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
+  Check,
+  ChevronDown,
   CircleDollarSign,
+  Copy,
   ExternalLink,
   Loader2,
   Pencil,
@@ -12,12 +15,16 @@ import {
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { ModalPortal } from "@/components/ui/modal-portal";
+import { COUNTRY_REGIONS } from "@/lib/countries";
 import { getSimStatusLabel, getSimTypeLabel } from "@/lib/sim-options";
 import type { SimRecord } from "@/lib/sim-types";
 import {
+  DESTINATION_SPECIAL_OPTIONS,
   getBillingUnitLabel,
   getRoamingAvailabilityLabel,
   getTariffRateModeLabel,
+  NETWORK_SCOPE_OPTIONS,
+  TARIFF_RULE_CONDITION_TYPES,
   TARIFF_SERVICES,
   type TariffServiceCode,
 } from "@/lib/tariff-options";
@@ -26,6 +33,37 @@ type TariffRate = {
   mode?: string;
   amount?: number | null;
   billingUnit?: string | null;
+};
+
+type TariffRuleCondition = {
+  type: string;
+  value: string;
+  value2?: string;
+};
+
+type TariffRule = {
+  id?: number;
+  label?: string | null;
+  mode?: string;
+  amount?: number | null;
+  billingUnit?: string | null;
+  packagePrice?: number | null;
+  packageAllowanceAmount?: number | null;
+  packageAllowanceUnit?: string | null;
+  validityValue?: number | null;
+  validityUnit?: string | null;
+  autoRenew?: string | null;
+  conditions?: TariffRuleCondition[];
+};
+
+type CustomTariffItem = {
+  id?: number;
+  label?: string | null;
+  kind?: string | null;
+  mode?: string | null;
+  amount?: number | null;
+  billingUnit?: string | null;
+  notes?: string | null;
 };
 
 type TariffDetail = {
@@ -44,7 +82,8 @@ type TariffDetail = {
   verifiedAt?: string | null;
   notes?: string | null;
   rates?: Record<string, TariffRate>;
-  rules?: Record<string, unknown[]>;
+  rules?: Record<string, TariffRule[]>;
+  customItems?: CustomTariffItem[];
 };
 
 const LOCAL_CODES: TariffServiceCode[] = [
@@ -95,31 +134,210 @@ function formatMoney(value: number | null | undefined, currency: string | null |
   return `${value} ${currency || ""}`.trim();
 }
 
-function rateText(tariff: TariffDetail | null, code: TariffServiceCode) {
+function stripBillingPrefix(value: string) {
+  return value.replace(/^每\s?/, "");
+}
+
+function baseRateText(tariff: TariffDetail | null, code: TariffServiceCode) {
   const rate = tariff?.rates?.[code];
   if (!rate) return "未记录";
 
-  const rules = tariff?.rules?.[code];
-  const ruleCount = Array.isArray(rules) ? rules.length : 0;
-  let value = getTariffRateModeLabel(rate.mode || "unknown");
-
   if (rate.mode === "charged" && rate.amount !== null && rate.amount !== undefined) {
     const unit = getBillingUnitLabel(rate.billingUnit);
-    value = `${rate.amount} ${tariff?.currencyCode || ""}${unit ? ` / ${unit.replace(/^每/, "")}` : ""}`.trim();
-  } else if (rate.mode === "included" && rate.amount !== null && rate.amount !== undefined) {
-    const unit = getBillingUnitLabel(rate.billingUnit);
-    value = `套餐内 ${rate.amount}${unit ? ` ${unit}` : ""}`;
+    return `${rate.amount} ${tariff?.currencyCode || ""}${unit ? ` / ${stripBillingPrefix(unit)}` : ""}`.trim();
   }
 
-  return ruleCount > 0 ? `${value} · ${ruleCount} 条特殊规则` : value;
+  if (rate.mode === "included" && rate.amount !== null && rate.amount !== undefined) {
+    const unit = getBillingUnitLabel(rate.billingUnit);
+    return `套餐内 ${rate.amount}${unit ? ` ${unit}` : ""}`;
+  }
+
+  return getTariffRateModeLabel(rate.mode || "unknown");
+}
+
+function countryLabel(code: string) {
+  const country = COUNTRY_REGIONS.find((item) => item.code === code);
+  return country ? `${country.name} · ${code}` : code;
+}
+
+function conditionValueText(condition: TariffRuleCondition) {
+  if (condition.type === "network_scope") {
+    return NETWORK_SCOPE_OPTIONS.find((item) => item.value === condition.value)?.label ?? condition.value;
+  }
+
+  if (condition.type === "destination") {
+    return DESTINATION_SPECIAL_OPTIONS.find((item) => item.value === condition.value)?.label ?? countryLabel(condition.value);
+  }
+
+  if (condition.type === "roaming_region") {
+    return condition.value === "OTHER" ? "其他国家 / 地区" : countryLabel(condition.value);
+  }
+
+  if (condition.type === "time_window") {
+    return condition.value2 ? `${condition.value}–${condition.value2}` : condition.value;
+  }
+
+  return condition.value;
+}
+
+function ruleConditionText(rule: TariffRule) {
+  const groups = new Map<string, string[]>();
+  for (const condition of rule.conditions ?? []) {
+    const values = groups.get(condition.type) ?? [];
+    const value = conditionValueText(condition);
+    if (!values.includes(value)) values.push(value);
+    groups.set(condition.type, values);
+  }
+
+  if (!groups.size) return "全局适用";
+
+  return Array.from(groups.entries())
+    .map(([type, values]) => {
+      const label = TARIFF_RULE_CONDITION_TYPES.find((item) => item.value === type)?.label ?? type;
+      return `${label}：${values.join(" / ")}`;
+    })
+    .join(" · ");
+}
+
+function ruleValueText(rule: TariffRule, currencyCode: string | null | undefined) {
+  if (rule.mode === "charged") {
+    const unit = getBillingUnitLabel(rule.billingUnit);
+    if (rule.amount === null || rule.amount === undefined) return "收费";
+    return `${rule.amount} ${currencyCode || ""}${unit ? ` / ${stripBillingPrefix(unit)}` : ""}`.trim();
+  }
+
+  if (rule.mode === "included") {
+    const unit = getBillingUnitLabel(rule.billingUnit);
+    return rule.amount === null || rule.amount === undefined
+      ? "套餐内包含"
+      : `套餐内 ${rule.amount}${unit ? ` ${unit}` : ""}`;
+  }
+
+  if (rule.mode === "package") {
+    const parts = [
+      `套餐 / 通行证 ${formatMoney(rule.packagePrice, currencyCode)}`,
+      rule.packageAllowanceAmount !== null && rule.packageAllowanceAmount !== undefined
+        ? `含 ${rule.packageAllowanceAmount} ${getBillingUnitLabel(rule.packageAllowanceUnit)}`.trim()
+        : "",
+      periodLabel(rule.validityValue, rule.validityUnit) ? `有效 ${periodLabel(rule.validityValue, rule.validityUnit)}` : "",
+      rule.autoRenew === "yes" ? "自动续订" : rule.autoRenew === "no" ? "不自动续订" : "",
+    ].filter(Boolean);
+    return parts.join(" · ");
+  }
+
+  return getTariffRateModeLabel(rule.mode || "unknown");
+}
+
+async function writeClipboard(value: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  document.execCommand("copy");
+  document.body.removeChild(textarea);
+}
+
+function CopyValue({
+  value,
+  className = "",
+  align = "left",
+}: {
+  value: string;
+  className?: string;
+  align?: "left" | "right";
+}) {
+  const [copied, setCopied] = useState(false);
+  const displayValue = value || "未记录";
+  const copyable = Boolean(value) && value !== "未记录" && value !== "未设置";
+
+  async function copy() {
+    if (!copyable) return;
+    try {
+      await writeClipboard(value);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => void copy()}
+      disabled={!copyable}
+      title={copyable ? "点击复制" : undefined}
+      className={`group inline-flex max-w-full items-center gap-1.5 break-words ${align === "right" ? "justify-end text-right" : "justify-start text-left"} ${copyable ? "cursor-copy transition hover:text-slate-950" : "cursor-default"} ${className}`}
+    >
+      <span className="min-w-0 break-words">{displayValue}</span>
+      {copyable ? copied ? (
+        <Check className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+      ) : (
+        <Copy className="h-3.5 w-3.5 shrink-0 text-slate-300 opacity-0 transition group-hover:opacity-100" />
+      ) : null}
+    </button>
+  );
 }
 
 function DetailItem({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-xl bg-slate-50 px-3.5 py-3">
       <div className="text-[11px] text-slate-400">{label}</div>
-      <div className="mt-1 break-words text-sm font-medium text-slate-700">{value || "未记录"}</div>
+      <CopyValue value={value} className="mt-1 text-sm font-medium text-slate-700" />
     </div>
+  );
+}
+
+function CopyBlock({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl bg-slate-50 px-4 py-3">
+      <div className="mb-1 text-[11px] text-slate-400">{label}</div>
+      <CopyValue value={value} className="text-sm leading-6 text-slate-600" />
+    </div>
+  );
+}
+
+function RuleCard({ rule, index, currencyCode }: { rule: TariffRule; index: number; currencyCode?: string | null }) {
+  const [copied, setCopied] = useState(false);
+  const label = rule.label || `特殊规则 ${index + 1}`;
+  const conditions = ruleConditionText(rule);
+  const value = ruleValueText(rule, currencyCode);
+  const copyText = `${label} · ${conditions} · ${value}`;
+
+  async function copy() {
+    try {
+      await writeClipboard(copyText);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => void copy()}
+      title="点击复制整条规则"
+      className="group w-full rounded-lg border border-slate-100 bg-slate-50/70 px-3 py-2 text-left transition hover:border-slate-200 hover:bg-slate-50"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <span className="text-[11px] font-medium text-slate-600">{label}</span>
+        <span className="flex items-center gap-1 text-right text-[11px] font-medium text-slate-700">
+          {value}
+          {copied ? <Check className="h-3 w-3 shrink-0 text-emerald-600" /> : <Copy className="h-3 w-3 shrink-0 text-slate-300 opacity-0 transition group-hover:opacity-100" />}
+        </span>
+      </div>
+      <div className="mt-1 text-[10px] leading-4 text-slate-400">{conditions}</div>
+    </button>
   );
 }
 
@@ -130,14 +348,83 @@ function RateGroup({ title, codes, tariff }: { title: string; codes: TariffServi
       <div className="divide-y divide-slate-100">
         {codes.map((code) => {
           const service = TARIFF_SERVICES.find((item) => item.code === code)!;
+          const rules = tariff?.rules?.[code] ?? [];
           return (
-            <div key={code} className="flex items-start justify-between gap-4 py-2.5 first:pt-0 last:pb-0">
-              <span className="text-xs text-slate-500">{service.label}</span>
-              <span className="max-w-[65%] text-right text-xs font-medium text-slate-700">{rateText(tariff, code)}</span>
+            <div key={code} className="py-3 first:pt-0 last:pb-0">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <span className="text-xs text-slate-500">{service.label}</span>
+                  {rules.length ? <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-medium text-slate-500">{rules.length} 条规则</span> : null}
+                </div>
+                <CopyValue value={baseRateText(tariff, code)} align="right" className="max-w-[65%] text-xs font-medium text-slate-700" />
+              </div>
+              {rules.length ? (
+                <div className="mt-2 space-y-1.5 border-l-2 border-slate-100 pl-2.5">
+                  {rules.map((rule, index) => (
+                    <RuleCard key={rule.id ?? `${code}-${index}`} rule={rule} index={index} currencyCode={tariff?.currencyCode} />
+                  ))}
+                </div>
+              ) : null}
             </div>
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function CustomItems({ tariff }: { tariff: TariffDetail }) {
+  const items = tariff.customItems ?? [];
+  if (!items.length) return null;
+
+  return (
+    <div className="rounded-2xl border border-slate-200 p-4">
+      <div className="mb-3 text-sm font-medium text-slate-800">其他自定义资费</div>
+      <div className="divide-y divide-slate-100">
+        {items.map((item, index) => {
+          const unit = getBillingUnitLabel(item.billingUnit);
+          const value = item.mode === "charged" && item.amount !== null && item.amount !== undefined
+            ? `${item.amount} ${tariff.currencyCode || ""}${unit ? ` / ${stripBillingPrefix(unit)}` : ""}`.trim()
+            : getTariffRateModeLabel(item.mode || "unknown");
+          const fullValue = item.notes ? `${value} · ${item.notes}` : value;
+          return (
+            <div key={item.id ?? index} className="flex items-start justify-between gap-4 py-2.5 first:pt-0 last:pb-0">
+              <span className="text-xs text-slate-500">{item.label || `自定义资费 ${index + 1}`}</span>
+              <CopyValue value={fullValue} align="right" className="max-w-[70%] text-xs font-medium text-slate-700" />
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function SectionHeader({
+  title,
+  description,
+  icon,
+  open,
+  onToggle,
+  action,
+}: {
+  title: string;
+  description?: string;
+  icon: ReactNode;
+  open: boolean;
+  onToggle: () => void;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+      <button type="button" onClick={onToggle} className="group flex min-w-0 flex-1 items-start gap-2 text-left" title={open ? "收起" : "展开"}>
+        <ChevronDown className={`mt-0.5 h-4 w-4 shrink-0 text-slate-400 transition-transform ${open ? "" : "-rotate-90"}`} />
+        <span className="mt-0.5 shrink-0 text-slate-400">{icon}</span>
+        <span className="min-w-0">
+          <span className="block font-medium text-slate-900">{title}</span>
+          {description ? <span className="mt-1 block text-xs font-normal leading-5 text-slate-400">{description}</span> : null}
+        </span>
+      </button>
+      {action}
     </div>
   );
 }
@@ -156,6 +443,8 @@ export function SimOverviewModal({
   const [tariff, setTariff] = useState<TariffDetail | null>(null);
   const [loadingTariff, setLoadingTariff] = useState(Boolean(sim.tariffId));
   const [tariffError, setTariffError] = useState("");
+  const [basicOpen, setBasicOpen] = useState(true);
+  const [tariffOpen, setTariffOpen] = useState(true);
 
   useEffect(() => {
     let active = true;
@@ -194,7 +483,7 @@ export function SimOverviewModal({
   }, [tariff]);
 
   return (
-    <ModalPortal>
+    <ModalPortal onBackdropClick={onClose}>
       <Card className="flex w-full max-w-5xl flex-col overflow-hidden shadow-2xl sm:max-h-[calc(100dvh-2rem)]">
         <div className="flex shrink-0 items-start justify-between gap-4 border-b bg-white px-5 py-4 sm:px-6">
           <div className="min-w-0">
@@ -206,11 +495,11 @@ export function SimOverviewModal({
               <h3 className="text-xl font-semibold text-slate-900">{sim.label}</h3>
               <span className={`rounded-md px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ${statusClass(sim.status)}`}>{getSimStatusLabel(sim.status)}</span>
             </div>
-            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-400">
-              <span>{sim.phoneNumber || "未填写手机号"}</span>
-              <span>{sim.carrierName}</span>
-              <span>{sim.country} · {sim.countryCode}</span>
-              <span>{getSimTypeLabel(sim.simType)}</span>
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400">
+              <CopyValue value={sim.phoneNumber || ""} className="text-xs text-slate-400" />
+              <CopyValue value={sim.carrierName} className="text-xs text-slate-400" />
+              <CopyValue value={`${sim.country} · ${sim.countryCode}`} className="text-xs text-slate-400" />
+              <CopyValue value={getSimTypeLabel(sim.simType)} className="text-xs text-slate-400" />
             </div>
           </div>
           <button type="button" onClick={onClose} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">
@@ -220,44 +509,50 @@ export function SimOverviewModal({
 
         <div className="min-h-0 flex-1 space-y-6 overflow-y-auto bg-white px-5 py-5 sm:px-6">
           <section className="space-y-3">
-            <div className="flex items-center gap-2">
-              <Smartphone className="h-4 w-4 text-slate-400" />
-              <h4 className="font-medium text-slate-900">基本信息</h4>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <DetailItem label="手机号 / MSISDN" value={sim.phoneNumber || "未记录"} />
-              <DetailItem label="运营商" value={`${sim.carrierName} · ${sim.country}`} />
-              <DetailItem label="SIM 类型" value={getSimTypeLabel(sim.simType)} />
-              <DetailItem label="ICCID" value={sim.iccid || "未记录"} />
-              <DetailItem label="余额" value={sim.balance === null ? "未记录" : `${sim.balance} ${sim.currencyCode || ""}`} />
-              <DetailItem label="激活日期" value={sim.activationDate || "未记录"} />
-              <DetailItem label="有效期至" value={sim.validUntil || "未设置"} />
-              <DetailItem label="状态" value={getSimStatusLabel(sim.status)} />
-            </div>
-            {sim.notes ? (
-              <div className="rounded-xl border border-slate-100 bg-slate-50/60 px-4 py-3 text-sm leading-6 text-slate-600">
-                <div className="mb-1 text-[11px] text-slate-400">号码备注</div>
-                {sim.notes}
-              </div>
+            <SectionHeader
+              title="基本信息"
+              icon={<Smartphone className="h-4 w-4" />}
+              open={basicOpen}
+              onToggle={() => setBasicOpen((value) => !value)}
+              action={(
+                <button type="button" onClick={onEdit} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50">
+                  <Pencil className="h-3.5 w-3.5" />编辑号码
+                </button>
+              )}
+            />
+
+            {basicOpen ? (
+              <>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <DetailItem label="手机号 / MSISDN" value={sim.phoneNumber || "未记录"} />
+                  <DetailItem label="运营商" value={`${sim.carrierName} · ${sim.country}`} />
+                  <DetailItem label="SIM 类型" value={getSimTypeLabel(sim.simType)} />
+                  <DetailItem label="ICCID" value={sim.iccid || "未记录"} />
+                  <DetailItem label="余额" value={sim.balance === null ? "未记录" : `${sim.balance} ${sim.currencyCode || ""}`} />
+                  <DetailItem label="激活日期" value={sim.activationDate || "未记录"} />
+                  <DetailItem label="有效期至" value={sim.validUntil || "未设置"} />
+                  <DetailItem label="状态" value={getSimStatusLabel(sim.status)} />
+                </div>
+                {sim.notes ? <CopyBlock label="号码备注" value={sim.notes} /> : null}
+              </>
             ) : null}
           </section>
 
           <section className="space-y-3 border-t pt-6">
-            <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-              <div>
-                <div className="flex items-center gap-2">
-                  <ReceiptText className="h-4 w-4 text-slate-400" />
-                  <h4 className="font-medium text-slate-900">资费概览</h4>
-                </div>
-                <p className="mt-1 text-xs text-slate-400">展示这张卡当前已记录的核心资费；特殊分档仍以资费编辑器为准。</p>
-              </div>
-              <button type="button" onClick={onEditTariff} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50">
-                <ReceiptText className="h-3.5 w-3.5" />
-                编辑资费
-              </button>
-            </div>
+            <SectionHeader
+              title="资费概览"
+              description="展示这张卡当前已记录的核心资费和特殊规则。"
+              icon={<ReceiptText className="h-4 w-4" />}
+              open={tariffOpen}
+              onToggle={() => setTariffOpen((value) => !value)}
+              action={(
+                <button type="button" onClick={onEditTariff} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50">
+                  <ReceiptText className="h-3.5 w-3.5" />编辑资费
+                </button>
+              )}
+            />
 
-            {loadingTariff ? (
+            {tariffOpen ? loadingTariff ? (
               <div className="flex min-h-36 items-center justify-center rounded-2xl border border-dashed border-slate-200 text-sm text-slate-400">
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />正在加载资费…
               </div>
@@ -281,20 +576,23 @@ export function SimOverviewModal({
                   <RateGroup title="国际漫游" codes={ROAMING_CODES} tariff={tariff} />
                 </div>
 
-                {tariff.usageSummary ? (
-                  <div className="rounded-xl bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600">
-                    <div className="mb-1 text-[11px] text-slate-400">使用结论</div>
-                    {tariff.usageSummary}
-                  </div>
-                ) : null}
+                <CustomItems tariff={tariff} />
+
+                {tariff.usageSummary ? <CopyBlock label="使用结论" value={tariff.usageSummary} /> : null}
 
                 {(tariff.notes || tariff.sourceUrl) ? (
-                  <div className="flex flex-col gap-2 rounded-xl border border-slate-100 px-4 py-3 text-xs text-slate-500 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="leading-5">{tariff.notes || "无额外资费备注"}</div>
+                  <div className="flex flex-col gap-3 rounded-xl border border-slate-100 px-4 py-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0 flex-1">
+                      <div className="mb-1 text-[11px] text-slate-400">资费备注</div>
+                      <CopyValue value={tariff.notes || "无额外资费备注"} className="text-xs leading-5 text-slate-500" />
+                    </div>
                     {tariff.sourceUrl ? (
-                      <a href={tariff.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex shrink-0 items-center gap-1 font-medium text-slate-700 hover:text-slate-950">
-                        查看资费来源 <ExternalLink className="h-3.5 w-3.5" />
-                      </a>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <CopyValue value={tariff.sourceUrl} className="text-xs font-medium text-slate-500" />
+                        <a href={tariff.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs font-medium text-slate-700 hover:text-slate-950">
+                          打开来源 <ExternalLink className="h-3.5 w-3.5" />
+                        </a>
+                      </div>
                     ) : null}
                   </div>
                 ) : null}
@@ -305,18 +603,13 @@ export function SimOverviewModal({
                 <div className="mt-2 text-sm font-medium text-slate-600">还没有录入资费</div>
                 <p className="mt-1 text-xs text-slate-400">录入后，这里会集中展示本地和漫游核心资费。</p>
               </div>
-            )}
+            ) : null}
           </section>
         </div>
 
         <div className="flex shrink-0 items-center justify-between gap-3 border-t bg-white px-5 py-4 sm:px-6">
           <div className="text-xs text-slate-400">创建于 {sim.createdAt.slice(0, 10)} · 更新于 {sim.updatedAt.slice(0, 10)}</div>
-          <div className="flex gap-2">
-            <button type="button" onClick={onClose} className="h-9 rounded-lg border px-3 text-xs font-medium text-slate-600 transition hover:bg-slate-50">关闭</button>
-            <button type="button" onClick={onEdit} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-slate-950 px-3 text-xs font-medium text-white transition hover:bg-slate-800">
-              <Pencil className="h-3.5 w-3.5" />编辑号码
-            </button>
-          </div>
+          <button type="button" onClick={onClose} className="h-9 rounded-lg border px-3 text-xs font-medium text-slate-600 transition hover:bg-slate-50">关闭</button>
         </div>
       </Card>
     </ModalPortal>
