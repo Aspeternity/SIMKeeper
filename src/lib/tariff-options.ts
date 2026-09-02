@@ -27,6 +27,7 @@ export const TARIFF_BILLING_UNITS = [
   { value: "per_sms", label: "每条", kind: "sms" },
   { value: "per_kb", label: "每 KB", kind: "data" },
   { value: "per_mb", label: "每 MB", kind: "data" },
+  { value: "per_100mb", label: "每 100 MB", kind: "data" },
   { value: "per_gb", label: "每 GB", kind: "data" },
   { value: "per_day", label: "每天", kind: "data" },
   { value: "per_session", label: "每次", kind: "data" },
