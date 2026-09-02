@@ -3,8 +3,9 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { ExternalLink, Loader2, Pencil, Plus, RadioTower, Search, Trash2, X } from "lucide-react";
 import { Card } from "@/components/ui/card";
+import { CountryRegionSelect } from "@/components/ui/country-region-select";
 import { Input } from "@/components/ui/input";
-import { COUNTRY_REGIONS, getCountryRegion } from "@/lib/countries";
+import { getCountryRegion } from "@/lib/countries";
 
 type Carrier = {
   id: number;
@@ -247,18 +248,18 @@ export default function CarriersPage() {
 
       {formOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-4 backdrop-blur-sm">
-          <Card className="w-full max-w-xl overflow-hidden shadow-2xl">
-            <div className="flex items-center justify-between border-b px-6 py-5">
+          <Card className="w-full max-w-xl overflow-visible shadow-2xl">
+            <div className="flex items-center justify-between rounded-t-2xl border-b bg-white px-6 py-5">
               <div>
                 <h3 className="font-semibold">{editing ? "编辑运营商" : "新增运营商"}</h3>
-                <p className="mt-1 text-xs text-slate-400">选择国家/地区后，SIMKeeper 会自动使用对应的 ISO 两位代码。</p>
+                <p className="mt-1 text-xs text-slate-400">选择或搜索国家/地区后，SIMKeeper 会自动使用对应的 ISO 两位代码。</p>
               </div>
               <button onClick={closeForm} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">
                 <X className="h-4 w-4" />
               </button>
             </div>
 
-            <form onSubmit={submit} className="space-y-4 p-6">
+            <form onSubmit={submit} className="space-y-4 rounded-b-2xl bg-white p-6">
               <label className="block space-y-1.5 text-sm">
                 <span className="font-medium text-slate-700">运营商名称</span>
                 <Input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="例如 Globe" autoFocus />
@@ -267,19 +268,11 @@ export default function CarriersPage() {
               <div className="grid gap-4 sm:grid-cols-[1fr_120px]">
                 <label className="space-y-1.5 text-sm">
                   <span className="font-medium text-slate-700">国家 / 地区</span>
-                  <select
+                  <CountryRegionSelect
                     value={form.countryCode}
-                    onChange={(event) => setForm({ ...form, countryCode: event.target.value })}
-                    required
-                    className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
-                  >
-                    <option value="">请选择国家 / 地区</option>
-                    {COUNTRY_REGIONS.map((region) => (
-                      <option key={region.code} value={region.code}>
-                        {region.name} ({region.code})
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(countryCode) => setForm({ ...form, countryCode })}
+                    disabled={saving}
+                  />
                 </label>
 
                 <label className="space-y-1.5 text-sm">
