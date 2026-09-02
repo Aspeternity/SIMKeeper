@@ -1,7 +1,6 @@
 export const SIM_TYPES = [
   { value: "physical", label: "实体 SIM" },
   { value: "esim", label: "eSIM" },
-  { value: "esim_adapter", label: "eSIM 卡 / 转接卡" },
 ] as const;
 
 export const SIM_STATUSES = [
