@@ -2,11 +2,19 @@
 
 import { FormEvent, useMemo, useState } from "react";
 import { getCountryCallingCode, parsePhoneNumberFromString, type CountryCode } from "libphonenumber-js";
-import { Loader2, X } from "lucide-react";
+import { Loader2, UserRoundCheck, X } from "lucide-react";
 import { Card } from "@/components/ui/card";
+import { CountryRegionSelect } from "@/components/ui/country-region-select";
 import { Input } from "@/components/ui/input";
 import { ModalPortal } from "@/components/ui/modal-portal";
-import { CURRENCIES, getDefaultCurrency, SIM_STATUSES, SIM_TYPES } from "@/lib/sim-options";
+import {
+  CURRENCIES,
+  getDefaultCurrency,
+  IDENTITY_DOCUMENT_TYPES,
+  IDENTITY_STATUSES,
+  SIM_STATUSES,
+  SIM_TYPES,
+} from "@/lib/sim-options";
 import type { CarrierRecord, SimRecord } from "@/lib/sim-types";
 
 type FormState = {
@@ -20,6 +28,12 @@ type FormState = {
   status: string;
   activationDate: string;
   validUntil: string;
+  identityStatus: string;
+  identityName: string;
+  identityDocumentType: string;
+  identityDocumentNumber: string;
+  identityCountryCode: string;
+  identityNotes: string;
   notes: string;
 };
 
@@ -55,6 +69,12 @@ function initialForm(carriers: CarrierRecord[], editing: SimRecord | null): Form
       status: editing.status,
       activationDate: editing.activationDate || "",
       validUntil: editing.validUntil || "",
+      identityStatus: editing.identityStatus || "unknown",
+      identityName: editing.identityName || "",
+      identityDocumentType: editing.identityDocumentType || "",
+      identityDocumentNumber: editing.identityDocumentNumber || "",
+      identityCountryCode: editing.identityCountryCode || "",
+      identityNotes: editing.identityNotes || "",
       notes: editing.notes || "",
     };
   }
@@ -71,6 +91,12 @@ function initialForm(carriers: CarrierRecord[], editing: SimRecord | null): Form
     status: "active",
     activationDate: "",
     validUntil: "",
+    identityStatus: "unknown",
+    identityName: "",
+    identityDocumentType: "",
+    identityDocumentNumber: "",
+    identityCountryCode: "",
+    identityNotes: "",
     notes: "",
   };
 }
@@ -127,7 +153,7 @@ export function SimEditorModal({ carriers, editing, onClose, onSaved }: { carrie
 
   return (
     <ModalPortal onBackdropClick={saving ? undefined : onClose}>
-      <Card className="w-full max-w-2xl overflow-hidden shadow-2xl">
+      <Card className="w-full max-w-3xl overflow-hidden shadow-2xl">
         <div className="flex items-center justify-between border-b bg-white px-6 py-5">
           <div>
             <h3 className="font-semibold">{editing ? "编辑号码" : "新增号码"}</h3>
@@ -222,9 +248,56 @@ export function SimEditorModal({ carriers, editing, onClose, onSaved }: { carrie
             </label>
           </div>
 
+          <section className="space-y-4 border-t pt-5">
+            <div className="flex items-start gap-2">
+              <UserRoundCheck className="mt-0.5 h-4 w-4 text-slate-400" />
+              <div>
+                <h4 className="text-sm font-medium text-slate-800">实名信息</h4>
+                <p className="mt-1 text-xs leading-5 text-slate-400">可选，用于备份号码当初的实名主体和证件资料。属于敏感信息，请确保 SIMKeeper 实例及备份文件访问安全。</p>
+              </div>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-[180px_1fr]">
+              <label className="space-y-1.5 text-sm">
+                <span className="font-medium text-slate-700">实名状态</span>
+                <select value={form.identityStatus} onChange={(event) => setForm({ ...form, identityStatus: event.target.value })} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100">
+                  {IDENTITY_STATUSES.map((status) => <option key={status.value} value={status.value}>{status.label}</option>)}
+                </select>
+              </label>
+              <label className="space-y-1.5 text-sm">
+                <span className="font-medium text-slate-700">实名姓名 / 主体</span>
+                <Input value={form.identityName} onChange={(event) => setForm({ ...form, identityName: event.target.value })} placeholder="个人姓名或企业主体名称" autoComplete="off" />
+              </label>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="space-y-1.5 text-sm">
+                <span className="font-medium text-slate-700">证件类型</span>
+                <select value={form.identityDocumentType} onChange={(event) => setForm({ ...form, identityDocumentType: event.target.value })} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100">
+                  <option value="">未记录</option>
+                  {IDENTITY_DOCUMENT_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
+                </select>
+              </label>
+              <label className="space-y-1.5 text-sm">
+                <span className="font-medium text-slate-700">证件号码</span>
+                <Input value={form.identityDocumentNumber} onChange={(event) => setForm({ ...form, identityDocumentNumber: event.target.value })} placeholder="可选" autoComplete="off" spellCheck={false} />
+              </label>
+            </div>
+
+            <div className="space-y-1.5 text-sm">
+              <span className="font-medium text-slate-700">证件国家 / 地区</span>
+              <CountryRegionSelect value={form.identityCountryCode} onChange={(identityCountryCode) => setForm({ ...form, identityCountryCode })} disabled={saving} />
+            </div>
+
+            <label className="block space-y-1.5 text-sm">
+              <span className="font-medium text-slate-700">实名备注</span>
+              <textarea value={form.identityNotes} onChange={(event) => setForm({ ...form, identityNotes: event.target.value })} placeholder="可记录实名渠道、证件版本、客服核验提示等" rows={2} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100" />
+            </label>
+          </section>
+
           <label className="block space-y-1.5 text-sm">
-            <span className="font-medium text-slate-700">备注</span>
-            <textarea value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} placeholder="可记录套餐、用途、卡槽位置、实名信息提示等" rows={3} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100" />
+            <span className="font-medium text-slate-700">号码备注</span>
+            <textarea value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} placeholder="可记录套餐、用途、卡槽位置等其他信息" rows={3} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100" />
           </label>
 
           {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
