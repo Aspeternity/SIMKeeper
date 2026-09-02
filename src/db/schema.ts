@@ -217,3 +217,31 @@ export const simKeepAliveEvents = sqliteTable(
     index("idx_sim_keep_alive_events_date").on(table.simId, table.activityDate),
   ],
 );
+
+export const simBoundServices = sqliteTable(
+  "sim_bound_services",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    simId: integer("sim_id")
+      .notNull()
+      .references(() => simCards.id, { onDelete: "cascade" }),
+    serviceName: text("service_name").notNull(),
+    category: text("category").notNull(),
+    bindingType: text("binding_type").notNull(),
+    accountIdentifier: text("account_identifier"),
+    importance: text("importance").notNull().default("normal"),
+    status: text("status").notNull().default("active"),
+    website: text("website"),
+    boundAt: text("bound_at"),
+    verifiedAt: text("verified_at"),
+    notes: text("notes"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    index("idx_sim_bound_services_sim_id").on(table.simId),
+    index("idx_sim_bound_services_category").on(table.category),
+    index("idx_sim_bound_services_status").on(table.status),
+    index("idx_sim_bound_services_importance").on(table.importance),
+  ],
+);
