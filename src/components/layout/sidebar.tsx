@@ -1,15 +1,20 @@
+"use client";
+
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { History, LayoutDashboard, RadioTower, Settings, Smartphone, Waypoints } from "lucide-react";
 
 const nav = [
   { label: "概览", href: "/", icon: LayoutDashboard },
   { label: "号码管理", href: "/sims", icon: Smartphone, disabled: true },
-  { label: "运营商", href: "/carriers", icon: RadioTower, disabled: true },
+  { label: "运营商", href: "/carriers", icon: RadioTower },
   { label: "绑定服务", href: "/services", icon: Waypoints, disabled: true },
   { label: "保号记录", href: "/history", icon: History, disabled: true },
 ];
 
 export function Sidebar() {
+  const pathname = usePathname();
+
   return (
     <aside className="hidden w-64 shrink-0 border-r bg-white lg:flex lg:flex-col">
       <div className="flex h-20 items-center gap-3 border-b px-6">
@@ -18,7 +23,7 @@ export function Sidebar() {
         </div>
         <div>
           <div className="font-semibold tracking-tight">SIMKeeper</div>
-          <div className="text-xs text-slate-400">v0.1.0-alpha.1</div>
+          <div className="text-xs text-slate-400">v0.1.0-alpha.2</div>
         </div>
       </div>
 
@@ -34,8 +39,16 @@ export function Sidebar() {
               </div>
             );
           }
+
+          const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
           return (
-            <Link key={item.label} href={item.href} className="flex items-center gap-3 rounded-xl bg-slate-100 px-3 py-2.5 text-sm font-medium text-slate-950">
+            <Link
+              key={item.label}
+              href={item.href}
+              className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition ${
+                active ? "bg-slate-100 font-medium text-slate-950" : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
+              }`}
+            >
               <Icon className="h-4 w-4" />
               {item.label}
             </Link>
