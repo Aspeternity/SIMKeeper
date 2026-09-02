@@ -1,5 +1,8 @@
-import { AlertTriangle, CheckCircle2, Clock3, Plus, Smartphone } from "lucide-react";
+import Link from "next/link";
+import { AlertTriangle, CheckCircle2, Clock3, RadioTower, Smartphone } from "lucide-react";
 import { Card } from "@/components/ui/card";
+import { db } from "@/db";
+import { carriers } from "@/db/schema";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,17 +16,19 @@ const stats = [
 ];
 
 export default function DashboardPage() {
+  const carrierCount = db.select({ id: carriers.id }).from(carriers).all().length;
+
   return (
     <div className="mx-auto max-w-7xl space-y-6">
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
           <h2 className="text-2xl font-semibold tracking-tight">你的号码生命周期，一处管理</h2>
-          <p className="mt-1 text-sm text-slate-500">alpha.1 已完成初始化、登录、SQLite 和 Dashboard 基础框架。</p>
+          <p className="mt-1 text-sm text-slate-500">alpha.2 已加入运营商资料管理，为下一阶段号码录入做好准备。</p>
         </div>
-        <button disabled className="inline-flex h-10 cursor-not-allowed items-center gap-2 rounded-xl bg-slate-200 px-4 text-sm font-medium text-slate-500">
-          <Plus className="h-4 w-4" />
-          添加号码 · alpha.2
-        </button>
+        <Link href="/carriers" className="inline-flex h-10 items-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800">
+          <RadioTower className="h-4 w-4" />
+          管理运营商
+        </Link>
       </div>
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -48,7 +53,7 @@ export default function DashboardPage() {
           <div className="flex items-center justify-between">
             <div>
               <h3 className="font-semibold">需要处理</h3>
-              <p className="mt-1 text-sm text-slate-500">未来这里会显示即将到期、需要充值或产生有效活动的号码。</p>
+              <p className="mt-1 text-sm text-slate-500">号码管理上线后，这里会显示即将到期、需要充值或产生有效活动的号码。</p>
             </div>
           </div>
           <div className="flex min-h-56 flex-col items-center justify-center text-center">
@@ -68,7 +73,7 @@ export default function DashboardPage() {
               ["首次管理员创建", true],
               ["登录 / Session", true],
               ["Dashboard Shell", true],
-              ["运营商管理", false],
+              [`运营商管理 · ${carrierCount} 条`, true],
               ["号码管理", false],
             ].map(([label, done]) => (
               <div key={String(label)} className="flex items-center gap-3">
