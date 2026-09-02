@@ -44,6 +44,7 @@ export type TariffBillingUnit = (typeof TARIFF_BILLING_UNITS)[number]["value"];
 export const SMS_RECEIVE_POLICIES = [
   { value: "free", label: "免费" },
   { value: "charged", label: "收费" },
+  { value: "included", label: "套餐内" },
   { value: "unavailable", label: "不可用" },
   { value: "unknown", label: "未知" },
 ] as const;
@@ -87,6 +88,7 @@ export function getRoamingAvailabilityLabel(value: string | null | undefined) {
 export function smsPolicyFromRateMode(mode: string | null | undefined) {
   if (mode === "free") return "free";
   if (mode === "charged") return "charged";
+  if (mode === "included") return "included";
   if (mode === "unavailable") return "unavailable";
   return "unknown";
 }
