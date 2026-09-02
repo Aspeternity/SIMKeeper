@@ -43,3 +43,33 @@ export const simCards = sqliteTable("sim_cards", {
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });
+
+export const simTariffs = sqliteTable("sim_tariffs", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  simId: integer("sim_id")
+    .notNull()
+    .unique()
+    .references(() => simCards.id, { onDelete: "cascade" }),
+  planName: text("plan_name"),
+  localOutgoingCall: text("local_outgoing_call"),
+  localIncomingCall: text("local_incoming_call"),
+  localOutgoingSms: text("local_outgoing_sms"),
+  localIncomingSms: text("local_incoming_sms"),
+  localData: text("local_data"),
+  internationalOutgoingCall: text("international_outgoing_call"),
+  internationalOutgoingSms: text("international_outgoing_sms"),
+  roamingOutgoingCall: text("roaming_outgoing_call"),
+  roamingIncomingCall: text("roaming_incoming_call"),
+  roamingOutgoingSms: text("roaming_outgoing_sms"),
+  roamingIncomingSms: text("roaming_incoming_sms"),
+  roamingData: text("roaming_data"),
+  localIncomingSmsPolicy: text("local_incoming_sms_policy").notNull(),
+  roamingIncomingSmsPolicy: text("roaming_incoming_sms_policy").notNull(),
+  roamingAvailable: text("roaming_available").notNull(),
+  usageSummary: text("usage_summary"),
+  sourceUrl: text("source_url"),
+  verifiedAt: text("verified_at"),
+  notes: text("notes"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
