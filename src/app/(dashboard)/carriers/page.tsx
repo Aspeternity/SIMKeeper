@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { ExternalLink, Loader2, Pencil, Plus, RadioTower, Search, Trash2, X } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { COUNTRY_REGIONS, getCountryRegion } from "@/lib/countries";
 
 type Carrier = {
   id: number;
@@ -18,7 +19,6 @@ type Carrier = {
 
 type FormState = {
   name: string;
-  country: string;
   countryCode: string;
   website: string;
   notes: string;
@@ -26,7 +26,6 @@ type FormState = {
 
 const emptyForm: FormState = {
   name: "",
-  country: "",
   countryCode: "",
   website: "",
   notes: "",
@@ -41,6 +40,8 @@ export default function CarriersPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Carrier | null>(null);
   const [form, setForm] = useState<FormState>(emptyForm);
+
+  const selectedRegion = useMemo(() => getCountryRegion(form.countryCode), [form.countryCode]);
 
   const loadCarriers = useCallback(async () => {
     setLoading(true);
@@ -82,7 +83,6 @@ export default function CarriersPage() {
     setEditing(carrier);
     setForm({
       name: carrier.name,
-      country: carrier.country,
       countryCode: carrier.countryCode,
       website: carrier.website || "",
       notes: carrier.notes || "",
@@ -147,7 +147,7 @@ export default function CarriersPage() {
             基础资料
           </div>
           <h2 className="mt-2 text-2xl font-semibold tracking-tight">运营商管理</h2>
-          <p className="mt-1 text-sm text-slate-500">先维护运营商资料，后续新增号码时可直接选择，不需要重复填写。</p>
+          <p className="mt-1 text-sm text-slate-500">先维护运营商资料，国家/地区使用内置标准列表，后续新增号码时可直接复用。</p>
         </div>
         <button
           onClick={openCreate}
@@ -251,7 +251,7 @@ export default function CarriersPage() {
             <div className="flex items-center justify-between border-b px-6 py-5">
               <div>
                 <h3 className="font-semibold">{editing ? "编辑运营商" : "新增运营商"}</h3>
-                <p className="mt-1 text-xs text-slate-400">国家/地区代码建议使用 ISO 两位代码，例如 PH、HK、GB。</p>
+                <p className="mt-1 text-xs text-slate-400">选择国家/地区后，SIMKeeper 会自动使用对应的 ISO 两位代码。</p>
               </div>
               <button onClick={closeForm} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">
                 <X className="h-4 w-4" />
@@ -259,32 +259,45 @@ export default function CarriersPage() {
             </div>
 
             <form onSubmit={submit} className="space-y-4 p-6">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <label className="space-y-1.5 text-sm">
-                  <span className="font-medium text-slate-700">运营商名称</span>
-                  <Input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="例如 Globe" autoFocus />
-                </label>
+              <label className="block space-y-1.5 text-sm">
+                <span className="font-medium text-slate-700">运营商名称</span>
+                <Input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="例如 Globe" autoFocus />
+              </label>
+
+              <div className="grid gap-4 sm:grid-cols-[1fr_120px]">
                 <label className="space-y-1.5 text-sm">
                   <span className="font-medium text-slate-700">国家 / 地区</span>
-                  <Input value={form.country} onChange={(event) => setForm({ ...form, country: event.target.value })} placeholder="例如 Philippines" />
+                  <select
+                    value={form.countryCode}
+                    onChange={(event) => setForm({ ...form, countryCode: event.target.value })}
+                    required
+                    className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                  >
+                    <option value="">请选择国家 / 地区</option>
+                    {COUNTRY_REGIONS.map((region) => (
+                      <option key={region.code} value={region.code}>
+                        {region.name} ({region.code})
+                      </option>
+                    ))}
+                  </select>
                 </label>
-              </div>
 
-              <div className="grid gap-4 sm:grid-cols-[140px_1fr]">
                 <label className="space-y-1.5 text-sm">
                   <span className="font-medium text-slate-700">国家代码</span>
                   <Input
-                    value={form.countryCode}
-                    onChange={(event) => setForm({ ...form, countryCode: event.target.value.toUpperCase() })}
-                    placeholder="PH"
-                    maxLength={8}
+                    value={selectedRegion?.code ?? ""}
+                    readOnly
+                    tabIndex={-1}
+                    placeholder="自动生成"
+                    className="bg-slate-50 font-medium text-slate-500"
                   />
                 </label>
-                <label className="space-y-1.5 text-sm">
-                  <span className="font-medium text-slate-700">官网</span>
-                  <Input value={form.website} onChange={(event) => setForm({ ...form, website: event.target.value })} placeholder="https://" type="url" />
-                </label>
               </div>
+
+              <label className="block space-y-1.5 text-sm">
+                <span className="font-medium text-slate-700">官网</span>
+                <Input value={form.website} onChange={(event) => setForm({ ...form, website: event.target.value })} placeholder="https://" type="url" />
+              </label>
 
               <label className="block space-y-1.5 text-sm">
                 <span className="font-medium text-slate-700">备注</span>
