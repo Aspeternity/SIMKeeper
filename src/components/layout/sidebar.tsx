@@ -8,7 +8,7 @@ const nav = [
   { label: "概览", href: "/", icon: LayoutDashboard },
   { label: "号码管理", href: "/sims", icon: Smartphone },
   { label: "运营商", href: "/carriers", icon: RadioTower },
-  { label: "绑定服务", href: "/services", icon: Waypoints, disabled: true },
+  { label: "绑定服务", href: "/services", icon: Waypoints },
   { label: "保号管理", href: "/history", icon: History },
   { label: "提醒中心", href: "/reminders", icon: BellRing },
 ];
@@ -24,23 +24,13 @@ export function Sidebar() {
         </div>
         <div>
           <div className="font-semibold tracking-tight">SIMKeeper</div>
-          <div className="text-xs text-slate-400">v0.1.0-alpha.5</div>
+          <div className="text-xs text-slate-400">v0.1.0-alpha.6</div>
         </div>
       </div>
 
       <nav className="flex-1 space-y-1 p-4">
         {nav.map((item) => {
           const Icon = item.icon;
-          if (item.disabled) {
-            return (
-              <div key={item.label} className="flex cursor-not-allowed items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-400">
-                <Icon className="h-4 w-4" />
-                <span>{item.label}</span>
-                <span className="ml-auto text-[10px] uppercase tracking-wider">Soon</span>
-              </div>
-            );
-          }
-
           const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
           return (
             <Link
