@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { eq } from "drizzle-orm";
-import { AlertTriangle, BellRing, CheckCircle2, Clock3, ShieldCheck, Smartphone } from "lucide-react";
+import { AlertTriangle, BellRing, CheckCircle2, Clock3, ShieldCheck, Smartphone, Waypoints } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { db } from "@/db";
-import { carriers, simCards, simKeepAliveRules } from "@/db/schema";
+import { carriers, simBoundServices, simCards, simKeepAliveRules } from "@/db/schema";
 import { getKeepAliveRuleStatus } from "@/lib/keep-alive";
 
 export const runtime = "nodejs";
@@ -34,6 +34,7 @@ type ActionItem = {
 
 export default function DashboardPage() {
   const carrierCount = db.select({ id: carriers.id }).from(carriers).all().length;
+  const boundServiceCount = db.select({ id: simBoundServices.id }).from(simBoundServices).all().length;
   const rows = db
     .select({
       id: simCards.id,
@@ -140,9 +141,12 @@ export default function DashboardPage() {
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
           <h2 className="text-2xl font-semibold tracking-tight">你的号码生命周期，一处管理</h2>
-          <p className="mt-1 text-sm text-slate-500">alpha.5 已加入提醒中心：首页保留关键待处理摘要，完整提醒可集中筛选和查看。</p>
+          <p className="mt-1 text-sm text-slate-500">alpha.6 已加入绑定服务：号码、实名、资费、保号、提醒和账号绑定关系逐步汇总成完整档案。</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Link href="/services" className="inline-flex h-10 items-center gap-2 rounded-xl border px-4 text-sm font-medium text-slate-700 transition hover:bg-white">
+            <Waypoints className="h-4 w-4" />绑定服务
+          </Link>
           <Link href="/reminders" className="inline-flex h-10 items-center gap-2 rounded-xl border px-4 text-sm font-medium text-slate-700 transition hover:bg-white">
             <BellRing className="h-4 w-4" />提醒中心
           </Link>
@@ -219,6 +223,7 @@ export default function DashboardPage() {
               ["Dashboard Shell", true],
               [`运营商管理 · ${carrierCount} 条`, true],
               [`号码管理 · ${rows.length} 条`, true],
+              [`绑定服务 · ${boundServiceCount} 条`, true],
               [`保号规则 · ${enabledRuleCount} 条`, true],
               ["站内提醒中心", true],
               ["外部通知渠道", false],
