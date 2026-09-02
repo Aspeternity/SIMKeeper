@@ -67,7 +67,7 @@ jobs:
             for file in "$tmp"/*.html "$tmp"/*.json; do
               [ -f "$file" ] || continue
               echo "----- $file -----"
-              head -c 8000 "$file" || true
+              head -c 10000 "$file" || true
               echo
             done
           }
@@ -84,7 +84,7 @@ jobs:
             grep -Eiq "$pattern" "$headers" || fail "$description"
           }
 
-          echo "[1/11] Starting disposable SIMKeeper container"
+          echo "[1/13] Starting disposable SIMKeeper container"
           mkdir -p "$tmp/data"
           docker run -d \
             --name "$container" \
@@ -95,7 +95,7 @@ jobs:
             -v "$tmp/data:/app/data" \
             simkeeper:smoke >/dev/null || fail "Unable to start smoke-test container"
 
-          echo "[2/11] Waiting for health endpoint"
+          echo "[2/13] Waiting for health endpoint"
           ready=0
           for _ in $(seq 1 40); do
             if curl -fsS --max-time 2 "$base/api/health" >"$tmp/health.json" 2>/dev/null; then
@@ -106,12 +106,12 @@ jobs:
           done
           [ "$ready" -eq 1 ] || fail "SIMKeeper did not become healthy"
 
-          echo "[3/11] Verifying fresh instance setup page"
+          echo "[3/13] Verifying fresh instance setup page"
           status="$(curl -sS --max-time 5 -o "$tmp/setup.html" -w '%{http_code}' "$base/setup")" || fail "GET /setup failed"
           [ "$status" = "200" ] || fail "GET /setup returned HTTP $status"
           grep -q '创建管理员账户' "$tmp/setup.html" || fail "Fresh /setup page does not show administrator creation form"
 
-          echo "[4/11] Creating administrator and validating session cookie"
+          echo "[4/13] Creating administrator and validating session cookie"
           : > "$headers"
           curl -sS --max-time 10 -D "$headers" -o /dev/null -c "$cookies" \
             -X POST \
@@ -124,12 +124,12 @@ jobs:
           expect_header '^set-cookie: simkeeper_session=' "Setup response did not set session cookie"
           grep -q 'simkeeper_session' "$cookies" || fail "Session cookie was not written to curl cookie jar"
 
-          echo "[5/11] Verifying authenticated Dashboard"
+          echo "[5/13] Verifying authenticated Dashboard"
           status="$(curl -sS --max-time 5 -b "$cookies" -o "$tmp/dashboard.html" -w '%{http_code}' "$base/")" || fail "Authenticated GET / failed"
           [ "$status" = "200" ] || fail "Authenticated GET / returned HTTP $status"
           grep -q '你的号码生命周期' "$tmp/dashboard.html" || fail "Authenticated Dashboard content was not rendered"
 
-          echo "[6/11] Logging out and verifying unauthenticated gate"
+          echo "[6/13] Logging out and verifying unauthenticated gate"
           : > "$headers"
           curl -sS --max-time 5 -D "$headers" -o /dev/null -b "$cookies" -c "$cookies" -X POST "$base/api/auth/logout" || fail "POST /api/auth/logout failed"
           expect_header '^HTTP/[^ ]+ 303' "Logout did not return HTTP 303"
@@ -138,7 +138,7 @@ jobs:
           [ "$status" = "200" ] || fail "Unauthenticated GET / returned HTTP $status"
           grep -q '需要登录' "$tmp/gate.html" || fail "Logged-out Dashboard did not render login gate"
 
-          echo "[7/11] Logging back in"
+          echo "[7/13] Logging back in"
           : > "$headers"
           curl -sS --max-time 10 -D "$headers" -o /dev/null -b "$cookies" -c "$cookies" \
             -X POST \
@@ -149,7 +149,7 @@ jobs:
           expect_header '^location: /[[:space:]]*$' "Login Location header is not relative root /"
           expect_header '^set-cookie: simkeeper_session=' "Login response did not set session cookie"
 
-          echo "[8/11] Creating Hong Kong carrier"
+          echo "[8/13] Creating Hong Kong carrier"
           status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/carrier.json" -w '%{http_code}' \
             -X POST -H 'Content-Type: application/json' \
             --data '{"name":"Smoke HK Carrier","countryCode":"HK","website":"","notes":""}' \
@@ -158,7 +158,7 @@ jobs:
           carrier_id="$(jq -r '.carrier.id // empty' "$tmp/carrier.json")"
           [ -n "$carrier_id" ] || fail "Carrier response did not contain an id"
 
-          echo "[9/11] Creating SIM with normalized phone number"
+          echo "[9/13] Creating SIM with normalized phone number"
           jq -n --argjson carrierId "$carrier_id" '{label:"Smoke SIM",phoneNumber:"51234567",carrierId:$carrierId,simType:"esim",iccid:"",balance:"",currencyCode:"HKD",status:"active",activationDate:"",validUntil:"",notes:""}' > "$tmp/sim-payload.json"
           status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/sim.json" -w '%{http_code}' \
             -X POST -H 'Content-Type: application/json' --data-binary @"$tmp/sim-payload.json" "$base/api/sims")" || fail "POST /api/sims failed"
@@ -167,7 +167,7 @@ jobs:
           [ -n "$sim_id" ] || fail "SIM response did not contain an id"
           [ "$(jq -r '.sim.phoneNumber' "$tmp/sim.json")" = "+85251234567" ] || fail "SIM phone number was not normalized to E.164"
 
-          echo "[10/11] Saving tariff profile with advanced and custom data"
+          echo "[10/13] Saving tariff profile with advanced and custom data"
           jq -n --argjson simId "$sim_id" '{
             simId:$simId,
             planName:"Conditional Smoke Tariff",
@@ -232,11 +232,40 @@ jobs:
           [ "$(jq -r '.tariff.customItems | length' "$tmp/tariff.json")" = "1" ] || fail "Custom tariff item was not saved"
           [ "$(jq -r '.tariff.customItems[0].billingUnit' "$tmp/tariff.json")" = "per_call" ] || fail "Custom tariff billing unit was not saved"
 
-          echo "[11/11] Verifying tariff summary is joined into SIM list"
+          echo "[11/13] Verifying tariff summary is joined into SIM list"
           status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/sims.json" -w '%{http_code}' "$base/api/sims")" || fail "GET /api/sims failed"
           [ "$status" = "200" ] || fail "SIM list returned HTTP $status"
           [ "$(jq -r --argjson id "$sim_id" '.sims[] | select(.id == $id) | .tariffPlanName' "$tmp/sims.json")" = "Conditional Smoke Tariff" ] || fail "SIM list did not include tariff summary"
           [ "$(jq -r --argjson id "$sim_id" '.sims[] | select(.id == $id) | .roamingIncomingSmsPolicy' "$tmp/sims.json")" = "variable" ] || fail "SIM list did not include conditional roaming SMS summary"
+
+          echo "[12/13] Creating multiple keep-alive rules"
+          jq -n --argjson simId "$sim_id" '{simId:$simId,name:"Recharge validity",intervalValue:365,intervalUnit:"day",qualifyingActions:["recharge"],nextDueDate:"2026-09-30",warningDays:30,gracePeriodDays:0,enabled:true,notes:"Recharge should advance this rule"}' > "$tmp/keepalive-rule1.json"
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/keepalive-rule1-response.json" -w '%{http_code}' -X PUT -H 'Content-Type: application/json' --data-binary @"$tmp/keepalive-rule1.json" "$base/api/keep-alive")" || fail "PUT first keep-alive rule failed"
+          [ "$status" = "200" ] || fail "First keep-alive rule returned HTTP $status"
+          rule1_id="$(jq -r '.rule.id // empty' "$tmp/keepalive-rule1-response.json")"
+          [ -n "$rule1_id" ] || fail "First keep-alive rule did not return an id"
+
+          jq -n --argjson simId "$sim_id" '{simId:$simId,name:"Usage activity",intervalValue:90,intervalUnit:"day",qualifyingActions:["outgoing_sms"],nextDueDate:"2026-11-01",warningDays:14,gracePeriodDays:7,enabled:true,notes:"Recharge must not advance this rule"}' > "$tmp/keepalive-rule2.json"
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/keepalive-rule2-response.json" -w '%{http_code}' -X PUT -H 'Content-Type: application/json' --data-binary @"$tmp/keepalive-rule2.json" "$base/api/keep-alive")" || fail "PUT second keep-alive rule failed"
+          [ "$status" = "200" ] || fail "Second keep-alive rule returned HTTP $status"
+          rule2_id="$(jq -r '.rule.id // empty' "$tmp/keepalive-rule2-response.json")"
+          [ -n "$rule2_id" ] || fail "Second keep-alive rule did not return an id"
+
+          echo "[13/13] Recording qualifying recharge and verifying automatic advancement"
+          jq -n --argjson simId "$sim_id" '{simId:$simId,activityType:"recharge",activityDate:"2026-09-03",amount:20,currencyCode:"HKD",balanceAfter:62,validUntilAfter:"2027-09-03",notes:"Keep-alive smoke recharge"}' > "$tmp/keepalive-event.json"
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/keepalive-event-response.json" -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data-binary @"$tmp/keepalive-event.json" "$base/api/keep-alive")" || fail "POST keep-alive event failed"
+          [ "$status" = "201" ] || fail "Keep-alive event returned HTTP $status"
+          [ "$(jq -r '.advancedRuleIds | length' "$tmp/keepalive-event-response.json")" = "1" ] || fail "Recharge did not advance exactly one matching rule"
+          [ "$(jq -r --argjson id "$rule1_id" '.rules[] | select(.id == $id) | .nextDueDate' "$tmp/keepalive-event-response.json")" = "2027-09-03" ] || fail "Recharge rule next due date was not advanced by 365 days"
+          [ "$(jq -r --argjson id "$rule2_id" '.rules[] | select(.id == $id) | .nextDueDate' "$tmp/keepalive-event-response.json")" = "2026-11-01" ] || fail "Non-matching usage rule was unexpectedly changed"
+          [ "$(jq -r '.sim.balance' "$tmp/keepalive-event-response.json")" = "62" ] || fail "Activity-after balance was not synchronized to SIM"
+          [ "$(jq -r '.sim.validUntil' "$tmp/keepalive-event-response.json")" = "2027-09-03" ] || fail "Activity-after validity was not synchronized to SIM"
+          [ "$(jq -r '.events[0].activityType' "$tmp/keepalive-event-response.json")" = "recharge" ] || fail "Keep-alive event was not returned in history"
+
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/keepalive-list.json" -w '%{http_code}' "$base/api/keep-alive")" || fail "GET /api/keep-alive failed"
+          [ "$status" = "200" ] || fail "Keep-alive list returned HTTP $status"
+          [ "$(jq -r --argjson id "$sim_id" '.sims[] | select(.id == $id) | .rules | length' "$tmp/keepalive-list.json")" = "2" ] || fail "Keep-alive overview did not include both rules"
+          [ "$(jq -r --argjson id "$sim_id" '.sims[] | select(.id == $id) | .latestEvent.activityType' "$tmp/keepalive-list.json")" = "recharge" ] || fail "Keep-alive overview did not include latest activity"
 
           echo "Application smoke test passed."
 
