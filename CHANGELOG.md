@@ -39,6 +39,7 @@
 - Conditional incoming-SMS summaries that surface as `按条件` on the number list
 - Optional custom tariff items for carrier-specific fees not covered by the common template
 - Shared viewport-level modal portal for consistent full-screen overlays and background scroll locking
+- Read-only number overview opened from a number-list row, showing core SIM details and the current local/roaming tariff profile with direct edit shortcuts
 
 ### Changed
 
@@ -68,6 +69,7 @@
 - Tariff modal is rendered through a document-body portal with background scroll locking to remove the top-edge gap and keep header/footer stable
 - SIM create/edit and carrier create/edit dialogs now use the same document-body portal so all existing overlays cover the complete viewport without a top white gap
 - Number Management no longer duplicates Dashboard overview cards; it is now focused on the searchable/filterable number list and per-number actions
+- Local and roaming verification-code summary lines now use the same font size, weight and spacing in the number list
 
 ## v0.1.0-alpha.2
 
