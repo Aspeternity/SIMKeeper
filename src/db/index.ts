@@ -131,6 +131,45 @@ sqlite.exec(`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_sim_tariff_rates_tariff_service
     ON sim_tariff_rates(tariff_id, service_code);
 
+  CREATE TABLE IF NOT EXISTS sim_tariff_rate_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tariff_id INTEGER NOT NULL,
+    service_code TEXT NOT NULL,
+    label TEXT,
+    mode TEXT NOT NULL,
+    amount REAL,
+    billing_unit TEXT,
+    package_price REAL,
+    package_allowance_amount REAL,
+    package_allowance_unit TEXT,
+    validity_value INTEGER,
+    validity_unit TEXT,
+    auto_renew TEXT NOT NULL DEFAULT 'unknown',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (tariff_id) REFERENCES sim_tariffs(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_sim_tariff_rate_rules_tariff_id
+    ON sim_tariff_rate_rules(tariff_id);
+  CREATE INDEX IF NOT EXISTS idx_sim_tariff_rate_rules_tariff_service
+    ON sim_tariff_rate_rules(tariff_id, service_code);
+
+  CREATE TABLE IF NOT EXISTS sim_tariff_rule_conditions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    rule_id INTEGER NOT NULL,
+    condition_type TEXT NOT NULL,
+    value TEXT NOT NULL,
+    value_2 TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (rule_id) REFERENCES sim_tariff_rate_rules(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_sim_tariff_rule_conditions_rule_id
+    ON sim_tariff_rule_conditions(rule_id);
+
   UPDATE sim_cards
   SET sim_type = 'esim'
   WHERE sim_type = 'esim_adapter';
