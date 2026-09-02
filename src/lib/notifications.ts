@@ -279,6 +279,7 @@ export function getCurrentReminderItems() {
       id: simKeepAliveRules.id,
       simId: simKeepAliveRules.simId,
       name: simKeepAliveRules.name,
+      dueDateSource: simKeepAliveRules.dueDateSource,
       nextDueDate: simKeepAliveRules.nextDueDate,
       warningDays: simKeepAliveRules.warningDays,
       gracePeriodDays: simKeepAliveRules.gracePeriodDays,
