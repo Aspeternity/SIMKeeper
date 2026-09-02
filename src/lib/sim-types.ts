@@ -20,6 +20,12 @@ export type SimRecord = {
   status: string;
   activationDate: string | null;
   validUntil: string | null;
+  identityStatus: string;
+  identityName: string | null;
+  identityDocumentType: string | null;
+  identityDocumentNumber: string | null;
+  identityCountryCode: string | null;
+  identityNotes: string | null;
   notes: string | null;
   createdAt: string;
   updatedAt: string;
