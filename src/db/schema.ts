@@ -51,7 +51,13 @@ export const simTariffs = sqliteTable("sim_tariffs", {
     .unique()
     .references(() => simCards.id, { onDelete: "cascade" }),
   planName: text("plan_name"),
+  planType: text("plan_type").notNull().default("unknown"),
   currencyCode: text("currency_code"),
+  recurringFee: real("recurring_fee"),
+  recurringPeriodValue: integer("recurring_period_value"),
+  recurringPeriodUnit: text("recurring_period_unit"),
+  administrationFee: real("administration_fee"),
+  autoRenew: text("auto_renew").notNull().default("unknown"),
   localOutgoingCall: text("local_outgoing_call"),
   localIncomingCall: text("local_incoming_call"),
   localOutgoingSms: text("local_outgoing_sms"),
