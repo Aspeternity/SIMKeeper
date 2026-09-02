@@ -26,6 +26,10 @@
 - Shared tariff currency selector with automatic SIM/country currency defaults
 - Standard billing-unit catalogs for calls, SMS and data usage
 - Compatibility display for legacy freeform tariff text until it is reconfirmed in structured form
+- Structured plan overview fields for prepaid/postpaid type, recurring fee, billing period, administration fee and auto-renew status
+- Structured included allowances for voice minutes, SMS units and data volume
+- Dedicated unlimited-in-plan tariff state for unlimited voice/data entitlements
+- Plan fee/type/renewal summaries directly on the number list
 
 ### Changed
 
@@ -41,9 +45,11 @@
 - Split number editing and tariff editing into separate modules so lifecycle features can evolve independently
 - Deleting a SIM now cascades to its tariff profile while preserving carrier deletion protection
 - Replaced freeform per-service tariff descriptions with standardized status/amount/unit controls
-- Tariff amount fields are enabled only for charged items; free, included, unavailable and unknown states require no manual amount entry
+- Tariff amount fields are enabled only for charged items; free, unavailable and unknown states require no manual amount entry
+- Included tariff items now use numeric allowance plus service-specific allowance units, while unlimited-in-plan requires no numeric input
 - Incoming-SMS summary statuses are now derived automatically from the corresponding structured tariff rows
-- Backend validation now restricts billing units by service type so calls, SMS and data cannot store incompatible units
+- Backend validation now restricts billing and allowance units by service type so calls, SMS and data cannot store incompatible units
+- Existing databases are upgraded in place with tariff-plan metadata columns without rebuilding SIM or tariff records
 
 ## v0.1.0-alpha.2
 
