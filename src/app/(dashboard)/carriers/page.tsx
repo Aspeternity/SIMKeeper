@@ -1,10 +1,11 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { ExternalLink, Loader2, Pencil, Plus, RadioTower, Search, Trash2, X } from "lucide-react";
+import { Check, ExternalLink, Loader2, Pencil, Plus, RadioTower, Search, Trash2, X } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { CountryRegionSelect } from "@/components/ui/country-region-select";
 import { Input } from "@/components/ui/input";
+import { getCommonCarriers } from "@/lib/carrier-catalog";
 import { getCountryRegion } from "@/lib/countries";
 
 type Carrier = {
@@ -43,6 +44,7 @@ export default function CarriersPage() {
   const [form, setForm] = useState<FormState>(emptyForm);
 
   const selectedRegion = useMemo(() => getCountryRegion(form.countryCode), [form.countryCode]);
+  const commonCarriers = useMemo(() => getCommonCarriers(form.countryCode), [form.countryCode]);
 
   const loadCarriers = useCallback(async () => {
     setLoading(true);
@@ -100,6 +102,23 @@ export default function CarriersPage() {
     setError("");
   }
 
+  function changeCountry(countryCode: string) {
+    const currentPreset = getCommonCarriers(form.countryCode).some(
+      (carrier) => carrier.name === form.name && carrier.website === form.website,
+    );
+
+    setForm({
+      ...form,
+      countryCode,
+      ...(currentPreset ? { name: "", website: "" } : {}),
+    });
+  }
+
+  function useCarrierPreset(name: string, website: string) {
+    setForm({ ...form, name, website });
+    setError("");
+  }
+
   async function submit(event: FormEvent) {
     event.preventDefault();
 
@@ -154,7 +173,7 @@ export default function CarriersPage() {
             基础资料
           </div>
           <h2 className="mt-2 text-2xl font-semibold tracking-tight">运营商管理</h2>
-          <p className="mt-1 text-sm text-slate-500">先维护运营商资料，国家/地区使用内置标准列表，后续新增号码时可直接复用。</p>
+          <p className="mt-1 text-sm text-slate-500">选择国家/地区后可直接使用内置常用运营商资料，也可以继续手动添加其他运营商。</p>
         </div>
         <button
           onClick={openCreate}
@@ -253,12 +272,12 @@ export default function CarriersPage() {
       </Card>
 
       {formOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-4 backdrop-blur-sm">
-          <Card className="w-full max-w-xl overflow-visible shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/30 p-4 backdrop-blur-sm">
+          <Card className="my-6 w-full max-w-xl overflow-visible shadow-2xl">
             <div className="flex items-center justify-between rounded-t-2xl border-b bg-white px-6 py-5">
               <div>
                 <h3 className="font-semibold">{editing ? "编辑运营商" : "新增运营商"}</h3>
-                <p className="mt-1 text-xs text-slate-400">选择或搜索国家/地区后，SIMKeeper 会自动使用对应的 ISO 两位代码。</p>
+                <p className="mt-1 text-xs text-slate-400">先选择国家/地区，再从常用运营商中一键填入名称和官网。</p>
               </div>
               <button onClick={closeForm} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">
                 <X className="h-4 w-4" />
@@ -266,19 +285,10 @@ export default function CarriersPage() {
             </div>
 
             <form onSubmit={submit} className="space-y-4 rounded-b-2xl bg-white p-6">
-              <label className="block space-y-1.5 text-sm">
-                <span className="font-medium text-slate-700">运营商名称</span>
-                <Input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="例如 Globe" autoFocus />
-              </label>
-
               <div className="grid gap-4 sm:grid-cols-[1fr_120px]">
                 <div className="space-y-1.5 text-sm">
                   <span className="font-medium text-slate-700">国家 / 地区</span>
-                  <CountryRegionSelect
-                    value={form.countryCode}
-                    onChange={(countryCode) => setForm({ ...form, countryCode })}
-                    disabled={saving}
-                  />
+                  <CountryRegionSelect value={form.countryCode} onChange={changeCountry} disabled={saving} />
                 </div>
 
                 <label className="space-y-1.5 text-sm">
@@ -292,6 +302,55 @@ export default function CarriersPage() {
                   />
                 </label>
               </div>
+
+              {form.countryCode ? (
+                <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-medium text-slate-700">常用运营商</div>
+                      <div className="mt-0.5 text-xs text-slate-400">点击后自动填入运营商名称和官方网站。</div>
+                    </div>
+                    <span className="rounded-md bg-white px-2 py-1 text-[11px] font-medium text-slate-500 shadow-sm">
+                      {selectedRegion?.name}
+                    </span>
+                  </div>
+
+                  {commonCarriers.length ? (
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      {commonCarriers.map((carrier) => {
+                        const selected = carrier.name === form.name && carrier.website === form.website;
+                        return (
+                          <button
+                            key={`${form.countryCode}-${carrier.name}`}
+                            type="button"
+                            onClick={() => useCarrierPreset(carrier.name, carrier.website)}
+                            className={`flex min-w-0 items-center gap-3 rounded-xl border bg-white px-3 py-2.5 text-left transition hover:border-slate-300 hover:shadow-sm ${
+                              selected ? "border-slate-400 ring-2 ring-slate-100" : "border-slate-200"
+                            }`}
+                          >
+                            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500">
+                              {selected ? <Check className="h-4 w-4" /> : <RadioTower className="h-4 w-4" />}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="truncate text-sm font-medium text-slate-700">{carrier.name}</div>
+                              <div className="truncate text-[11px] text-slate-400">{carrier.website.replace(/^https?:\/\//, "").replace(/\/$/, "")}</div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="mt-3 rounded-lg border border-dashed bg-white px-3 py-3 text-xs text-slate-400">
+                      这个国家 / 地区暂未收录常用运营商，你仍然可以在下方手动填写。
+                    </div>
+                  )}
+                </div>
+              ) : null}
+
+              <label className="block space-y-1.5 text-sm">
+                <span className="font-medium text-slate-700">运营商名称</span>
+                <Input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="可选择上方常用运营商，也可手动填写" />
+              </label>
 
               <label className="block space-y-1.5 text-sm">
                 <span className="font-medium text-slate-700">官网</span>
