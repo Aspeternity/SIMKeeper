@@ -9,7 +9,7 @@ const nav = [
   { label: "号码管理", href: "/sims", icon: Smartphone },
   { label: "运营商", href: "/carriers", icon: RadioTower },
   { label: "绑定服务", href: "/services", icon: Waypoints, disabled: true },
-  { label: "保号记录", href: "/history", icon: History, disabled: true },
+  { label: "保号管理", href: "/history", icon: History },
 ];
 
 export function Sidebar() {
@@ -23,7 +23,7 @@ export function Sidebar() {
         </div>
         <div>
           <div className="font-semibold tracking-tight">SIMKeeper</div>
-          <div className="text-xs text-slate-400">v0.1.0-alpha.3</div>
+          <div className="text-xs text-slate-400">v0.1.0-alpha.4</div>
         </div>
       </div>
 
