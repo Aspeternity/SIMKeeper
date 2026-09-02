@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ChevronDown, Plus, SlidersHorizontal, Trash2 } from "lucide-react";
 import { TariffRateRow, type TariffRateFormValue } from "@/components/sims/tariff-rate-row";
 import { COUNTRY_REGIONS } from "@/lib/countries";
@@ -44,6 +44,19 @@ const inputClass = "h-9 w-full rounded-lg border border-slate-200 bg-white px-3 
 function defaultConditionValue(type: TariffRuleConditionType) {
   if (type === "network_scope") return "same_network";
   return "";
+}
+
+function hasMeaningfulBaseRate(value: TariffRateFormValue) {
+  if (["free", "included_unlimited", "unavailable"].includes(value.mode)) return true;
+  if (value.mode === "charged" || value.mode === "included") {
+    const amount = Number(value.amount);
+    return Number.isFinite(amount) && amount > 0;
+  }
+  return false;
+}
+
+function clearBaseRate(value: TariffRateFormValue): TariffRateFormValue {
+  return { ...value, mode: "unknown", amount: "", billingUnit: "" };
 }
 
 export function createEmptyConditionalRule(serviceCode: TariffServiceCode): TariffConditionalRuleFormValue {
@@ -277,25 +290,68 @@ export function TariffServiceEditor({
   onBaseRateChange: (value: TariffRateFormValue) => void;
   onRulesChange: (value: TariffConditionalRuleFormValue[]) => void;
 }) {
-  const [advancedOpen, setAdvancedOpen] = useState(rules.length > 0);
+  const hasBaseRate = hasMeaningfulBaseRate(baseRate);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [baseRateOpen, setBaseRateOpen] = useState(rules.length === 0 || hasBaseRate);
 
-  useEffect(() => {
-    if (rules.length > 0) setAdvancedOpen(true);
-  }, [rules.length]);
+  function updateRules(nextRules: TariffConditionalRuleFormValue[]) {
+    if (nextRules.length > 0 && !hasMeaningfulBaseRate(baseRate) && baseRate.mode !== "unknown") {
+      onBaseRateChange(clearBaseRate(baseRate));
+    }
+    onRulesChange(nextRules);
+  }
+
+  function addRule() {
+    updateRules([...rules, createEmptyConditionalRule(serviceCode)]);
+    setAdvancedOpen(true);
+    if (!hasBaseRate) setBaseRateOpen(false);
+  }
+
+  function removeBaseRate() {
+    onBaseRateChange(clearBaseRate(baseRate));
+    setBaseRateOpen(false);
+  }
+
+  const conditionalOnly = rules.length > 0 && !hasBaseRate && !baseRateOpen;
 
   return (
     <div className="space-y-2">
-      <TariffRateRow serviceCode={serviceCode} label={label} currencyCode={currencyCode} value={baseRate} onChange={onBaseRateChange} />
+      {conditionalOnly ? (
+        <div className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium text-slate-800">{label}</span>
+            <span className="rounded-md bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-700 ring-1 ring-inset ring-indigo-100">按条件计费</span>
+            <span className="text-[11px] text-slate-400">{rules.length} 条规则</span>
+          </div>
+          <button type="button" onClick={() => setBaseRateOpen(true)} className="text-xs font-medium text-slate-500 transition hover:text-slate-800">设置基础资费</button>
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          <TariffRateRow serviceCode={serviceCode} label={rules.length ? `${label} · 基础资费` : label} currencyCode={currencyCode} value={baseRate} onChange={onBaseRateChange} />
+          {rules.length && baseRateOpen ? (
+            <div className="flex items-center justify-between px-2 text-[11px] text-slate-400">
+              <span>基础资费用于未命中特殊规则时的默认收费；没有统一基础资费可以留空。</span>
+              <button type="button" onClick={removeBaseRate} className="shrink-0 font-medium text-slate-500 transition hover:text-slate-800">不设置基础资费</button>
+            </div>
+          ) : null}
+        </div>
+      )}
 
-      <button type="button" onClick={() => setAdvancedOpen((value) => !value)} className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-medium text-slate-500 transition hover:bg-slate-100 hover:text-slate-800">
-        <SlidersHorizontal className="h-3.5 w-3.5" />
-        特殊规则{rules.length ? ` (${rules.length})` : ""}
-        <ChevronDown className={`h-3.5 w-3.5 transition ${advancedOpen ? "rotate-180" : ""}`} />
-      </button>
+      {rules.length ? (
+        <button type="button" onClick={() => setAdvancedOpen((value) => !value)} className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-medium text-slate-500 transition hover:bg-slate-100 hover:text-slate-800">
+          <SlidersHorizontal className="h-3.5 w-3.5" />
+          特殊规则 ({rules.length})
+          <ChevronDown className={`h-3.5 w-3.5 transition ${advancedOpen ? "rotate-180" : ""}`} />
+        </button>
+      ) : (
+        <button type="button" onClick={addRule} className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-medium text-slate-500 transition hover:bg-slate-100 hover:text-indigo-700">
+          <Plus className="h-3.5 w-3.5" />添加特殊规则
+        </button>
+      )}
 
-      {advancedOpen ? (
+      {advancedOpen && rules.length ? (
         <div className="space-y-2 rounded-xl border border-dashed border-slate-200 bg-slate-50/60 p-3">
-          <p className="text-xs leading-5 text-slate-400">仅在存在同网/异网、分地区、分时段或可选通行证时使用。普通号码可以完全忽略这里。</p>
+          <p className="text-xs leading-5 text-slate-400">以下规则用于同网/异网、分地区、分时段等差异化计费。相同类型条件按“或”，不同类型条件按“且”。</p>
           {rules.map((rule, index) => (
             <ConditionalRuleEditor
               key={index}
@@ -303,12 +359,12 @@ export function TariffServiceEditor({
               currencyCode={currencyCode}
               index={index}
               value={rule}
-              onChange={(next) => onRulesChange(rules.map((item, itemIndex) => itemIndex === index ? next : item))}
-              onRemove={() => onRulesChange(rules.filter((_, itemIndex) => itemIndex !== index))}
+              onChange={(next) => updateRules(rules.map((item, itemIndex) => itemIndex === index ? next : item))}
+              onRemove={() => updateRules(rules.filter((_, itemIndex) => itemIndex !== index))}
             />
           ))}
-          <button type="button" onClick={() => onRulesChange([...rules, createEmptyConditionalRule(serviceCode)])} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-dashed border-indigo-200 px-2.5 text-xs font-medium text-indigo-700 transition hover:bg-indigo-50">
-            <Plus className="h-3.5 w-3.5" />添加特殊规则
+          <button type="button" onClick={addRule} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-dashed border-indigo-200 px-2.5 text-xs font-medium text-indigo-700 transition hover:bg-indigo-50">
+            <Plus className="h-3.5 w-3.5" />再添加一条规则
           </button>
         </div>
       ) : null}
