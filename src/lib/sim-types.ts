@@ -23,6 +23,7 @@ export type SimRecord = {
   identityStatus: string;
   identityName: string | null;
   identityDocumentType: string | null;
+  identityDocumentTypeCustom: string | null;
   identityDocumentNumber: string | null;
   identityCountryCode: string | null;
   identityNotes: string | null;
