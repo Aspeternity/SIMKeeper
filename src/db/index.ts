@@ -81,6 +81,7 @@ sqlite.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     sim_id INTEGER NOT NULL UNIQUE,
     plan_name TEXT,
+    currency_code TEXT,
     local_outgoing_call TEXT,
     local_incoming_call TEXT,
     local_outgoing_sms TEXT,
@@ -108,10 +109,31 @@ sqlite.exec(`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_sim_tariffs_sim_id ON sim_tariffs(sim_id);
   CREATE INDEX IF NOT EXISTS idx_sim_tariffs_verified_at ON sim_tariffs(verified_at);
 
+  CREATE TABLE IF NOT EXISTS sim_tariff_rates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tariff_id INTEGER NOT NULL,
+    service_code TEXT NOT NULL,
+    mode TEXT NOT NULL DEFAULT 'unknown',
+    amount REAL,
+    billing_unit TEXT,
+    legacy_text TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (tariff_id) REFERENCES sim_tariffs(id) ON DELETE CASCADE
+  );
+
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_sim_tariff_rates_tariff_service
+    ON sim_tariff_rates(tariff_id, service_code);
+
   UPDATE sim_cards
   SET sim_type = 'esim'
   WHERE sim_type = 'esim_adapter';
 `);
+
+const tariffColumns = sqlite.prepare("PRAGMA table_info(sim_tariffs)").all() as Array<{ name: string }>;
+if (!tariffColumns.some((column) => column.name === "currency_code")) {
+  sqlite.exec("ALTER TABLE sim_tariffs ADD COLUMN currency_code TEXT");
+}
 
 export const db = drizzle(sqlite, { schema });
 export { sqlite, dbPath, dataDir };
