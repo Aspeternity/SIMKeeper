@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.1.0-alpha.8.1
+
+### Fixed
+
+- Keep-alive rules can now explicitly choose whether their next date follows the SIM validity date or uses an independent lifecycle date
+- `跟随号码有效期` rules now derive their effective next-action date directly from Number Management `有效期至`, removing contradictory dates between Number Management and Keep-alive Management
+- Existing validity-style rules named `号码有效期`, `SIM有效期`, `SIM 卡有效期`, `储值卡有效期` or `有效期` are migrated once to the linked validity source when the new column is introduced
+- Validity-linked rules no longer store a second independent `next_due_date`; editing the SIM validity is immediately reflected by Keep-alive Management and Number Details
+- Reminder Center merges a validity-linked keep-alive rule into the single SIM-validity reminder instead of producing duplicate lifecycle alerts
+- Linked validity rules reuse their own warning-window and grace-period settings for the unified SIM-validity reminder
+- Dashboard and Telegram/Bark/Gotify/Webhook delivery now reuse the same reminder calculation and therefore the same lifecycle date source
+- Recording a recharge or renewal no longer guesses a new SIM expiry from a linked rule interval; the operator-confirmed `活动后有效期` or later Number Management edit remains authoritative
+- Independent activity rules such as 90-day usage requirements continue to maintain and advance their own next-action dates
+- Added a post-publish lifecycle-consistency smoke workflow that edits a SIM validity date, verifies immediate keep-alive synchronization, due-soon state, and absence of duplicate reminders against the published Docker image
+
+### Changed
+
+- Sidebar and package version updated to `v0.1.0-alpha.8.1`
+- Keep-alive rule editor now exposes `跟随号码有效期` and `独立日期` as explicit date-source choices
+- Keep-alive list and Number Details display the selected date source beside each rule
+
 ## v0.1.0-alpha.8
 
 ### Added
