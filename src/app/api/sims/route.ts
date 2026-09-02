@@ -37,6 +37,21 @@ const simSchema = z
     status: z.enum(["active", "paused", "expired", "closed"]),
     activationDate: dateField,
     validUntil: dateField,
+    identityStatus: z.enum(["unknown", "registered", "unregistered"]).optional().default("unknown"),
+    identityName: z.string().trim().max(120, "实名姓名 / 主体不能超过 120 个字符").optional().default(""),
+    identityDocumentType: z
+      .union([z.enum(["national_id", "passport", "residence_permit", "business_registration", "other"]), z.literal("")])
+      .optional()
+      .default(""),
+    identityDocumentNumber: z.string().trim().max(120, "证件号码不能超过 120 个字符").optional().default(""),
+    identityCountryCode: z
+      .string()
+      .trim()
+      .max(2, "证件国家 / 地区代码不能超过 2 位")
+      .refine((value) => value === "" || /^[A-Za-z]{2}$/.test(value), "证件国家 / 地区代码不正确")
+      .optional()
+      .default(""),
+    identityNotes: z.string().trim().max(500, "实名备注不能超过 500 个字符").optional().default(""),
     notes: z.string().trim().max(500, "备注不能超过 500 个字符").optional().default(""),
   })
   .superRefine((value, context) => {
@@ -72,6 +87,12 @@ const rowSelection = {
   status: simCards.status,
   activationDate: simCards.activationDate,
   validUntil: simCards.validUntil,
+  identityStatus: simCards.identityStatus,
+  identityName: simCards.identityName,
+  identityDocumentType: simCards.identityDocumentType,
+  identityDocumentNumber: simCards.identityDocumentNumber,
+  identityCountryCode: simCards.identityCountryCode,
+  identityNotes: simCards.identityNotes,
   notes: simCards.notes,
   createdAt: simCards.createdAt,
   updatedAt: simCards.updatedAt,
@@ -141,6 +162,12 @@ function normalize(parsed: z.infer<typeof simSchema>, phoneNumber: string | null
     status: parsed.status,
     activationDate: parsed.activationDate || null,
     validUntil: parsed.validUntil || null,
+    identityStatus: parsed.identityStatus,
+    identityName: parsed.identityName || null,
+    identityDocumentType: parsed.identityDocumentType || null,
+    identityDocumentNumber: parsed.identityDocumentNumber || null,
+    identityCountryCode: parsed.identityCountryCode ? parsed.identityCountryCode.toUpperCase() : null,
+    identityNotes: parsed.identityNotes || null,
     notes: parsed.notes || null,
   };
 }
