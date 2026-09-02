@@ -102,6 +102,12 @@ export default function CarriersPage() {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+
+    if (!form.countryCode) {
+      setError("请选择国家 / 地区");
+      return;
+    }
+
     setSaving(true);
     setError("");
 
@@ -266,14 +272,14 @@ export default function CarriersPage() {
               </label>
 
               <div className="grid gap-4 sm:grid-cols-[1fr_120px]">
-                <label className="space-y-1.5 text-sm">
+                <div className="space-y-1.5 text-sm">
                   <span className="font-medium text-slate-700">国家 / 地区</span>
                   <CountryRegionSelect
                     value={form.countryCode}
                     onChange={(countryCode) => setForm({ ...form, countryCode })}
                     disabled={saving}
                   />
-                </label>
+                </div>
 
                 <label className="space-y-1.5 text-sm">
                   <span className="font-medium text-slate-700">国家代码</span>
