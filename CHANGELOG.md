@@ -16,6 +16,12 @@
 - Dashboard action list for expired and 30-day upcoming validity dates
 - Automatic international calling-code prefix based on the selected carrier country/region
 - E.164 phone-number parsing and normalization using country-aware numbering metadata
+- Per-SIM tariff profiles stored independently from core SIM records
+- Tariff editor covering local calls, local SMS, data, international calls/SMS and roaming calls/SMS/data
+- Structured local and roaming incoming-SMS status for free, charged, unavailable or unknown
+- Structured roaming availability status for quick usage decisions
+- Tariff source URL, last verification date, usage conclusion and detailed notes
+- Tariff summaries directly on the number list, including incoming-SMS and roaming status
 
 ### Changed
 
@@ -28,6 +34,8 @@
 - Phone-number input accepts a local number while storage remains normalized to the full international number
 - Simplified SIM type semantics to physical SIM or eSIM only; eSIM adapters such as eSTK/5ber are treated as hardware carriers rather than a separate SIM type
 - Existing `esim_adapter` records are automatically migrated to `esim`
+- Split number editing and tariff editing into separate modules so lifecycle features can evolve independently
+- Deleting a SIM now cascades to its tariff profile while preserving carrier deletion protection
 
 ## v0.1.0-alpha.2
 
