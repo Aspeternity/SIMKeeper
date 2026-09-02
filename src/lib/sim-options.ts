@@ -21,7 +21,7 @@ export const IDENTITY_DOCUMENT_TYPES = [
   { value: "passport", label: "护照" },
   { value: "residence_permit", label: "居留证 / 居留许可" },
   { value: "business_registration", label: "企业登记证件" },
-  { value: "other", label: "其他证件" },
+  { value: "other", label: "其他证件 / 材料" },
 ] as const;
 
 export const CURRENCIES = [
@@ -108,8 +108,12 @@ export function getIdentityStatusLabel(value: string | null | undefined) {
   return IDENTITY_STATUSES.find((item) => item.value === value)?.label ?? "未记录";
 }
 
-export function getIdentityDocumentTypeLabel(value: string | null | undefined) {
+export function getIdentityDocumentTypeLabel(
+  value: string | null | undefined,
+  customLabel?: string | null,
+) {
   if (!value) return "未记录";
+  if (value === "other" && customLabel?.trim()) return customLabel.trim();
   return IDENTITY_DOCUMENT_TYPES.find((item) => item.value === value)?.label ?? value;
 }
 
