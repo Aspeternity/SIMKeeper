@@ -1,4 +1,4 @@
-import type { KeepAliveRuleStatus } from "@/lib/keep-alive";
+import type { KeepAliveDueDateSource, KeepAliveRuleStatus } from "@/lib/keep-alive";
 
 export type KeepAliveRuleRecord = {
   id: number;
@@ -7,6 +7,7 @@ export type KeepAliveRuleRecord = {
   intervalValue: number;
   intervalUnit: string;
   qualifyingActions: string[];
+  dueDateSource: KeepAliveDueDateSource;
   nextDueDate: string | null;
   warningDays: number;
   gracePeriodDays: number;
