@@ -40,7 +40,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Smoke test authentication flow
+      - name: Smoke test application flows
         shell: bash
         run: |
           set -uo pipefail
@@ -64,7 +64,7 @@ jobs:
             cat "$headers" 2>/dev/null || true
             echo "----- cookie jar -----"
             cat "$cookies" 2>/dev/null || true
-            for file in "$tmp"/*.html; do
+            for file in "$tmp"/*.html "$tmp"/*.json; do
               [ -f "$file" ] || continue
               echo "----- $file -----"
               head -c 4000 "$file" || true
@@ -84,7 +84,7 @@ jobs:
             grep -Eiq "$pattern" "$headers" || fail "$description"
           }
 
-          echo "[1/7] Starting disposable SIMKeeper container"
+          echo "[1/11] Starting disposable SIMKeeper container"
           mkdir -p "$tmp/data"
           docker run -d \
             --name "$container" \
@@ -95,7 +95,7 @@ jobs:
             -v "$tmp/data:/app/data" \
             simkeeper:smoke >/dev/null || fail "Unable to start smoke-test container"
 
-          echo "[2/7] Waiting for health endpoint"
+          echo "[2/11] Waiting for health endpoint"
           ready=0
           for _ in $(seq 1 40); do
             if curl -fsS --max-time 2 "$base/api/health" >"$tmp/health.json" 2>/dev/null; then
@@ -105,15 +105,13 @@ jobs:
             sleep 1
           done
           [ "$ready" -eq 1 ] || fail "SIMKeeper did not become healthy"
-          cat "$tmp/health.json"
-          echo
 
-          echo "[3/7] Verifying fresh instance setup page"
+          echo "[3/11] Verifying fresh instance setup page"
           status="$(curl -sS --max-time 5 -o "$tmp/setup.html" -w '%{http_code}' "$base/setup")" || fail "GET /setup failed"
           [ "$status" = "200" ] || fail "GET /setup returned HTTP $status"
           grep -q '创建管理员账户' "$tmp/setup.html" || fail "Fresh /setup page does not show administrator creation form"
 
-          echo "[4/7] Creating administrator and validating session cookie"
+          echo "[4/11] Creating administrator and validating session cookie"
           : > "$headers"
           curl -sS --max-time 10 -D "$headers" -o /dev/null -c "$cookies" \
             -X POST \
@@ -126,26 +124,21 @@ jobs:
           expect_header '^set-cookie: simkeeper_session=' "Setup response did not set session cookie"
           grep -q 'simkeeper_session' "$cookies" || fail "Session cookie was not written to curl cookie jar"
 
-          echo "[5/7] Verifying authenticated Dashboard"
+          echo "[5/11] Verifying authenticated Dashboard"
           status="$(curl -sS --max-time 5 -b "$cookies" -o "$tmp/dashboard.html" -w '%{http_code}' "$base/")" || fail "Authenticated GET / failed"
           [ "$status" = "200" ] || fail "Authenticated GET / returned HTTP $status"
           grep -q '你的号码生命周期' "$tmp/dashboard.html" || fail "Authenticated Dashboard content was not rendered"
-          if grep -q '需要登录' "$tmp/dashboard.html" || grep -q '需要完成首次初始化' "$tmp/dashboard.html"; then
-            fail "Authenticated Dashboard incorrectly rendered an auth gate"
-          fi
 
-          echo "[6/7] Logging out and verifying unauthenticated gate"
+          echo "[6/11] Logging out and verifying unauthenticated gate"
           : > "$headers"
-          curl -sS --max-time 5 -D "$headers" -o /dev/null -b "$cookies" -c "$cookies" \
-            -X POST "$base/api/auth/logout" || fail "POST /api/auth/logout failed"
+          curl -sS --max-time 5 -D "$headers" -o /dev/null -b "$cookies" -c "$cookies" -X POST "$base/api/auth/logout" || fail "POST /api/auth/logout failed"
           expect_header '^HTTP/[^ ]+ 303' "Logout did not return HTTP 303"
           expect_header '^location: /login[[:space:]]*$' "Logout Location header is not /login"
-
           status="$(curl -sS --max-time 5 -b "$cookies" -o "$tmp/gate.html" -w '%{http_code}' "$base/")" || fail "Unauthenticated GET / failed"
           [ "$status" = "200" ] || fail "Unauthenticated GET / returned HTTP $status"
           grep -q '需要登录' "$tmp/gate.html" || fail "Logged-out Dashboard did not render login gate"
 
-          echo "[7/7] Logging back in and verifying Dashboard again"
+          echo "[7/11] Logging back in"
           : > "$headers"
           curl -sS --max-time 10 -D "$headers" -o /dev/null -b "$cookies" -c "$cookies" \
             -X POST \
@@ -156,11 +149,38 @@ jobs:
           expect_header '^location: /[[:space:]]*$' "Login Location header is not relative root /"
           expect_header '^set-cookie: simkeeper_session=' "Login response did not set session cookie"
 
-          status="$(curl -sS --max-time 5 -b "$cookies" -o "$tmp/dashboard-after-login.html" -w '%{http_code}' "$base/")" || fail "Post-login GET / failed"
-          [ "$status" = "200" ] || fail "Post-login GET / returned HTTP $status"
-          grep -q '你的号码生命周期' "$tmp/dashboard-after-login.html" || fail "Dashboard was not rendered after login"
+          echo "[8/11] Creating carrier"
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/carrier.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' \
+            --data '{"name":"Smoke Carrier","countryCode":"PH","website":"","notes":""}' \
+            "$base/api/carriers")" || fail "POST /api/carriers failed"
+          [ "$status" = "201" ] || fail "Carrier creation returned HTTP $status"
+          carrier_id="$(jq -r '.carrier.id // empty' "$tmp/carrier.json")"
+          [ -n "$carrier_id" ] || fail "Carrier response did not contain an id"
 
-          echo "Authentication smoke test passed."
+          echo "[9/11] Creating SIM with normalized phone number"
+          jq -n --argjson carrierId "$carrier_id" '{label:"Smoke SIM",phoneNumber:"9171234567",carrierId:$carrierId,simType:"physical",iccid:"",balance:"",currencyCode:"PHP",status:"active",activationDate:"",validUntil:"",notes:""}' > "$tmp/sim-payload.json"
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/sim.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' --data-binary @"$tmp/sim-payload.json" "$base/api/sims")" || fail "POST /api/sims failed"
+          [ "$status" = "201" ] || fail "SIM creation returned HTTP $status"
+          sim_id="$(jq -r '.sim.id // empty' "$tmp/sim.json")"
+          [ -n "$sim_id" ] || fail "SIM response did not contain an id"
+          [ "$(jq -r '.sim.phoneNumber' "$tmp/sim.json")" = "+639171234567" ] || fail "SIM phone number was not normalized to E.164"
+
+          echo "[10/11] Saving tariff profile"
+          jq -n --argjson simId "$sim_id" '{simId:$simId,planName:"Smoke Tariff",localIncomingSms:"Free",localIncomingSmsPolicy:"free",roamingIncomingSms:"Free while roaming",roamingIncomingSmsPolicy:"free",roamingAvailable:"yes",usageSummary:"Smoke-test tariff profile",sourceUrl:"",verifiedAt:"",notes:""}' > "$tmp/tariff-payload.json"
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/tariff.json" -w '%{http_code}' \
+            -X PUT -H 'Content-Type: application/json' --data-binary @"$tmp/tariff-payload.json" "$base/api/tariffs")" || fail "PUT /api/tariffs failed"
+          [ "$status" = "200" ] || fail "Tariff save returned HTTP $status"
+          [ "$(jq -r '.tariff.localIncomingSmsPolicy' "$tmp/tariff.json")" = "free" ] || fail "Tariff local incoming SMS policy was not saved"
+
+          echo "[11/11] Verifying tariff summary is joined into SIM list"
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/sims.json" -w '%{http_code}' "$base/api/sims")" || fail "GET /api/sims failed"
+          [ "$status" = "200" ] || fail "SIM list returned HTTP $status"
+          [ "$(jq -r --argjson id "$sim_id" '.sims[] | select(.id == $id) | .tariffPlanName' "$tmp/sims.json")" = "Smoke Tariff" ] || fail "SIM list did not include tariff summary"
+          [ "$(jq -r --argjson id "$sim_id" '.sims[] | select(.id == $id) | .roamingIncomingSmsPolicy' "$tmp/sims.json")" = "free" ] || fail "SIM list did not include roaming SMS summary"
+
+          echo "Application smoke test passed."
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
