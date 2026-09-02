@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { eq } from "drizzle-orm";
-import { AlertTriangle, CheckCircle2, Clock3, Smartphone } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock3, ShieldCheck, Smartphone } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { db } from "@/db";
-import { carriers, simCards } from "@/db/schema";
+import { carriers, simCards, simKeepAliveRules } from "@/db/schema";
+import { getKeepAliveRuleStatus } from "@/lib/keep-alive";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,6 +18,19 @@ function dateInSingapore(date: Date) {
     day: "2-digit",
   }).format(date);
 }
+
+type ActionItem = {
+  key: string;
+  simId: number;
+  label: string;
+  phoneNumber: string | null;
+  carrierName: string;
+  country: string;
+  title: string;
+  date: string;
+  severity: "warning" | "overdue";
+  href: string;
+};
 
 export default function DashboardPage() {
   const carrierCount = db.select({ id: carriers.id }).from(carriers).all().length;
@@ -33,25 +47,92 @@ export default function DashboardPage() {
     .from(simCards)
     .innerJoin(carriers, eq(simCards.carrierId, carriers.id))
     .all();
+  const keepAliveRules = db.select().from(simKeepAliveRules).all();
 
   const today = dateInSingapore(new Date());
   const thirtyDaysLater = dateInSingapore(new Date(Date.now() + 30 * 86400000));
-  const overdueCount = rows.filter((sim) => sim.status === "expired" || Boolean(sim.validUntil && sim.validUntil < today)).length;
-  const activeCount = rows.filter((sim) => sim.status === "active" && !(sim.validUntil && sim.validUntil < today)).length;
-  const dueSoonCount = rows.filter(
-    (sim) => sim.status === "active" && Boolean(sim.validUntil && sim.validUntil >= today && sim.validUntil <= thirtyDaysLater),
-  ).length;
+  const rulesBySim = new Map<number, typeof keepAliveRules>();
+  for (const rule of keepAliveRules) {
+    const list = rulesBySim.get(rule.simId) ?? [];
+    list.push(rule);
+    rulesBySim.set(rule.simId, list);
+  }
 
-  const actionable = rows
-    .filter((sim) => sim.status !== "closed" && Boolean(sim.validUntil && sim.validUntil <= thirtyDaysLater))
-    .sort((a, b) => (a.validUntil || "9999-12-31").localeCompare(b.validUntil || "9999-12-31"))
-    .slice(0, 6);
+  const overdueSimIds = new Set<number>();
+  const attentionSimIds = new Set<number>();
+  const actions: ActionItem[] = [];
+
+  for (const sim of rows) {
+    const validOverdue = Boolean(sim.validUntil && sim.validUntil < today);
+    if (sim.status === "expired" || validOverdue) overdueSimIds.add(sim.id);
+    if (sim.status !== "closed" && sim.validUntil && sim.validUntil <= thirtyDaysLater) {
+      if (!validOverdue) attentionSimIds.add(sim.id);
+      actions.push({
+        key: `valid-${sim.id}`,
+        simId: sim.id,
+        label: sim.label,
+        phoneNumber: sim.phoneNumber,
+        carrierName: sim.carrierName,
+        country: sim.country,
+        title: "号码有效期",
+        date: sim.validUntil,
+        severity: validOverdue ? "overdue" : "warning",
+        href: "/sims",
+      });
+    }
+
+    for (const rule of rulesBySim.get(sim.id) ?? []) {
+      const state = getKeepAliveRuleStatus({
+        enabled: rule.enabled,
+        nextDueDate: rule.nextDueDate,
+        warningDays: rule.warningDays,
+        gracePeriodDays: rule.gracePeriodDays,
+        today,
+      });
+      if (!rule.nextDueDate || !rule.enabled) continue;
+      if (state.status === "overdue") {
+        overdueSimIds.add(sim.id);
+        actions.push({
+          key: `rule-${rule.id}`,
+          simId: sim.id,
+          label: sim.label,
+          phoneNumber: sim.phoneNumber,
+          carrierName: sim.carrierName,
+          country: sim.country,
+          title: `保号 · ${rule.name}`,
+          date: rule.nextDueDate,
+          severity: "overdue",
+          href: "/history",
+        });
+      } else if (state.status === "grace" || state.status === "due_soon") {
+        attentionSimIds.add(sim.id);
+        actions.push({
+          key: `rule-${rule.id}`,
+          simId: sim.id,
+          label: sim.label,
+          phoneNumber: sim.phoneNumber,
+          carrierName: sim.carrierName,
+          country: sim.country,
+          title: `保号 · ${rule.name}`,
+          date: rule.nextDueDate,
+          severity: state.status === "grace" ? "overdue" : "warning",
+          href: "/history",
+        });
+      }
+    }
+  }
+
+  for (const id of overdueSimIds) attentionSimIds.delete(id);
+
+  const activeCount = rows.filter((sim) => sim.status === "active" && !(sim.validUntil && sim.validUntil < today) && !overdueSimIds.has(sim.id)).length;
+  const actionable = actions.sort((a, b) => a.date.localeCompare(b.date)).slice(0, 8);
+  const enabledRuleCount = keepAliveRules.filter((rule) => rule.enabled).length;
 
   const stats = [
     { label: "号码总数", value: rows.length, icon: Smartphone },
     { label: "正常", value: activeCount, icon: CheckCircle2 },
-    { label: "30 天内需处理", value: dueSoonCount, icon: Clock3 },
-    { label: "已逾期 / 失效", value: overdueCount, icon: AlertTriangle },
+    { label: "待处理", value: attentionSimIds.size, icon: Clock3 },
+    { label: "已逾期 / 失效", value: overdueSimIds.size, icon: AlertTriangle },
   ];
 
   return (
@@ -59,12 +140,16 @@ export default function DashboardPage() {
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
           <h2 className="text-2xl font-semibold tracking-tight">你的号码生命周期，一处管理</h2>
-          <p className="mt-1 text-sm text-slate-500">alpha.3 已加入号码管理，首页开始使用真实号码、状态和有效期数据。</p>
+          <p className="mt-1 text-sm text-slate-500">alpha.4 已接入保号规则与活动记录，首页会同时关注号码有效期和下一次保号操作。</p>
         </div>
-        <Link href="/sims" className="inline-flex h-10 items-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800">
-          <Smartphone className="h-4 w-4" />
-          管理号码
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          <Link href="/history" className="inline-flex h-10 items-center gap-2 rounded-xl border px-4 text-sm font-medium text-slate-700 transition hover:bg-white">
+            <ShieldCheck className="h-4 w-4" />保号管理
+          </Link>
+          <Link href="/sims" className="inline-flex h-10 items-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800">
+            <Smartphone className="h-4 w-4" />管理号码
+          </Link>
+        </div>
       </div>
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -74,9 +159,7 @@ export default function DashboardPage() {
             <Card key={stat.label} className="p-5">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-slate-500">{stat.label}</span>
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 text-slate-600">
-                  <Icon className="h-4 w-4" />
-                </div>
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 text-slate-600"><Icon className="h-4 w-4" /></div>
               </div>
               <div className="mt-4 text-3xl font-semibold tracking-tight">{stat.value}</div>
             </Card>
@@ -88,40 +171,34 @@ export default function DashboardPage() {
         <Card className="min-h-80 overflow-hidden">
           <div className="border-b px-6 py-5">
             <h3 className="font-semibold">需要处理</h3>
-            <p className="mt-1 text-sm text-slate-500">显示已过有效期或未来 30 天内即将到期的号码。</p>
+            <p className="mt-1 text-sm text-slate-500">汇总号码有效期和已进入提醒窗口的保号规则。</p>
           </div>
           {actionable.length ? (
             <div className="divide-y">
-              {actionable.map((sim) => {
-                const overdue = Boolean(sim.validUntil && sim.validUntil < today);
-                return (
-                  <div key={sim.id} className="flex flex-col gap-3 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium text-slate-800">{sim.label}</span>
-                        <span className={`rounded-md px-2 py-0.5 text-[11px] font-medium ${overdue ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}>
-                          {overdue ? "已逾期" : "即将到期"}
-                        </span>
-                      </div>
-                      <div className="mt-1 text-sm text-slate-500">
-                        {sim.phoneNumber || "未填写手机号"} · {sim.carrierName} · {sim.country}
-                      </div>
+              {actionable.map((item) => (
+                <div key={item.key} className="flex flex-col gap-3 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium text-slate-800">{item.label}</span>
+                      <span className={`rounded-md px-2 py-0.5 text-[11px] font-medium ${item.severity === "overdue" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}>
+                        {item.severity === "overdue" ? "已需处理" : "即将处理"}
+                      </span>
+                      <span className="text-xs text-slate-400">{item.title}</span>
                     </div>
-                    <div className="shrink-0 text-left sm:text-right">
-                      <div className={`text-sm font-medium ${overdue ? "text-rose-700" : "text-amber-700"}`}>{sim.validUntil}</div>
-                      <Link href="/sims" className="mt-1 inline-block text-xs text-slate-400 underline underline-offset-4">查看号码</Link>
-                    </div>
+                    <div className="mt-1 text-sm text-slate-500">{item.phoneNumber || "未填写手机号"} · {item.carrierName} · {item.country}</div>
                   </div>
-                );
-              })}
+                  <div className="shrink-0 text-left sm:text-right">
+                    <div className={`text-sm font-medium ${item.severity === "overdue" ? "text-rose-700" : "text-amber-700"}`}>{item.date}</div>
+                    <Link href={item.href} className="mt-1 inline-block text-xs text-slate-400 underline underline-offset-4">前往处理</Link>
+                  </div>
+                </div>
+              ))}
             </div>
           ) : (
             <div className="flex min-h-56 flex-col items-center justify-center px-6 text-center">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-500">
-                <CheckCircle2 className="h-5 w-5" />
-              </div>
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-500"><CheckCircle2 className="h-5 w-5" /></div>
               <p className="mt-4 text-sm font-medium">当前没有待处理事项</p>
-              <p className="mt-1 max-w-sm text-xs leading-5 text-slate-400">录入号码有效期后，SIMKeeper 会自动把临近到期和已逾期项目汇总到这里。</p>
+              <p className="mt-1 max-w-sm text-xs leading-5 text-slate-400">配置保号规则后，SIMKeeper 会结合规则提醒窗口和号码有效期自动汇总。</p>
             </div>
           )}
         </Card>
@@ -136,7 +213,8 @@ export default function DashboardPage() {
               ["Dashboard Shell", true],
               [`运营商管理 · ${carrierCount} 条`, true],
               [`号码管理 · ${rows.length} 条`, true],
-              ["保号规则 / 充值记录", false],
+              [`保号规则 · ${enabledRuleCount} 条`, true],
+              ["自动提醒 / 通知", false],
             ].map(([label, done]) => (
               <div key={String(label)} className="flex items-center gap-3">
                 <span className={`h-2.5 w-2.5 rounded-full ${done ? "bg-emerald-500" : "bg-slate-200"}`} />
