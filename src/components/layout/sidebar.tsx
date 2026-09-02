@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { History, LayoutDashboard, RadioTower, Settings, Smartphone, Waypoints } from "lucide-react";
+import { BellRing, History, LayoutDashboard, RadioTower, Settings, Smartphone, Waypoints } from "lucide-react";
 
 const nav = [
   { label: "概览", href: "/", icon: LayoutDashboard },
@@ -10,6 +10,7 @@ const nav = [
   { label: "运营商", href: "/carriers", icon: RadioTower },
   { label: "绑定服务", href: "/services", icon: Waypoints, disabled: true },
   { label: "保号管理", href: "/history", icon: History },
+  { label: "提醒中心", href: "/reminders", icon: BellRing },
 ];
 
 export function Sidebar() {
@@ -23,7 +24,7 @@ export function Sidebar() {
         </div>
         <div>
           <div className="font-semibold tracking-tight">SIMKeeper</div>
-          <div className="text-xs text-slate-400">v0.1.0-alpha.4</div>
+          <div className="text-xs text-slate-400">v0.1.0-alpha.5</div>
         </div>
       </div>
 
