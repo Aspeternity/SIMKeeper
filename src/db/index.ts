@@ -80,6 +80,10 @@ sqlite.exec(`
   CREATE INDEX IF NOT EXISTS idx_sim_cards_phone_number ON sim_cards(phone_number);
   CREATE INDEX IF NOT EXISTS idx_sim_cards_status ON sim_cards(status);
   CREATE INDEX IF NOT EXISTS idx_sim_cards_valid_until ON sim_cards(valid_until);
+
+  UPDATE sim_cards
+  SET sim_type = 'esim'
+  WHERE sim_type = 'esim_adapter';
 `);
 
 export const db = drizzle(sqlite, { schema });
