@@ -25,6 +25,13 @@ export type SimRecord = {
   updatedAt: string;
   tariffId: number | null;
   tariffPlanName: string | null;
+  tariffPlanType: string | null;
+  tariffCurrencyCode: string | null;
+  tariffRecurringFee: number | null;
+  tariffRecurringPeriodValue: number | null;
+  tariffRecurringPeriodUnit: string | null;
+  tariffAdministrationFee: number | null;
+  tariffAutoRenew: string | null;
   localIncomingSmsPolicy: string | null;
   roamingIncomingSmsPolicy: string | null;
   roamingAvailable: string | null;
