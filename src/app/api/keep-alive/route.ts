@@ -8,8 +8,11 @@ import {
   addKeepAliveInterval,
   getKeepAliveRuleStatus,
   KEEP_ALIVE_ACTIVITY_TYPES,
+  KEEP_ALIVE_DUE_DATE_SOURCES,
   KEEP_ALIVE_INTERVAL_UNITS,
   parseQualifyingActions,
+  resolveKeepAliveRuleDueDate,
+  type KeepAliveDueDateSource,
 } from "@/lib/keep-alive";
 
 export const runtime = "nodejs";
@@ -24,6 +27,7 @@ const dateField = z
 
 const activityValues = KEEP_ALIVE_ACTIVITY_TYPES.map((item) => item.value) as [string, ...string[]];
 const intervalValues = KEEP_ALIVE_INTERVAL_UNITS.map((item) => item.value) as [string, ...string[]];
+const dueDateSourceValues = KEEP_ALIVE_DUE_DATE_SOURCES.map((item) => item.value) as [string, ...string[]];
 
 const ruleSchema = z.object({
   id: z.coerce.number().int().positive().optional(),
@@ -32,6 +36,7 @@ const ruleSchema = z.object({
   intervalValue: z.coerce.number().int().min(1, "周期不能小于 1").max(3650, "周期数值过大"),
   intervalUnit: z.enum(intervalValues),
   qualifyingActions: z.array(z.enum(activityValues)).min(1, "至少选择一种可刷新保号周期的活动"),
+  dueDateSource: z.enum(dueDateSourceValues).optional().default("independent"),
   nextDueDate: dateField,
   warningDays: z.coerce.number().int().min(0).max(365).default(30),
   gracePeriodDays: z.coerce.number().int().min(0).max(365).default(0),
@@ -62,26 +67,44 @@ async function requireUser() {
   return null;
 }
 
-function simExists(id: number) {
-  return db.select({ id: simCards.id }).from(simCards).where(eq(simCards.id, id)).get();
+function getSim(id: number) {
+  return db
+    .select({ id: simCards.id, currencyCode: simCards.currencyCode, validUntil: simCards.validUntil })
+    .from(simCards)
+    .where(eq(simCards.id, id))
+    .get();
 }
 
-function serializeRule(rule: typeof simKeepAliveRules.$inferSelect) {
+function serializeRule(rule: typeof simKeepAliveRules.$inferSelect, simValidUntil: string | null | undefined) {
   const qualifyingActions = parseQualifyingActions(rule.qualifyingActions);
+  const dueDateSource = (rule.dueDateSource === "sim_validity" ? "sim_validity" : "independent") as KeepAliveDueDateSource;
+  const nextDueDate = resolveKeepAliveRuleDueDate({
+    dueDateSource,
+    nextDueDate: rule.nextDueDate,
+    simValidUntil,
+  });
   const state = getKeepAliveRuleStatus({
     enabled: rule.enabled,
-    nextDueDate: rule.nextDueDate,
+    nextDueDate,
     warningDays: rule.warningDays,
     gracePeriodDays: rule.gracePeriodDays,
   });
-  return { ...rule, qualifyingActions, ...state };
+  return { ...rule, dueDateSource, nextDueDate, qualifyingActions, ...state };
 }
 
 function getRules(simId?: number) {
   const rows = simId
-    ? db.select().from(simKeepAliveRules).where(eq(simKeepAliveRules.simId, simId)).orderBy(asc(simKeepAliveRules.nextDueDate), asc(simKeepAliveRules.id)).all()
-    : db.select().from(simKeepAliveRules).orderBy(asc(simKeepAliveRules.nextDueDate), asc(simKeepAliveRules.id)).all();
-  return rows.map(serializeRule);
+    ? db.select().from(simKeepAliveRules).where(eq(simKeepAliveRules.simId, simId)).orderBy(asc(simKeepAliveRules.id)).all()
+    : db.select().from(simKeepAliveRules).orderBy(asc(simKeepAliveRules.id)).all();
+
+  const validityRows = simId
+    ? db.select({ id: simCards.id, validUntil: simCards.validUntil }).from(simCards).where(eq(simCards.id, simId)).all()
+    : db.select({ id: simCards.id, validUntil: simCards.validUntil }).from(simCards).all();
+  const validityBySim = new Map(validityRows.map((sim) => [sim.id, sim.validUntil]));
+
+  return rows
+    .map((rule) => serializeRule(rule, validityBySim.get(rule.simId)))
+    .sort((a, b) => (a.nextDueDate || "9999-12-31").localeCompare(b.nextDueDate || "9999-12-31") || a.id - b.id);
 }
 
 function getEvents(simId?: number) {
@@ -176,7 +199,7 @@ export async function GET(request: NextRequest) {
 
   const simId = Number(rawSimId);
   if (!Number.isInteger(simId) || simId <= 0) return NextResponse.json({ error: "无效的号码 ID" }, { status: 400 });
-  if (!simExists(simId)) return NextResponse.json({ error: "号码不存在" }, { status: 404 });
+  if (!getSim(simId)) return NextResponse.json({ error: "号码不存在" }, { status: 404 });
   return NextResponse.json(buildPayload(simId));
 }
 
@@ -188,18 +211,34 @@ export async function PUT(request: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "保号规则数据不正确" }, { status: 400 });
   }
-  if (!simExists(parsed.data.simId)) return NextResponse.json({ error: "号码不存在" }, { status: 404 });
+  const sim = getSim(parsed.data.simId);
+  if (!sim) return NextResponse.json({ error: "号码不存在" }, { status: 404 });
 
   if (parsed.data.id) {
     const current = db.select().from(simKeepAliveRules).where(eq(simKeepAliveRules.id, parsed.data.id)).get();
     if (!current || current.simId !== parsed.data.simId) return NextResponse.json({ error: "保号规则不存在" }, { status: 404 });
   }
 
+  if (parsed.data.dueDateSource === "sim_validity") {
+    const existingLinkedRule = db
+      .select({ id: simKeepAliveRules.id, dueDateSource: simKeepAliveRules.dueDateSource })
+      .from(simKeepAliveRules)
+      .where(eq(simKeepAliveRules.simId, parsed.data.simId))
+      .all()
+      .find((rule) => rule.dueDateSource === "sim_validity" && rule.id !== parsed.data.id);
+    if (existingLinkedRule) {
+      return NextResponse.json({ error: "每个号码只能有一条跟随号码有效期的保号规则" }, { status: 400 });
+    }
+  }
+
   const qualifyingActions = Array.from(new Set(parsed.data.qualifyingActions));
-  let nextDueDate = parsed.data.nextDueDate || null;
-  if (!nextDueDate) {
-    const latest = latestMatchingEvent(parsed.data.simId, qualifyingActions);
-    if (latest) nextDueDate = addKeepAliveInterval(latest.activityDate, parsed.data.intervalValue, parsed.data.intervalUnit);
+  let nextDueDate: string | null = null;
+  if (parsed.data.dueDateSource === "independent") {
+    nextDueDate = parsed.data.nextDueDate || null;
+    if (!nextDueDate) {
+      const latest = latestMatchingEvent(parsed.data.simId, qualifyingActions);
+      if (latest) nextDueDate = addKeepAliveInterval(latest.activityDate, parsed.data.intervalValue, parsed.data.intervalUnit);
+    }
   }
 
   const now = new Date().toISOString();
@@ -209,6 +248,7 @@ export async function PUT(request: NextRequest) {
     intervalValue: parsed.data.intervalValue,
     intervalUnit: parsed.data.intervalUnit,
     qualifyingActions: JSON.stringify(qualifyingActions),
+    dueDateSource: parsed.data.dueDateSource,
     nextDueDate,
     warningDays: parsed.data.warningDays,
     gracePeriodDays: parsed.data.gracePeriodDays,
@@ -225,7 +265,7 @@ export async function PUT(request: NextRequest) {
   }
 
   const rule = db.select().from(simKeepAliveRules).where(eq(simKeepAliveRules.id, id)).get();
-  return NextResponse.json({ rule: rule ? serializeRule(rule) : null });
+  return NextResponse.json({ rule: rule ? serializeRule(rule, sim.validUntil) : null });
 }
 
 export async function POST(request: NextRequest) {
@@ -237,11 +277,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "保号记录数据不正确" }, { status: 400 });
   }
 
-  const sim = db
-    .select({ id: simCards.id, currencyCode: simCards.currencyCode })
-    .from(simCards)
-    .where(eq(simCards.id, parsed.data.simId))
-    .get();
+  const sim = getSim(parsed.data.simId);
   if (!sim) return NextResponse.json({ error: "号码不存在" }, { status: 404 });
 
   const currencyCode = parsed.data.currencyCode ? parsed.data.currencyCode.toUpperCase() : sim.currencyCode;
@@ -281,6 +317,11 @@ export async function POST(request: NextRequest) {
     if (!rule.enabled) continue;
     const actions = parseQualifyingActions(rule.qualifyingActions);
     if (!actions.includes(parsed.data.activityType)) continue;
+
+    if (rule.dueDateSource === "sim_validity") {
+      if (parsed.data.validUntilAfter) advancedRuleIds.push(rule.id);
+      continue;
+    }
 
     const calculated = addKeepAliveInterval(parsed.data.activityDate, rule.intervalValue, rule.intervalUnit);
     if (!rule.nextDueDate || calculated > rule.nextDueDate) {
