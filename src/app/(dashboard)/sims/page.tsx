@@ -60,6 +60,27 @@ function smsPolicyClass(value: string | null) {
   }
 }
 
+function planTypeLabel(value: string | null) {
+  if (value === "prepaid") return "储值 / 预付费";
+  if (value === "postpaid") return "月费 / 后付费";
+  return null;
+}
+
+function periodLabel(value: number | null, unit: string | null) {
+  if (value === null || !unit) return null;
+  if (unit === "day") return `${value} 天`;
+  if (unit === "month") return `${value} 个月`;
+  if (unit === "year") return `${value} 年`;
+  return null;
+}
+
+function planFeeLabel(sim: SimRecord) {
+  if (sim.tariffRecurringFee === null) return null;
+  const currency = sim.tariffCurrencyCode || "";
+  const period = periodLabel(sim.tariffRecurringPeriodValue, sim.tariffRecurringPeriodUnit);
+  return `${currency} ${sim.tariffRecurringFee}${period ? ` / ${period}` : ""}`.trim();
+}
+
 export default function SimsPage() {
   const [sims, setSims] = useState<SimRecord[]>([]);
   const [carriers, setCarriers] = useState<CarrierRecord[]>([]);
@@ -252,6 +273,8 @@ export default function SimsPage() {
             {filtered.map((sim) => {
               const hint = dateHint(sim);
               const isDateOverdue = Boolean(sim.validUntil && sim.validUntil < todayDate());
+              const feeLabel = planFeeLabel(sim);
+              const typeLabel = planTypeLabel(sim.tariffPlanType);
               return (
                 <div key={sim.id} className="p-4 transition hover:bg-slate-50/70">
                   <div className="flex flex-col gap-4 xl:flex-row xl:items-center">
@@ -276,6 +299,9 @@ export default function SimsPage() {
                         </div>
                         {sim.tariffId ? (
                           <div className="mt-2 flex flex-wrap gap-1.5">
+                            {typeLabel ? <span className="rounded-md bg-indigo-50 px-2 py-1 text-[10px] font-medium text-indigo-700 ring-1 ring-inset ring-indigo-100">{typeLabel}</span> : null}
+                            {feeLabel ? <span className="rounded-md bg-sky-50 px-2 py-1 text-[10px] font-medium text-sky-700 ring-1 ring-inset ring-sky-100">{feeLabel}</span> : null}
+                            {sim.tariffAutoRenew === "yes" ? <span className="rounded-md bg-violet-50 px-2 py-1 text-[10px] font-medium text-violet-700 ring-1 ring-inset ring-violet-100">自动续订</span> : null}
                             <span className={`rounded-md px-2 py-1 text-[10px] font-medium ring-1 ring-inset ${smsPolicyClass(sim.localIncomingSmsPolicy)}`}>本地收短信 {getSmsReceivePolicyLabel(sim.localIncomingSmsPolicy)}</span>
                             <span className="rounded-md bg-slate-100 px-2 py-1 text-[10px] font-medium text-slate-600 ring-1 ring-inset ring-slate-200">{getRoamingAvailabilityLabel(sim.roamingAvailable)}</span>
                             <span className={`rounded-md px-2 py-1 text-[10px] font-medium ring-1 ring-inset ${smsPolicyClass(sim.roamingIncomingSmsPolicy)}`}>漫游收短信 {getSmsReceivePolicyLabel(sim.roamingIncomingSmsPolicy)}</span>
