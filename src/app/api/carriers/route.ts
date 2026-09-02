@@ -2,7 +2,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/db";
-import { carriers } from "@/db/schema";
+import { carriers, simCards } from "@/db/schema";
 import { getCurrentUser } from "@/lib/auth";
 import { getCountryRegion } from "@/lib/countries";
 
@@ -154,6 +154,11 @@ export async function DELETE(request: NextRequest) {
   const id = Number(request.nextUrl.searchParams.get("id"));
   if (!Number.isInteger(id) || id <= 0) {
     return NextResponse.json({ error: "无效的运营商 ID" }, { status: 400 });
+  }
+
+  const linkedSim = db.select({ id: simCards.id }).from(simCards).where(eq(simCards.carrierId, id)).get();
+  if (linkedSim) {
+    return NextResponse.json({ error: "该运营商已关联号码，请先修改或删除相关号码" }, { status: 409 });
   }
 
   const deleted = db.delete(carriers).where(eq(carriers.id, id)).returning({ id: carriers.id }).get();
