@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, Pencil, Plus, ReceiptText, Search, Smartphone, Trash2 } from "lucide-react";
 import { SimEditorModal } from "@/components/sims/sim-editor-modal";
+import { SimOverviewModal } from "@/components/sims/sim-overview-modal";
 import { TariffModal } from "@/components/sims/tariff-modal";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -92,6 +93,7 @@ export default function SimsPage() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<SimRecord | null>(null);
   const [tariffSim, setTariffSim] = useState<SimRecord | null>(null);
+  const [overviewSim, setOverviewSim] = useState<SimRecord | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -242,13 +244,26 @@ export default function SimsPage() {
               const feeLabel = planFeeLabel(sim);
               const typeLabel = planTypeLabel(sim.tariffPlanType);
               return (
-                <div key={sim.id} className="p-4 transition hover:bg-slate-50/70">
+                <div
+                  key={sim.id}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`查看 ${sim.label} 号码详情`}
+                  onClick={() => setOverviewSim(sim)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      setOverviewSim(sim);
+                    }
+                  }}
+                  className="cursor-pointer p-4 outline-none transition hover:bg-slate-50/70 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-slate-300"
+                >
                   <div className="flex flex-col gap-4 xl:flex-row xl:items-center">
                     <div className="flex min-w-0 flex-1 items-start gap-3">
                       <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600"><Smartphone className="h-4 w-4" /></div>
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-medium text-slate-900">{sim.label}</span>
+                          <span className="font-medium text-slate-900 transition group-hover:text-slate-950">{sim.label}</span>
                           <span className={`rounded-md px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ${statusClass(sim.status)}`}>{getSimStatusLabel(sim.status)}</span>
                           {isDateOverdue && sim.status !== "expired" && sim.status !== "closed" ? <span className="rounded-md bg-rose-50 px-2 py-0.5 text-[11px] font-medium text-rose-700 ring-1 ring-inset ring-rose-100">有效期已过</span> : null}
                           {sim.tariffId ? (
@@ -291,14 +306,36 @@ export default function SimsPage() {
                       <div className="rounded-xl bg-slate-50 px-3 py-2.5">
                         <div className="text-[11px] text-slate-400">接验证码</div>
                         <div className="mt-1 text-xs font-medium text-slate-700">本地：{sim.tariffId ? getSmsReceivePolicyLabel(sim.localIncomingSmsPolicy) : "未记录"}</div>
-                        <div className="mt-0.5 text-[10px] text-slate-500">漫游：{sim.tariffId ? getSmsReceivePolicyLabel(sim.roamingIncomingSmsPolicy) : "未记录"}</div>
+                        <div className="mt-1 text-xs font-medium text-slate-600">漫游：{sim.tariffId ? getSmsReceivePolicyLabel(sim.roamingIncomingSmsPolicy) : "未记录"}</div>
                       </div>
                       <div className="col-span-2 flex flex-wrap items-center justify-end gap-2 sm:col-span-1">
-                        <button onClick={() => setTariffSim(sim)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-700 transition hover:bg-white hover:text-slate-950">
+                        <button
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setTariffSim(sim);
+                          }}
+                          className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-700 transition hover:bg-white hover:text-slate-950"
+                        >
                           <ReceiptText className="h-3.5 w-3.5" />资费
                         </button>
-                        <button onClick={() => openEdit(sim)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-600 transition hover:bg-white hover:text-slate-950"><Pencil className="h-3.5 w-3.5" />编辑</button>
-                        <button onClick={() => void remove(sim)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-rose-200 px-3 text-xs font-medium text-rose-600 transition hover:bg-rose-50"><Trash2 className="h-3.5 w-3.5" />删除</button>
+                        <button
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openEdit(sim);
+                          }}
+                          className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-600 transition hover:bg-white hover:text-slate-950"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />编辑
+                        </button>
+                        <button
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void remove(sim);
+                          }}
+                          className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-rose-200 px-3 text-xs font-medium text-rose-600 transition hover:bg-rose-50"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />删除
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -318,6 +355,23 @@ export default function SimsPage() {
             setEditing(null);
           }}
           onSaved={loadData}
+        />
+      ) : null}
+
+      {overviewSim ? (
+        <SimOverviewModal
+          sim={overviewSim}
+          onClose={() => setOverviewSim(null)}
+          onEdit={() => {
+            const sim = overviewSim;
+            setOverviewSim(null);
+            openEdit(sim);
+          }}
+          onEditTariff={() => {
+            const sim = overviewSim;
+            setOverviewSim(null);
+            setTariffSim(sim);
+          }}
         />
       ) : null}
 
