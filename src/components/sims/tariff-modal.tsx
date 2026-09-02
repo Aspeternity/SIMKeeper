@@ -6,7 +6,14 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { TariffRateRow, type TariffRateFormValue } from "@/components/sims/tariff-rate-row";
 import { CURRENCIES, getDefaultCurrency } from "@/lib/sim-options";
-import { ROAMING_AVAILABILITY, TARIFF_SERVICES, type TariffServiceCode } from "@/lib/tariff-options";
+import {
+  AUTO_RENEW_OPTIONS,
+  ROAMING_AVAILABILITY,
+  TARIFF_PERIOD_UNITS,
+  TARIFF_PLAN_TYPES,
+  TARIFF_SERVICES,
+  type TariffServiceCode,
+} from "@/lib/tariff-options";
 
 type SimSummary = {
   id: number;
@@ -20,7 +27,13 @@ type SimSummary = {
 
 type TariffForm = {
   planName: string;
+  planType: string;
   currencyCode: string;
+  recurringFee: string;
+  recurringPeriodValue: string;
+  recurringPeriodUnit: string;
+  administrationFee: string;
+  autoRenew: string;
   roamingAvailable: string;
   usageSummary: string;
   sourceUrl: string;
@@ -41,7 +54,13 @@ function createEmptyRates() {
 function createEmptyTariff(currencyCode: string): TariffForm {
   return {
     planName: "",
+    planType: "unknown",
     currencyCode,
+    recurringFee: "",
+    recurringPeriodValue: "",
+    recurringPeriodUnit: "",
+    administrationFee: "",
+    autoRenew: "unknown",
     roamingAvailable: "unknown",
     usageSummary: "",
     sourceUrl: "",
@@ -74,7 +93,13 @@ function tariffToForm(value: Record<string, unknown> | null, fallbackCurrency: s
 
   return {
     planName: String(value.planName ?? ""),
+    planType: String(value.planType ?? "unknown"),
     currencyCode: String(value.currencyCode ?? fallbackCurrency),
+    recurringFee: value.recurringFee === null || value.recurringFee === undefined ? "" : String(value.recurringFee),
+    recurringPeriodValue: value.recurringPeriodValue === null || value.recurringPeriodValue === undefined ? "" : String(value.recurringPeriodValue),
+    recurringPeriodUnit: String(value.recurringPeriodUnit ?? ""),
+    administrationFee: value.administrationFee === null || value.administrationFee === undefined ? "" : String(value.administrationFee),
+    autoRenew: String(value.autoRenew ?? "unknown"),
     roamingAvailable: String(value.roamingAvailable ?? "unknown"),
     usageSummary: String(value.usageSummary ?? ""),
     sourceUrl: String(value.sourceUrl ?? ""),
@@ -91,6 +116,36 @@ function isSafeSourceUrl(value: string) {
   } catch {
     return false;
   }
+}
+
+function MoneyInput({
+  currencyCode,
+  value,
+  onChange,
+  placeholder = "0.00",
+}: {
+  currencyCode: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+}) {
+  return (
+    <div className="flex h-10 overflow-hidden rounded-xl border border-slate-200 bg-white focus-within:border-slate-400 focus-within:ring-2 focus-within:ring-slate-100">
+      <div className="flex min-w-[58px] items-center justify-center border-r border-slate-200 bg-slate-50 px-2 text-xs font-medium text-slate-500">
+        {currencyCode}
+      </div>
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        type="number"
+        min="0"
+        step="any"
+        inputMode="decimal"
+        placeholder={placeholder}
+        className="min-w-0 flex-1 bg-transparent px-3 text-sm text-slate-700 outline-none placeholder:text-slate-300"
+      />
+    </div>
+  );
 }
 
 export function TariffModal({ sim, onClose, onSaved }: { sim: SimSummary; onClose: () => void; onSaved: () => Promise<void> | void }) {
@@ -217,13 +272,20 @@ export function TariffModal({ sim, onClose, onSaved }: { sim: SimSummary; onClos
           <form onSubmit={submit} className="space-y-6 bg-white p-6">
             <section className="space-y-4">
               <div>
-                <h4 className="font-medium text-slate-900">资费档案</h4>
-                <p className="mt-1 text-xs text-slate-400">资费项目全部使用统一状态、金额和计费单位；只有实际金额需要手动输入。</p>
+                <h4 className="font-medium text-slate-900">套餐概况</h4>
+                <p className="mt-1 text-xs text-slate-400">先记录套餐类型、费用和周期，再在下面维护单项资费与套餐内权益。</p>
               </div>
+
               <div className="grid gap-4 md:grid-cols-3">
                 <label className="space-y-1.5 text-sm">
                   <span className="font-medium text-slate-700">套餐 / 资费名称</span>
-                  <Input value={form.planName} onChange={(event) => setField("planName", event.target.value)} placeholder="可选，如预付费基础资费" />
+                  <Input value={form.planName} onChange={(event) => setField("planName", event.target.value)} placeholder="可选，填写运营商套餐名称" />
+                </label>
+                <label className="space-y-1.5 text-sm">
+                  <span className="font-medium text-slate-700">套餐类型</span>
+                  <select value={form.planType} onChange={(event) => setField("planType", event.target.value)} className={selectClass}>
+                    {TARIFF_PLAN_TYPES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                  </select>
                 </label>
                 <label className="space-y-1.5 text-sm">
                   <span className="font-medium text-slate-700">计费币种</span>
@@ -233,6 +295,45 @@ export function TariffModal({ sim, onClose, onSaved }: { sim: SimSummary; onClos
                     ))}
                   </select>
                 </label>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+                <label className="space-y-1.5 text-sm">
+                  <span className="font-medium text-slate-700">基础 / 月费</span>
+                  <MoneyInput currencyCode={form.currencyCode} value={form.recurringFee} onChange={(value) => setField("recurringFee", value)} />
+                </label>
+
+                <label className="space-y-1.5 text-sm md:col-span-1 xl:col-span-1">
+                  <span className="font-medium text-slate-700">计费周期</span>
+                  <div className="grid grid-cols-[1fr_92px] gap-2">
+                    <Input
+                      value={form.recurringPeriodValue}
+                      onChange={(event) => setField("recurringPeriodValue", event.target.value)}
+                      type="number"
+                      min="1"
+                      step="1"
+                      inputMode="numeric"
+                      placeholder="例如 30"
+                    />
+                    <select value={form.recurringPeriodUnit} onChange={(event) => setField("recurringPeriodUnit", event.target.value)} className={selectClass}>
+                      <option value="">单位</option>
+                      {TARIFF_PERIOD_UNITS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                    </select>
+                  </div>
+                </label>
+
+                <label className="space-y-1.5 text-sm">
+                  <span className="font-medium text-slate-700">行政 / 附加费</span>
+                  <MoneyInput currencyCode={form.currencyCode} value={form.administrationFee} onChange={(value) => setField("administrationFee", value)} />
+                </label>
+
+                <label className="space-y-1.5 text-sm">
+                  <span className="font-medium text-slate-700">续订方式</span>
+                  <select value={form.autoRenew} onChange={(event) => setField("autoRenew", event.target.value)} className={selectClass}>
+                    {AUTO_RENEW_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                  </select>
+                </label>
+
                 <label className="space-y-1.5 text-sm">
                   <span className="font-medium text-slate-700">国际漫游</span>
                   <select value={form.roamingAvailable} onChange={(event) => setField("roamingAvailable", event.target.value)} className={selectClass}>
@@ -240,6 +341,7 @@ export function TariffModal({ sim, onClose, onSaved }: { sim: SimSummary; onClos
                   </select>
                 </label>
               </div>
+
               <label className="block space-y-1.5 text-sm">
                 <span className="font-medium text-slate-700">使用结论</span>
                 <textarea
@@ -331,7 +433,7 @@ export function TariffModal({ sim, onClose, onSaved }: { sim: SimSummary; onClos
                   value={form.notes}
                   onChange={(event) => setField("notes", event.target.value)}
                   rows={3}
-                  placeholder="可选：记录特殊计费周期、套餐限制、余额要求、漫游区域差异等"
+                  placeholder="可选：记录特殊套餐限制、余额要求、漫游区域差异等"
                   className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
                 />
               </label>
