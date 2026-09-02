@@ -1,10 +1,12 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { ExternalLink, Globe2, Loader2, MessageSquareText, PhoneCall, ReceiptText, Trash2, Wifi, X } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { ROAMING_AVAILABILITY, SMS_RECEIVE_POLICIES } from "@/lib/tariff-options";
+import { TariffRateRow, type TariffRateFormValue } from "@/components/sims/tariff-rate-row";
+import { CURRENCIES, getDefaultCurrency } from "@/lib/sim-options";
+import { ROAMING_AVAILABILITY, TARIFF_SERVICES, type TariffServiceCode } from "@/lib/tariff-options";
 
 type SimSummary = {
   id: number;
@@ -13,82 +15,90 @@ type SimSummary = {
   carrierName: string;
   country: string;
   countryCode: string;
+  currencyCode: string | null;
 };
 
 type TariffForm = {
   planName: string;
-  localOutgoingCall: string;
-  localIncomingCall: string;
-  localOutgoingSms: string;
-  localIncomingSms: string;
-  localData: string;
-  internationalOutgoingCall: string;
-  internationalOutgoingSms: string;
-  roamingOutgoingCall: string;
-  roamingIncomingCall: string;
-  roamingOutgoingSms: string;
-  roamingIncomingSms: string;
-  roamingData: string;
-  localIncomingSmsPolicy: string;
-  roamingIncomingSmsPolicy: string;
+  currencyCode: string;
   roamingAvailable: string;
   usageSummary: string;
   sourceUrl: string;
   verifiedAt: string;
   notes: string;
+  rates: Record<TariffServiceCode, TariffRateFormValue>;
 };
 
-const emptyTariff: TariffForm = {
-  planName: "",
-  localOutgoingCall: "",
-  localIncomingCall: "",
-  localOutgoingSms: "",
-  localIncomingSms: "",
-  localData: "",
-  internationalOutgoingCall: "",
-  internationalOutgoingSms: "",
-  roamingOutgoingCall: "",
-  roamingIncomingCall: "",
-  roamingOutgoingSms: "",
-  roamingIncomingSms: "",
-  roamingData: "",
-  localIncomingSmsPolicy: "unknown",
-  roamingIncomingSmsPolicy: "unknown",
-  roamingAvailable: "unknown",
-  usageSummary: "",
-  sourceUrl: "",
-  verifiedAt: "",
-  notes: "",
-};
+function createEmptyRates() {
+  return Object.fromEntries(
+    TARIFF_SERVICES.map((service) => [
+      service.code,
+      { mode: "unknown", amount: "", billingUnit: service.defaultUnit, legacyText: "" },
+    ]),
+  ) as Record<TariffServiceCode, TariffRateFormValue>;
+}
 
-function tariffToForm(value: Record<string, unknown> | null): TariffForm {
-  if (!value) return emptyTariff;
+function createEmptyTariff(currencyCode: string): TariffForm {
+  return {
+    planName: "",
+    currencyCode,
+    roamingAvailable: "unknown",
+    usageSummary: "",
+    sourceUrl: "",
+    verifiedAt: "",
+    notes: "",
+    rates: createEmptyRates(),
+  };
+}
+
+function tariffToForm(value: Record<string, unknown> | null, fallbackCurrency: string): TariffForm {
+  if (!value) return createEmptyTariff(fallbackCurrency);
+
+  const rawRates = value.rates && typeof value.rates === "object" ? (value.rates as Record<string, unknown>) : {};
+  const rates = Object.fromEntries(
+    TARIFF_SERVICES.map((service) => {
+      const raw = rawRates[service.code] && typeof rawRates[service.code] === "object"
+        ? (rawRates[service.code] as Record<string, unknown>)
+        : {};
+      return [
+        service.code,
+        {
+          mode: String(raw.mode ?? "unknown"),
+          amount: raw.amount === null || raw.amount === undefined ? "" : String(raw.amount),
+          billingUnit: String(raw.billingUnit ?? service.defaultUnit),
+          legacyText: String(raw.legacyText ?? ""),
+        },
+      ];
+    }),
+  ) as Record<TariffServiceCode, TariffRateFormValue>;
+
   return {
     planName: String(value.planName ?? ""),
-    localOutgoingCall: String(value.localOutgoingCall ?? ""),
-    localIncomingCall: String(value.localIncomingCall ?? ""),
-    localOutgoingSms: String(value.localOutgoingSms ?? ""),
-    localIncomingSms: String(value.localIncomingSms ?? ""),
-    localData: String(value.localData ?? ""),
-    internationalOutgoingCall: String(value.internationalOutgoingCall ?? ""),
-    internationalOutgoingSms: String(value.internationalOutgoingSms ?? ""),
-    roamingOutgoingCall: String(value.roamingOutgoingCall ?? ""),
-    roamingIncomingCall: String(value.roamingIncomingCall ?? ""),
-    roamingOutgoingSms: String(value.roamingOutgoingSms ?? ""),
-    roamingIncomingSms: String(value.roamingIncomingSms ?? ""),
-    roamingData: String(value.roamingData ?? ""),
-    localIncomingSmsPolicy: String(value.localIncomingSmsPolicy ?? "unknown"),
-    roamingIncomingSmsPolicy: String(value.roamingIncomingSmsPolicy ?? "unknown"),
+    currencyCode: String(value.currencyCode ?? fallbackCurrency),
     roamingAvailable: String(value.roamingAvailable ?? "unknown"),
     usageSummary: String(value.usageSummary ?? ""),
     sourceUrl: String(value.sourceUrl ?? ""),
     verifiedAt: String(value.verifiedAt ?? ""),
     notes: String(value.notes ?? ""),
+    rates,
   };
 }
 
+function isSafeSourceUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 export function TariffModal({ sim, onClose, onSaved }: { sim: SimSummary; onClose: () => void; onSaved: () => Promise<void> | void }) {
-  const [form, setForm] = useState<TariffForm>(emptyTariff);
+  const fallbackCurrency = useMemo(
+    () => sim.currencyCode || getDefaultCurrency(sim.countryCode),
+    [sim.countryCode, sim.currencyCode],
+  );
+  const [form, setForm] = useState<TariffForm>(() => createEmptyTariff(fallbackCurrency));
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [hasTariff, setHasTariff] = useState(false);
@@ -105,7 +115,7 @@ export function TariffModal({ sim, onClose, onSaved }: { sim: SimSummary; onClos
         if (!response.ok) throw new Error(data.error || "资费信息加载失败");
         if (!active) return;
         setHasTariff(Boolean(data.tariff));
-        setForm(tariffToForm(data.tariff));
+        setForm(tariffToForm(data.tariff, fallbackCurrency));
       } catch (err) {
         if (active) setError(err instanceof Error ? err.message : "资费信息加载失败");
       } finally {
@@ -116,10 +126,20 @@ export function TariffModal({ sim, onClose, onSaved }: { sim: SimSummary; onClos
     return () => {
       active = false;
     };
-  }, [sim.id]);
+  }, [fallbackCurrency, sim.id]);
 
-  function setField<K extends keyof TariffForm>(field: K, value: TariffForm[K]) {
+  function setField<K extends Exclude<keyof TariffForm, "rates">>(field: K, value: TariffForm[K]) {
     setForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function setRate(serviceCode: TariffServiceCode, value: TariffRateFormValue) {
+    setForm((current) => ({
+      ...current,
+      rates: {
+        ...current.rates,
+        [serviceCode]: value,
+      },
+    }));
   }
 
   async function submit(event: FormEvent) {
@@ -135,7 +155,7 @@ export function TariffModal({ sim, onClose, onSaved }: { sim: SimSummary; onClos
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "资费信息保存失败");
       setHasTariff(true);
-      setForm(tariffToForm(data.tariff));
+      setForm(tariffToForm(data.tariff, fallbackCurrency));
       await onSaved();
       onClose();
     } catch (err) {
@@ -162,11 +182,14 @@ export function TariffModal({ sim, onClose, onSaved }: { sim: SimSummary; onClos
     }
   }
 
-  const inputClass = "h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100";
+  const selectClass = "h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100";
+  const localServices = TARIFF_SERVICES.filter((service) => service.group === "local");
+  const internationalServices = TARIFF_SERVICES.filter((service) => service.group === "international");
+  const roamingServices = TARIFF_SERVICES.filter((service) => service.group === "roaming");
 
   return (
     <div className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-slate-950/35 p-4 backdrop-blur-sm">
-      <Card className="my-4 w-full max-w-4xl overflow-hidden shadow-2xl">
+      <Card className="my-4 w-full max-w-5xl overflow-hidden shadow-2xl">
         <div className="flex items-start justify-between gap-4 border-b bg-white px-6 py-5">
           <div>
             <div className="flex items-center gap-2 text-sm font-medium text-slate-500">
@@ -194,96 +217,90 @@ export function TariffModal({ sim, onClose, onSaved }: { sim: SimSummary; onClos
           <form onSubmit={submit} className="space-y-6 bg-white p-6">
             <section className="space-y-4">
               <div>
-                <h4 className="font-medium text-slate-900">资费档案与核心结论</h4>
-                <p className="mt-1 text-xs text-slate-400">优先记录收短信和漫游结论，方便以后快速判断是否适合接验证码和长期保号。</p>
+                <h4 className="font-medium text-slate-900">资费档案</h4>
+                <p className="mt-1 text-xs text-slate-400">资费项目全部使用统一状态、金额和计费单位；只有实际金额需要手动输入。</p>
               </div>
-              <div className="grid gap-4 md:grid-cols-2">
+              <div className="grid gap-4 md:grid-cols-3">
                 <label className="space-y-1.5 text-sm">
                   <span className="font-medium text-slate-700">套餐 / 资费名称</span>
                   <Input value={form.planName} onChange={(event) => setField("planName", event.target.value)} placeholder="可选，如预付费基础资费" />
                 </label>
                 <label className="space-y-1.5 text-sm">
-                  <span className="font-medium text-slate-700">本地接收短信</span>
-                  <select value={form.localIncomingSmsPolicy} onChange={(event) => setField("localIncomingSmsPolicy", event.target.value)} className={inputClass}>
-                    {SMS_RECEIVE_POLICIES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                  <span className="font-medium text-slate-700">计费币种</span>
+                  <select value={form.currencyCode} onChange={(event) => setField("currencyCode", event.target.value)} className={selectClass}>
+                    {CURRENCIES.map((currency) => (
+                      <option key={currency.code} value={currency.code}>{currency.code} · {currency.label}</option>
+                    ))}
                   </select>
                 </label>
                 <label className="space-y-1.5 text-sm">
                   <span className="font-medium text-slate-700">国际漫游</span>
-                  <select value={form.roamingAvailable} onChange={(event) => setField("roamingAvailable", event.target.value)} className={inputClass}>
+                  <select value={form.roamingAvailable} onChange={(event) => setField("roamingAvailable", event.target.value)} className={selectClass}>
                     {ROAMING_AVAILABILITY.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-                  </select>
-                </label>
-                <label className="space-y-1.5 text-sm">
-                  <span className="font-medium text-slate-700">漫游接收短信</span>
-                  <select value={form.roamingIncomingSmsPolicy} onChange={(event) => setField("roamingIncomingSmsPolicy", event.target.value)} className={inputClass}>
-                    {SMS_RECEIVE_POLICIES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
                   </select>
                 </label>
               </div>
               <label className="block space-y-1.5 text-sm">
                 <span className="font-medium text-slate-700">使用结论</span>
-                <textarea value={form.usageSummary} onChange={(event) => setField("usageSummary", event.target.value)} rows={2} placeholder="例如：适合长期保号和接验证码；不建议用于漫游通话或数据" className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100" />
+                <textarea
+                  value={form.usageSummary}
+                  onChange={(event) => setField("usageSummary", event.target.value)}
+                  rows={2}
+                  placeholder="可选，例如：适合长期保号和接验证码；不建议用于漫游通话或数据"
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                />
               </label>
             </section>
 
-            <section className="space-y-4 border-t pt-6">
+            <section className="space-y-3 border-t pt-6">
               <div className="flex items-center gap-2">
                 <PhoneCall className="h-4 w-4 text-slate-400" />
                 <h4 className="font-medium text-slate-900">本地使用</h4>
               </div>
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                {[
-                  ["localOutgoingCall", "拨打电话"],
-                  ["localIncomingCall", "接听电话"],
-                  ["localOutgoingSms", "发送短信"],
-                  ["localIncomingSms", "接收短信"],
-                  ["localData", "移动数据"],
-                ].map(([field, label]) => (
-                  <label key={field} className="space-y-1.5 text-sm">
-                    <span className="font-medium text-slate-700">{label}</span>
-                    <Input value={form[field as keyof TariffForm]} onChange={(event) => setField(field as keyof TariffForm, event.target.value)} placeholder="免费 / 单价 / 套餐内包含" />
-                  </label>
-                ))}
-              </div>
+              {localServices.map((service) => (
+                <TariffRateRow
+                  key={service.code}
+                  serviceCode={service.code}
+                  label={service.label}
+                  currencyCode={form.currencyCode}
+                  value={form.rates[service.code]}
+                  onChange={(value) => setRate(service.code, value)}
+                />
+              ))}
             </section>
 
-            <section className="space-y-4 border-t pt-6">
+            <section className="space-y-3 border-t pt-6">
               <div className="flex items-center gap-2">
                 <Globe2 className="h-4 w-4 text-slate-400" />
                 <h4 className="font-medium text-slate-900">国际使用</h4>
               </div>
-              <div className="grid gap-4 md:grid-cols-2">
-                <label className="space-y-1.5 text-sm">
-                  <span className="font-medium text-slate-700">国际电话</span>
-                  <Input value={form.internationalOutgoingCall} onChange={(event) => setField("internationalOutgoingCall", event.target.value)} placeholder="可记录不同目的地或统一资费" />
-                </label>
-                <label className="space-y-1.5 text-sm">
-                  <span className="font-medium text-slate-700">国际短信</span>
-                  <Input value={form.internationalOutgoingSms} onChange={(event) => setField("internationalOutgoingSms", event.target.value)} placeholder="可记录每条价格或套餐规则" />
-                </label>
-              </div>
+              {internationalServices.map((service) => (
+                <TariffRateRow
+                  key={service.code}
+                  serviceCode={service.code}
+                  label={service.label}
+                  currencyCode={form.currencyCode}
+                  value={form.rates[service.code]}
+                  onChange={(value) => setRate(service.code, value)}
+                />
+              ))}
             </section>
 
-            <section className="space-y-4 border-t pt-6">
+            <section className="space-y-3 border-t pt-6">
               <div className="flex items-center gap-2">
                 <Wifi className="h-4 w-4 text-slate-400" />
                 <h4 className="font-medium text-slate-900">国际漫游</h4>
               </div>
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                {[
-                  ["roamingOutgoingCall", "漫游拨打电话"],
-                  ["roamingIncomingCall", "漫游接听电话"],
-                  ["roamingOutgoingSms", "漫游发送短信"],
-                  ["roamingIncomingSms", "漫游接收短信"],
-                  ["roamingData", "漫游数据"],
-                ].map(([field, label]) => (
-                  <label key={field} className="space-y-1.5 text-sm">
-                    <span className="font-medium text-slate-700">{label}</span>
-                    <Input value={form[field as keyof TariffForm]} onChange={(event) => setField(field as keyof TariffForm, event.target.value)} placeholder="免费 / 单价 / 漫游包规则" />
-                  </label>
-                ))}
-              </div>
+              {roamingServices.map((service) => (
+                <TariffRateRow
+                  key={service.code}
+                  serviceCode={service.code}
+                  label={service.label}
+                  currencyCode={form.currencyCode}
+                  value={form.rates[service.code]}
+                  onChange={(value) => setRate(service.code, value)}
+                />
+              ))}
             </section>
 
             <section className="space-y-4 border-t pt-6">
@@ -296,7 +313,7 @@ export function TariffModal({ sim, onClose, onSaved }: { sim: SimSummary; onClos
                   <span className="font-medium text-slate-700">资费来源</span>
                   <div className="flex gap-2">
                     <Input value={form.sourceUrl} onChange={(event) => setField("sourceUrl", event.target.value)} placeholder="运营商官网资费页面链接" />
-                    {form.sourceUrl ? (
+                    {isSafeSourceUrl(form.sourceUrl) ? (
                       <a href={form.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border text-slate-500 transition hover:bg-slate-50 hover:text-slate-900" title="打开来源">
                         <ExternalLink className="h-4 w-4" />
                       </a>
@@ -310,7 +327,13 @@ export function TariffModal({ sim, onClose, onSaved }: { sim: SimSummary; onClos
               </div>
               <label className="block space-y-1.5 text-sm">
                 <span className="font-medium text-slate-700">资费备注</span>
-                <textarea value={form.notes} onChange={(event) => setField("notes", event.target.value)} rows={3} placeholder="可记录计费周期、套餐限制、余额要求、特殊漫游条件等" className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100" />
+                <textarea
+                  value={form.notes}
+                  onChange={(event) => setField("notes", event.target.value)}
+                  rows={3}
+                  placeholder="可选：记录特殊计费周期、套餐限制、余额要求、漫游区域差异等"
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                />
               </label>
             </section>
 
