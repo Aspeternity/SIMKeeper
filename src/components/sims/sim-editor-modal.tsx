@@ -5,6 +5,7 @@ import { getCountryCallingCode, parsePhoneNumberFromString, type CountryCode } f
 import { Loader2, X } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { ModalPortal } from "@/components/ui/modal-portal";
 import { CURRENCIES, getDefaultCurrency, SIM_STATUSES, SIM_TYPES } from "@/lib/sim-options";
 import type { CarrierRecord, SimRecord } from "@/lib/sim-types";
 
@@ -125,8 +126,8 @@ export function SimEditorModal({ carriers, editing, onClose, onSaved }: { carrie
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/30 p-4 backdrop-blur-sm sm:items-center">
-      <Card className="my-4 w-full max-w-2xl overflow-hidden shadow-2xl">
+    <ModalPortal>
+      <Card className="w-full max-w-2xl overflow-hidden shadow-2xl">
         <div className="flex items-center justify-between border-b bg-white px-6 py-5">
           <div>
             <h3 className="font-semibold">{editing ? "编辑号码" : "新增号码"}</h3>
@@ -237,6 +238,6 @@ export function SimEditorModal({ carriers, editing, onClose, onSaved }: { carrie
           </div>
         </form>
       </Card>
-    </div>
+    </ModalPortal>
   );
 }
