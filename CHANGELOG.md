@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.1.0-alpha.4
+
+### Added
+
+- Keep-alive management page with per-number lifecycle rules
+- Multiple independent keep-alive rules per SIM so recharge validity and activity requirements can be tracked at the same time
+- Rule intervals in days, months or years with end-of-month-safe date calculations
+- Qualifying activity types for recharge, outgoing calls, outgoing SMS, data use, plan renewal, other chargeable activity and manual extensions
+- Configurable next-action date, warning window and grace period per keep-alive rule
+- Keep-alive activity history with optional cost, resulting balance, resulting SIM validity date and notes
+- Automatic keep-alive rule advancement when a recorded activity matches that rule's qualifying actions
+- Automatic SIM balance and validity synchronization from keep-alive activity records
+- Searchable/filterable keep-alive management view with per-SIM status and earliest upcoming action
+- Keep-alive status section inside number details with current rules and recent activity history
+- Dashboard lifecycle alerts combining SIM validity dates and keep-alive rule due dates
+- CI smoke coverage for multiple independent rules, selective automatic advancement and SIM state synchronization
+
+### Changed
+
+- Enabled the `保号管理` sidebar entry
+- Sidebar and package version updated to `v0.1.0-alpha.4`
+- Dashboard `30 天内需处理` concept replaced by generalized `待处理`, using both SIM validity dates and per-rule warning windows
+- Dashboard active/overdue lifecycle state now considers enabled keep-alive rules in addition to SIM validity
+- Number details now follow the lifecycle order `基本信息 → 实名信息 → 保号状态 → 资费概览`
+
 ## v0.1.0-alpha.3
 
 ### Added
