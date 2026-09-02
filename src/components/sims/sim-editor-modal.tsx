@@ -126,7 +126,7 @@ export function SimEditorModal({ carriers, editing, onClose, onSaved }: { carrie
   }
 
   return (
-    <ModalPortal>
+    <ModalPortal onBackdropClick={saving ? undefined : onClose}>
       <Card className="w-full max-w-2xl overflow-hidden shadow-2xl">
         <div className="flex items-center justify-between border-b bg-white px-6 py-5">
           <div>
