@@ -199,6 +199,7 @@ sqlite.exec(`
     interval_value INTEGER NOT NULL,
     interval_unit TEXT NOT NULL,
     qualifying_actions TEXT NOT NULL,
+    due_date_source TEXT NOT NULL DEFAULT 'independent',
     next_due_date TEXT,
     warning_days INTEGER NOT NULL DEFAULT 30,
     grace_period_days INTEGER NOT NULL DEFAULT 0,
@@ -286,6 +287,17 @@ const tariffMigrations = [
 
 for (const [column, sql] of tariffMigrations) {
   if (!tariffColumnNames.has(column)) sqlite.exec(sql);
+}
+
+const keepAliveColumns = sqlite.prepare("PRAGMA table_info(sim_keep_alive_rules)").all() as Array<{ name: string }>;
+const keepAliveColumnNames = new Set(keepAliveColumns.map((column) => column.name));
+if (!keepAliveColumnNames.has("due_date_source")) {
+  sqlite.exec("ALTER TABLE sim_keep_alive_rules ADD COLUMN due_date_source TEXT NOT NULL DEFAULT 'independent'");
+  sqlite.exec(`
+    UPDATE sim_keep_alive_rules
+    SET due_date_source = 'sim_validity', next_due_date = NULL
+    WHERE lower(trim(name)) IN ('号码有效期', 'sim有效期', 'sim 卡有效期', '储值卡有效期', '有效期')
+  `);
 }
 
 export const db = drizzle(sqlite, { schema });
