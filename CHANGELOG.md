@@ -14,6 +14,8 @@
 - Number search and filtering by status and carrier
 - Lifecycle summary cards for total, active, due-soon and overdue numbers
 - Dashboard action list for expired and 30-day upcoming validity dates
+- Automatic international calling-code prefix based on the selected carrier country/region
+- E.164 phone-number parsing and normalization using country-aware numbering metadata
 
 ### Changed
 
@@ -22,6 +24,8 @@
 - Dashboard statistics now use real SQLite SIM data instead of placeholders
 - Carrier deletion is blocked while the carrier is still referenced by a SIM record
 - Country/region remains normalized through the carrier relationship instead of being duplicated in each SIM record
+- Number entry now selects the carrier before the phone number so the correct international prefix is shown automatically
+- Phone-number input accepts a local number while storage remains normalized to the full international number
 
 ## v0.1.0-alpha.2
 
