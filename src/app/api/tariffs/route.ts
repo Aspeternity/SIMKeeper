@@ -4,13 +4,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import { simCards, simTariffRates, simTariffs } from "@/db/schema";
 import { getCurrentUser } from "@/lib/auth";
-import {
-  getBillingUnitsForService,
-  smsPolicyFromRateMode,
-  TARIFF_BILLING_UNITS,
-  TARIFF_RATE_MODES,
-  TARIFF_SERVICES,
-} from "@/lib/tariff-options";
+import { getBillingUnitsForService, smsPolicyFromRateMode, TARIFF_SERVICES } from "@/lib/tariff-options";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,23 +32,35 @@ const urlField = z
   .optional()
   .default("");
 
-const rateModeValues = TARIFF_RATE_MODES.map((item) => item.value) as [
-  (typeof TARIFF_RATE_MODES)[number]["value"],
-  ...(typeof TARIFF_RATE_MODES)[number]["value"][],
-];
-const billingUnitValues = TARIFF_BILLING_UNITS.map((item) => item.value) as [
-  (typeof TARIFF_BILLING_UNITS)[number]["value"],
-  ...(typeof TARIFF_BILLING_UNITS)[number]["value"][],
-];
 const serviceCodes = new Set<string>(TARIFF_SERVICES.map((item) => item.code));
 
 const rateSchema = z.object({
-  mode: z.enum(rateModeValues),
+  mode: z.enum(["unknown", "free", "charged", "included", "unavailable"]),
   amount: z.preprocess(
     (value) => (value === "" || value === null || value === undefined ? null : Number(value)),
     z.number().finite().nonnegative("资费金额不能小于 0").nullable(),
   ),
-  billingUnit: z.union([z.enum(billingUnitValues), z.literal("")]).optional().default(""),
+  billingUnit: z
+    .union([
+      z.enum([
+        "per_second",
+        "per_6_seconds",
+        "per_10_seconds",
+        "per_15_seconds",
+        "per_30_seconds",
+        "per_minute",
+        "per_call",
+        "per_sms",
+        "per_kb",
+        "per_mb",
+        "per_gb",
+        "per_day",
+        "per_session",
+      ]),
+      z.literal(""),
+    ])
+    .optional()
+    .default(""),
 });
 
 const tariffSchema = z
@@ -83,7 +89,7 @@ const tariffSchema = z
           context.addIssue({ code: "custom", path: ["rates", serviceCode, "billingUnit"], message: "收费项目请选择计费单位" });
         } else {
           const allowedUnits = getBillingUnitsForService(serviceCode).map((item) => item.value);
-          if (!allowedUnits.includes(rate.billingUnit as never)) {
+          if (!allowedUnits.some((unit) => unit === rate.billingUnit)) {
             context.addIssue({ code: "custom", path: ["rates", serviceCode, "billingUnit"], message: "该计费单位不适用于此资费项目" });
           }
         }
