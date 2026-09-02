@@ -66,6 +66,12 @@ sqlite.exec(`
     status TEXT NOT NULL,
     activation_date TEXT,
     valid_until TEXT,
+    identity_status TEXT NOT NULL DEFAULT 'unknown',
+    identity_name TEXT,
+    identity_document_type TEXT,
+    identity_document_number TEXT,
+    identity_country_code TEXT,
+    identity_notes TEXT,
     notes TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -187,6 +193,21 @@ sqlite.exec(`
 
   UPDATE sim_cards SET sim_type = 'esim' WHERE sim_type = 'esim_adapter';
 `);
+
+const simColumns = sqlite.prepare("PRAGMA table_info(sim_cards)").all() as Array<{ name: string }>;
+const simColumnNames = new Set(simColumns.map((column) => column.name));
+const simMigrations = [
+  ["identity_status", "ALTER TABLE sim_cards ADD COLUMN identity_status TEXT NOT NULL DEFAULT 'unknown'"],
+  ["identity_name", "ALTER TABLE sim_cards ADD COLUMN identity_name TEXT"],
+  ["identity_document_type", "ALTER TABLE sim_cards ADD COLUMN identity_document_type TEXT"],
+  ["identity_document_number", "ALTER TABLE sim_cards ADD COLUMN identity_document_number TEXT"],
+  ["identity_country_code", "ALTER TABLE sim_cards ADD COLUMN identity_country_code TEXT"],
+  ["identity_notes", "ALTER TABLE sim_cards ADD COLUMN identity_notes TEXT"],
+] as const;
+
+for (const [column, sql] of simMigrations) {
+  if (!simColumnNames.has(column)) sqlite.exec(sql);
+}
 
 const tariffColumns = sqlite.prepare("PRAGMA table_info(sim_tariffs)").all() as Array<{ name: string }>;
 const tariffColumnNames = new Set(tariffColumns.map((column) => column.name));
