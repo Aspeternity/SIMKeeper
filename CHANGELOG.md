@@ -13,6 +13,8 @@
 - Reusable searchable country/region selector with name and ISO-code filtering
 - Built-in common carrier catalog with official website presets for frequently used countries and regions
 - One-click carrier preset selection after choosing a country or region
+- Expanded common carrier presets across Europe, the Middle East, Latin America, Africa and Southeast Asia
+- Added popular UK virtual/sub-brands including giffgaff, VOXI and SMARTY
 
 ### Changed
 
@@ -24,6 +26,7 @@
 - Country/region names are now derived server-side from the selected standardized code
 - Country/region selection now supports both dropdown browsing and instant search
 - Carrier creation now prioritizes country/region selection before carrier details and keeps manual entry as a fallback
+- Carrier presets follow current commercial brands even when the underlying telecom company has merged or changed legal entity
 
 ## v0.1.0-alpha.1
 
