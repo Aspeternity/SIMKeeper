@@ -10,6 +10,20 @@ export const SIM_STATUSES = [
   { value: "closed", label: "已注销" },
 ] as const;
 
+export const IDENTITY_STATUSES = [
+  { value: "unknown", label: "未记录" },
+  { value: "registered", label: "已实名" },
+  { value: "unregistered", label: "未实名" },
+] as const;
+
+export const IDENTITY_DOCUMENT_TYPES = [
+  { value: "national_id", label: "身份证 / 国家身份证件" },
+  { value: "passport", label: "护照" },
+  { value: "residence_permit", label: "居留证 / 居留许可" },
+  { value: "business_registration", label: "企业登记证件" },
+  { value: "other", label: "其他证件" },
+] as const;
+
 export const CURRENCIES = [
   { code: "CNY", label: "人民币" },
   { code: "HKD", label: "港币" },
@@ -88,6 +102,15 @@ export function getSimTypeLabel(value: string) {
 
 export function getSimStatusLabel(value: string) {
   return SIM_STATUSES.find((item) => item.value === value)?.label ?? value;
+}
+
+export function getIdentityStatusLabel(value: string | null | undefined) {
+  return IDENTITY_STATUSES.find((item) => item.value === value)?.label ?? "未记录";
+}
+
+export function getIdentityDocumentTypeLabel(value: string | null | undefined) {
+  if (!value) return "未记录";
+  return IDENTITY_DOCUMENT_TYPES.find((item) => item.value === value)?.label ?? value;
 }
 
 export function getDefaultCurrency(countryCode: string) {
