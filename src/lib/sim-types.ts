@@ -1,0 +1,33 @@
+export type CarrierRecord = {
+  id: number;
+  name: string;
+  country: string;
+  countryCode: string;
+};
+
+export type SimRecord = {
+  id: number;
+  label: string;
+  phoneNumber: string | null;
+  carrierId: number;
+  carrierName: string;
+  country: string;
+  countryCode: string;
+  simType: string;
+  iccid: string | null;
+  balance: number | null;
+  currencyCode: string | null;
+  status: string;
+  activationDate: string | null;
+  validUntil: string | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+  tariffId: number | null;
+  tariffPlanName: string | null;
+  localIncomingSmsPolicy: string | null;
+  roamingIncomingSmsPolicy: string | null;
+  roamingAvailable: string | null;
+  tariffUsageSummary: string | null;
+  tariffVerifiedAt: string | null;
+};
