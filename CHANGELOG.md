@@ -9,6 +9,7 @@
 - Authenticated carrier CRUD API
 - SQLite carrier persistence with automatic table/index initialization
 - Country/region code, website and notes fields for carrier profiles
+- Built-in standardized country/region catalog using ISO two-letter codes
 
 ### Changed
 
@@ -16,6 +17,8 @@
 - Added active navigation highlighting
 - Dashboard now reports carrier-management progress
 - Prepared carrier data as the source for the upcoming SIM number workflow
+- Replaced freeform country/region and country-code inputs with a controlled selector
+- Country/region names are now derived server-side from the selected standardized code
 
 ## v0.1.0-alpha.1
 
