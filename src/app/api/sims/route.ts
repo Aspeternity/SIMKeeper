@@ -20,7 +20,7 @@ const simSchema = z
     label: z.string().trim().min(1, "请输入号码名称").max(80, "号码名称不能超过 80 个字符"),
     phoneNumber: z.string().trim().max(40, "手机号不能超过 40 个字符").optional().default(""),
     carrierId: z.coerce.number().int().positive("请选择运营商"),
-    simType: z.enum(["physical", "esim", "esim_adapter"], { message: "请选择 SIM 类型" }),
+    simType: z.enum(["physical", "esim", "esim_adapter"]),
     iccid: z
       .string()
       .trim()
@@ -30,10 +30,10 @@ const simSchema = z
       .default(""),
     balance: z.preprocess(
       (value) => (value === "" || value === null || value === undefined ? null : Number(value)),
-      z.number().finite("余额格式不正确").nonnegative("余额不能小于 0").nullable(),
+      z.number().finite().nonnegative("余额不能小于 0").nullable(),
     ),
     currencyCode: z.string().trim().max(3, "币种代码不能超过 3 位").optional().default(""),
-    status: z.enum(["active", "paused", "expired", "closed"], { message: "请选择号码状态" }),
+    status: z.enum(["active", "paused", "expired", "closed"]),
     activationDate: dateField,
     validUntil: dateField,
     notes: z.string().trim().max(500, "备注不能超过 500 个字符").optional().default(""),
