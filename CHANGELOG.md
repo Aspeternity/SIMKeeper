@@ -8,7 +8,7 @@
 - Authenticated SIM CRUD API
 - SQLite-backed SIM lifecycle records with automatic table/index initialization
 - Carrier association with inherited country/region information
-- SIM type options for physical SIM, eSIM and eSIM adapter cards
+- SIM type options for physical SIM and eSIM
 - Phone number / MSISDN, ICCID, balance, currency, status, activation date, validity date and notes
 - Built-in currency catalog with automatic defaults based on carrier country/region
 - Number search and filtering by status and carrier
@@ -26,6 +26,8 @@
 - Country/region remains normalized through the carrier relationship instead of being duplicated in each SIM record
 - Number entry now selects the carrier before the phone number so the correct international prefix is shown automatically
 - Phone-number input accepts a local number while storage remains normalized to the full international number
+- Simplified SIM type semantics to physical SIM or eSIM only; eSIM adapters such as eSTK/5ber are treated as hardware carriers rather than a separate SIM type
+- Existing `esim_adapter` records are automatically migrated to `esim`
 
 ## v0.1.0-alpha.2
 
