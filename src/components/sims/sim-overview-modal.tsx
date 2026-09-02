@@ -14,6 +14,7 @@ import {
   UserRoundCheck,
   X,
 } from "lucide-react";
+import { KeepAliveOverviewSection } from "@/components/keep-alive/keep-alive-overview-section";
 import { Card } from "@/components/ui/card";
 import { ModalPortal } from "@/components/ui/modal-portal";
 import { COUNTRY_REGIONS } from "@/lib/countries";
@@ -589,6 +590,8 @@ export function SimOverviewModal({
               </>
             ) : null}
           </section>
+
+          <KeepAliveOverviewSection simId={sim.id} />
 
           <section className="space-y-3 border-t pt-6">
             <SectionHeader
