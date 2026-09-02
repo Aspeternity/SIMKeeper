@@ -61,8 +61,8 @@
 - Existing databases are upgraded in place with tariff-plan metadata columns without rebuilding SIM or tariff records
 - Complex carrier tariffs such as network-specific SMS rates, roaming destination tiers and regional data passes no longer need to be flattened into notes
 - Conditional tariff storage is additive, so existing default-rate records continue working without migration or data loss
-- Tariff editor now defaults to a compact common template with only local calls/SMS/data and roaming incoming SMS visible
-- International and roaming service rows are now opt-in extension items instead of being permanently expanded
+- Tariff editor common items now cover all five local services and all five roaming services: outgoing/incoming calls, outgoing/incoming SMS and mobile data
+- International call and international SMS remain opt-in extension items instead of being permanently expanded
 - Advanced conditional rules and optional passes are hidden behind per-service `特殊规则` controls
 - Monetary values and billing units now appear after the numeric input rather than before it
 - Tariff modal is rendered through a document-body portal with background scroll locking to remove the top-edge gap and keep header/footer stable
