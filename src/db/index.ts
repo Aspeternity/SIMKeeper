@@ -192,6 +192,43 @@ sqlite.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_sim_tariff_custom_items_tariff_id ON sim_tariff_custom_items(tariff_id);
 
+  CREATE TABLE IF NOT EXISTS sim_keep_alive_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sim_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    interval_value INTEGER NOT NULL,
+    interval_unit TEXT NOT NULL,
+    qualifying_actions TEXT NOT NULL,
+    next_due_date TEXT,
+    warning_days INTEGER NOT NULL DEFAULT 30,
+    grace_period_days INTEGER NOT NULL DEFAULT 0,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    notes TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (sim_id) REFERENCES sim_cards(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_sim_keep_alive_rules_sim_id ON sim_keep_alive_rules(sim_id);
+  CREATE INDEX IF NOT EXISTS idx_sim_keep_alive_rules_due ON sim_keep_alive_rules(next_due_date);
+
+  CREATE TABLE IF NOT EXISTS sim_keep_alive_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sim_id INTEGER NOT NULL,
+    activity_type TEXT NOT NULL,
+    activity_date TEXT NOT NULL,
+    amount REAL,
+    currency_code TEXT,
+    balance_after REAL,
+    valid_until_after TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (sim_id) REFERENCES sim_cards(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_sim_keep_alive_events_sim_id ON sim_keep_alive_events(sim_id);
+  CREATE INDEX IF NOT EXISTS idx_sim_keep_alive_events_date ON sim_keep_alive_events(sim_id, activity_date);
+
   UPDATE sim_cards SET sim_type = 'esim' WHERE sim_type = 'esim_adapter';
 `);
 
