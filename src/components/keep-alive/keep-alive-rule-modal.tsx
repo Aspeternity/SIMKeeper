@@ -7,20 +7,24 @@ import { Input } from "@/components/ui/input";
 import { ModalPortal } from "@/components/ui/modal-portal";
 import {
   KEEP_ALIVE_ACTIVITY_TYPES,
+  KEEP_ALIVE_DUE_DATE_SOURCES,
   KEEP_ALIVE_INTERVAL_UNITS,
   getKeepAliveActivityLabel,
+  type KeepAliveDueDateSource,
 } from "@/lib/keep-alive";
 import type { KeepAliveRuleRecord } from "@/lib/keep-alive-types";
 
 export function KeepAliveRuleModal({
   simId,
   simLabel,
+  simValidUntil,
   rule,
   onClose,
   onSaved,
 }: {
   simId: number;
   simLabel: string;
+  simValidUntil: string | null;
   rule: KeepAliveRuleRecord | null;
   onClose: () => void;
   onSaved: () => Promise<void> | void;
@@ -29,7 +33,10 @@ export function KeepAliveRuleModal({
   const [intervalValue, setIntervalValue] = useState(rule ? String(rule.intervalValue) : "");
   const [intervalUnit, setIntervalUnit] = useState(rule?.intervalUnit || "day");
   const [qualifyingActions, setQualifyingActions] = useState<string[]>(rule?.qualifyingActions || ["recharge"]);
-  const [nextDueDate, setNextDueDate] = useState(rule?.nextDueDate || "");
+  const [dueDateSource, setDueDateSource] = useState<KeepAliveDueDateSource>(
+    rule?.dueDateSource || (simValidUntil ? "sim_validity" : "independent"),
+  );
+  const [nextDueDate, setNextDueDate] = useState(rule?.dueDateSource === "sim_validity" ? "" : rule?.nextDueDate || "");
   const [warningDays, setWarningDays] = useState(rule ? String(rule.warningDays) : "30");
   const [gracePeriodDays, setGracePeriodDays] = useState(rule ? String(rule.gracePeriodDays) : "0");
   const [enabled, setEnabled] = useState(rule?.enabled ?? true);
@@ -61,7 +68,8 @@ export function KeepAliveRuleModal({
           intervalValue,
           intervalUnit,
           qualifyingActions,
-          nextDueDate,
+          dueDateSource,
+          nextDueDate: dueDateSource === "independent" ? nextDueDate : "",
           warningDays,
           gracePeriodDays,
           enabled,
@@ -97,6 +105,25 @@ export function KeepAliveRuleModal({
             <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：号码有效期、活跃要求" autoFocus required />
           </label>
 
+          <div className="space-y-2">
+            <div className="text-sm font-medium text-slate-700">下一次日期来源</div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {KEEP_ALIVE_DUE_DATE_SOURCES.map((item) => (
+                <label key={item.value} className={`cursor-pointer rounded-xl border px-4 py-3 transition ${dueDateSource === item.value ? "border-slate-900 bg-slate-50" : "border-slate-200 hover:bg-slate-50"}`}>
+                  <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                    <input type="radio" name="dueDateSource" checked={dueDateSource === item.value} onChange={() => setDueDateSource(item.value)} />
+                    {item.label}
+                  </div>
+                  <div className="mt-1 pl-5 text-xs leading-5 text-slate-400">
+                    {item.value === "sim_validity"
+                      ? "用于充值/续期延长号码有效期的规则；日期始终跟随号码管理里的“有效期至”。"
+                      : "用于 90 天活跃、定期短信等独立要求；单独维护自己的下一次操作日期。"}
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
+
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="space-y-1.5 text-sm">
               <span className="font-medium text-slate-700">保号周期</span>
@@ -108,9 +135,20 @@ export function KeepAliveRuleModal({
               </div>
             </label>
             <label className="space-y-1.5 text-sm">
-              <span className="font-medium text-slate-700">当前下次操作日期</span>
-              <Input value={nextDueDate} onChange={(event) => setNextDueDate(event.target.value)} type="date" />
-              <div className="text-xs text-slate-400">可直接按运营商当前显示的到期/保号日期初始化；留空时会尝试根据最近匹配记录计算。</div>
+              <span className="font-medium text-slate-700">{dueDateSource === "sim_validity" ? "号码有效期（自动同步）" : "当前下次操作日期"}</span>
+              <Input
+                value={dueDateSource === "sim_validity" ? simValidUntil || "" : nextDueDate}
+                onChange={(event) => setNextDueDate(event.target.value)}
+                type="date"
+                disabled={dueDateSource === "sim_validity"}
+              />
+              <div className="text-xs text-slate-400">
+                {dueDateSource === "sim_validity"
+                  ? simValidUntil
+                    ? "来自号码管理；修改号码“有效期至”后这里会立即同步。"
+                    : "当前号码尚未设置“有效期至”，请先在号码管理中填写。"
+                  : "可手动初始化；留空时会尝试根据最近匹配活动按保号周期计算。"}
+              </div>
             </label>
           </div>
 
