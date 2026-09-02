@@ -171,11 +171,19 @@ jobs:
           jq -n --argjson simId "$sim_id" '{
             simId:$simId,
             planName:"Smoke Tariff",
+            planType:"prepaid",
             currencyCode:"PHP",
+            recurringFee:199,
+            recurringPeriodValue:30,
+            recurringPeriodUnit:"day",
+            administrationFee:0,
+            autoRenew:"yes",
             roamingAvailable:"yes",
             rates:{
-              localIncomingSms:{mode:"free",amount:null,billingUnit:"per_sms"},
-              roamingIncomingSms:{mode:"free",amount:null,billingUnit:"per_sms"},
+              localOutgoingCall:{mode:"included_unlimited",amount:null,billingUnit:""},
+              localData:{mode:"included",amount:10,billingUnit:"gb"},
+              localIncomingSms:{mode:"free",amount:null,billingUnit:""},
+              roamingIncomingSms:{mode:"free",amount:null,billingUnit:""},
               roamingIncomingCall:{mode:"charged",amount:12.5,billingUnit:"per_minute"}
             },
             usageSummary:"Smoke-test structured tariff profile",
@@ -186,9 +194,17 @@ jobs:
           status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/tariff.json" -w '%{http_code}' \
             -X PUT -H 'Content-Type: application/json' --data-binary @"$tmp/tariff-payload.json" "$base/api/tariffs")" || fail "PUT /api/tariffs failed"
           [ "$status" = "200" ] || fail "Tariff save returned HTTP $status"
+          [ "$(jq -r '.tariff.planType' "$tmp/tariff.json")" = "prepaid" ] || fail "Tariff plan type was not saved"
+          [ "$(jq -r '.tariff.recurringFee' "$tmp/tariff.json")" = "199" ] || fail "Tariff recurring fee was not saved"
+          [ "$(jq -r '.tariff.recurringPeriodValue' "$tmp/tariff.json")" = "30" ] || fail "Tariff recurring period was not saved"
+          [ "$(jq -r '.tariff.autoRenew' "$tmp/tariff.json")" = "yes" ] || fail "Tariff auto-renew setting was not saved"
           [ "$(jq -r '.tariff.currencyCode' "$tmp/tariff.json")" = "PHP" ] || fail "Tariff currency was not saved"
           [ "$(jq -r '.tariff.localIncomingSmsPolicy' "$tmp/tariff.json")" = "free" ] || fail "Tariff local incoming SMS policy was not derived"
           [ "$(jq -r '.tariff.roamingIncomingSmsPolicy' "$tmp/tariff.json")" = "free" ] || fail "Tariff roaming incoming SMS policy was not derived"
+          [ "$(jq -r '.tariff.rates.localOutgoingCall.mode' "$tmp/tariff.json")" = "included_unlimited" ] || fail "Unlimited included call allowance was not saved"
+          [ "$(jq -r '.tariff.rates.localData.mode' "$tmp/tariff.json")" = "included" ] || fail "Included data allowance mode was not saved"
+          [ "$(jq -r '.tariff.rates.localData.amount' "$tmp/tariff.json")" = "10" ] || fail "Included data allowance amount was not saved"
+          [ "$(jq -r '.tariff.rates.localData.billingUnit' "$tmp/tariff.json")" = "gb" ] || fail "Included data allowance unit was not saved"
           [ "$(jq -r '.tariff.rates.roamingIncomingCall.mode' "$tmp/tariff.json")" = "charged" ] || fail "Structured roaming call mode was not saved"
           [ "$(jq -r '.tariff.rates.roamingIncomingCall.amount' "$tmp/tariff.json")" = "12.5" ] || fail "Structured roaming call amount was not saved"
           [ "$(jq -r '.tariff.rates.roamingIncomingCall.billingUnit' "$tmp/tariff.json")" = "per_minute" ] || fail "Structured roaming call billing unit was not saved"
