@@ -11,6 +11,7 @@
 - SIM type options for physical SIM and eSIM
 - Phone number / MSISDN, ICCID, balance, currency, status, activation date, validity date and notes
 - Optional per-number real-name / KYC profile with registration status, holder name, document type, document number, document country/region and notes
+- Custom real-name document/material type when `其他证件 / 材料` is selected, supporting entries such as travel permits, utility bills and address proof
 - Real-name information section in number details with collapse controls and click-to-copy values
 - Built-in currency catalog with automatic defaults based on carrier country/region
 - Number search and filtering by status and carrier
@@ -66,6 +67,7 @@
 - Incoming-SMS summary statuses are now derived automatically from the corresponding structured tariff rows
 - Backend validation now restricts billing and allowance units by service type so calls, SMS and data cannot store incompatible units
 - Existing databases are upgraded in place with tariff-plan metadata and real-name/KYC columns without rebuilding SIM or tariff records
+- `其他证件 / 材料` now requires a custom descriptive type and clears that custom value automatically when another standard document type is chosen
 - Complex carrier tariffs such as network-specific SMS rates, roaming destination tiers and regional data passes no longer need to be flattened into notes
 - Conditional tariff storage is additive, so existing default-rate records continue working without migration or data loss
 - Tariff editor common items now cover all five local services and all five roaming services: outgoing/incoming calls, outgoing/incoming SMS and mobile data
