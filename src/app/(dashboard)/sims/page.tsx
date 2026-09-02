@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { getCountryCallingCode, parsePhoneNumberFromString, type CountryCode } from "libphonenumber-js";
 import { CalendarDays, CreditCard, Loader2, Pencil, Plus, Search, Smartphone, Trash2, X } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -93,10 +94,27 @@ function statusClass(status: string) {
       return "bg-amber-50 text-amber-700 ring-amber-100";
     case "expired":
       return "bg-rose-50 text-rose-700 ring-rose-100";
-    case "closed":
-      return "bg-slate-100 text-slate-500 ring-slate-200";
     default:
       return "bg-slate-100 text-slate-500 ring-slate-200";
+  }
+}
+
+function getCallingCode(countryCode: string) {
+  if (!countryCode) return "";
+  try {
+    return `+${getCountryCallingCode(countryCode as CountryCode)}`;
+  } catch {
+    return "";
+  }
+}
+
+function toNationalNumber(phoneNumber: string | null, countryCode: string) {
+  if (!phoneNumber) return "";
+  try {
+    const parsed = parsePhoneNumberFromString(phoneNumber, countryCode as CountryCode);
+    return parsed?.nationalNumber ?? phoneNumber;
+  } catch {
+    return phoneNumber;
   }
 }
 
@@ -116,6 +134,11 @@ export default function SimsPage() {
   const selectedCarrier = useMemo(
     () => carriers.find((carrier) => carrier.id === Number(form.carrierId)) ?? null,
     [carriers, form.carrierId],
+  );
+
+  const callingCode = useMemo(
+    () => (selectedCarrier ? getCallingCode(selectedCarrier.countryCode) : ""),
+    [selectedCarrier],
   );
 
   const loadData = useCallback(async () => {
@@ -187,7 +210,7 @@ export default function SimsPage() {
     setEditing(sim);
     setForm({
       label: sim.label,
-      phoneNumber: sim.phoneNumber || "",
+      phoneNumber: toNationalNumber(sim.phoneNumber, sim.countryCode),
       carrierId: String(sim.carrierId),
       simType: sim.simType,
       iccid: sim.iccid || "",
@@ -269,7 +292,7 @@ export default function SimsPage() {
             生命周期
           </div>
           <h2 className="mt-2 text-2xl font-semibold tracking-tight">号码管理</h2>
-          <p className="mt-1 text-sm text-slate-500">集中管理 SIM / eSIM 的运营商、余额、状态和有效期。</p>
+          <p className="mt-1 text-sm text-slate-500">集中管理 SIM / eSIM 的运营商、号码、余额、状态和有效期。</p>
         </div>
         {carriers.length ? (
           <button
@@ -298,7 +321,7 @@ export default function SimsPage() {
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <div className="font-medium">号码需要关联运营商</div>
-              <p className="mt-1 text-sm text-slate-500">先建立至少一个运营商，再录入号码。国家/地区信息会自动从运营商继承。</p>
+              <p className="mt-1 text-sm text-slate-500">先建立至少一个运营商，再录入号码。国家/地区和国际区号都会自动从运营商继承。</p>
             </div>
             <Link href="/carriers" className="text-sm font-medium text-slate-950 underline underline-offset-4">
               前往运营商管理
@@ -457,7 +480,7 @@ export default function SimsPage() {
             <div className="flex items-center justify-between border-b bg-white px-6 py-5">
               <div>
                 <h3 className="font-semibold">{editing ? "编辑号码" : "新增号码"}</h3>
-                <p className="mt-1 text-xs text-slate-400">国家/地区会根据所选运营商自动继承，无需重复填写。</p>
+                <p className="mt-1 text-xs text-slate-400">国家/地区和国际区号会根据运营商自动匹配，号码保存为统一国际格式。</p>
               </div>
               <button onClick={closeForm} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">
                 <X className="h-4 w-4" />
@@ -465,17 +488,6 @@ export default function SimsPage() {
             </div>
 
             <form onSubmit={submit} className="space-y-5 bg-white p-6">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <label className="space-y-1.5 text-sm">
-                  <span className="font-medium text-slate-700">号码名称</span>
-                  <Input value={form.label} onChange={(event) => setForm({ ...form, label: event.target.value })} placeholder="例如 Globe 主号" autoFocus required />
-                </label>
-                <label className="space-y-1.5 text-sm">
-                  <span className="font-medium text-slate-700">手机号 / MSISDN</span>
-                  <Input value={form.phoneNumber} onChange={(event) => setForm({ ...form, phoneNumber: event.target.value })} placeholder="可选，例如 +63..." />
-                </label>
-              </div>
-
               <div className="grid gap-4 sm:grid-cols-[1.4fr_0.6fr]">
                 <label className="space-y-1.5 text-sm">
                   <span className="font-medium text-slate-700">运营商</span>
@@ -483,6 +495,7 @@ export default function SimsPage() {
                     value={form.carrierId}
                     onChange={(event) => changeCarrier(event.target.value)}
                     required
+                    autoFocus
                     className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
                   >
                     <option value="">请选择运营商</option>
@@ -490,7 +503,11 @@ export default function SimsPage() {
                       <option key={carrier.id} value={carrier.id}>{carrier.name} · {carrier.country}</option>
                     ))}
                   </select>
-                  {selectedCarrier ? <div className="text-xs text-slate-400">{selectedCarrier.country} · {selectedCarrier.countryCode}</div> : null}
+                  {selectedCarrier ? (
+                    <div className="text-xs text-slate-400">
+                      {selectedCarrier.country} · {selectedCarrier.countryCode} · 国际区号 {callingCode || "未知"}
+                    </div>
+                  ) : null}
                 </label>
                 <label className="space-y-1.5 text-sm">
                   <span className="font-medium text-slate-700">SIM 类型</span>
@@ -502,6 +519,31 @@ export default function SimsPage() {
                     {SIM_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
                   </select>
                 </label>
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className="space-y-1.5 text-sm">
+                  <span className="font-medium text-slate-700">号码名称</span>
+                  <Input value={form.label} onChange={(event) => setForm({ ...form, label: event.target.value })} placeholder="例如 Globe 主号" required />
+                </label>
+                <div className="space-y-1.5 text-sm">
+                  <span className="font-medium text-slate-700">手机号 / MSISDN</span>
+                  <div className="flex h-10 overflow-hidden rounded-xl border border-slate-200 bg-white transition focus-within:border-slate-400 focus-within:ring-2 focus-within:ring-slate-100">
+                    <div className="flex min-w-[72px] items-center justify-center border-r border-slate-200 bg-slate-50 px-3 font-medium text-slate-600">
+                      {callingCode || "—"}
+                    </div>
+                    <input
+                      value={form.phoneNumber}
+                      onChange={(event) => setForm({ ...form, phoneNumber: event.target.value })}
+                      placeholder={selectedCarrier ? "输入本地号码" : "请先选择运营商"}
+                      disabled={!selectedCarrier}
+                      inputMode="tel"
+                      autoComplete="tel-national"
+                      className="min-w-0 flex-1 bg-transparent px-3 text-sm text-slate-700 outline-none placeholder:text-slate-400 disabled:cursor-not-allowed disabled:bg-slate-50"
+                    />
+                  </div>
+                  <div className="text-xs text-slate-400">只需输入本地号码，保存时会自动规范为 E.164 国际格式。</div>
+                </div>
               </div>
 
               <div className="grid gap-4 sm:grid-cols-[1.4fr_0.6fr]">
