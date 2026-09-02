@@ -467,9 +467,9 @@ export function SimOverviewModal({
   const [tariff, setTariff] = useState<TariffDetail | null>(null);
   const [loadingTariff, setLoadingTariff] = useState(Boolean(sim.tariffId));
   const [tariffError, setTariffError] = useState("");
-  const [basicOpen, setBasicOpen] = useState(true);
-  const [identityOpen, setIdentityOpen] = useState(true);
-  const [tariffOpen, setTariffOpen] = useState(true);
+  const [basicOpen, setBasicOpen] = useState(false);
+  const [identityOpen, setIdentityOpen] = useState(false);
+  const [tariffOpen, setTariffOpen] = useState(false);
 
   useEffect(() => {
     let active = true;
