@@ -138,6 +138,15 @@ function stripBillingPrefix(value: string) {
   return value.replace(/^每\s?/, "");
 }
 
+function hasMeaningfulBaseRate(rate: TariffRate | undefined) {
+  if (!rate) return false;
+  if (["free", "included_unlimited", "unavailable"].includes(rate.mode || "")) return true;
+  if (rate.mode === "charged" || rate.mode === "included") {
+    return typeof rate.amount === "number" && Number.isFinite(rate.amount) && rate.amount > 0;
+  }
+  return false;
+}
+
 function baseRateText(tariff: TariffDetail | null, code: TariffServiceCode) {
   const rate = tariff?.rates?.[code];
   if (!rate) return "未记录";
@@ -349,17 +358,25 @@ function RateGroup({ title, codes, tariff }: { title: string; codes: TariffServi
         {codes.map((code) => {
           const service = TARIFF_SERVICES.find((item) => item.code === code)!;
           const rules = tariff?.rules?.[code] ?? [];
+          const rate = tariff?.rates?.[code];
+          const hasBaseRate = hasMeaningfulBaseRate(rate);
           return (
             <div key={code} className="py-3 first:pt-0 last:pb-0">
               <div className="flex items-start justify-between gap-4">
                 <div className="flex min-w-0 items-center gap-1.5">
                   <span className="text-xs text-slate-500">{service.label}</span>
-                  {rules.length ? <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-medium text-slate-500">{rules.length} 条规则</span> : null}
+                  {rules.length ? <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[9px] font-medium text-indigo-600">{rules.length} 条规则</span> : null}
                 </div>
-                <CopyValue value={baseRateText(tariff, code)} align="right" className="max-w-[65%] text-xs font-medium text-slate-700" />
+                {rules.length ? hasBaseRate ? (
+                  <CopyValue value={`基础资费：${baseRateText(tariff, code)}`} align="right" className="max-w-[65%] text-xs font-medium text-slate-700" />
+                ) : (
+                  <span className="rounded-md bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-700">按条件计费</span>
+                ) : (
+                  <CopyValue value={baseRateText(tariff, code)} align="right" className="max-w-[65%] text-xs font-medium text-slate-700" />
+                )}
               </div>
               {rules.length ? (
-                <div className="mt-2 space-y-1.5 border-l-2 border-slate-100 pl-2.5">
+                <div className="mt-2 space-y-1.5 border-l-2 border-indigo-100 pl-2.5">
                   {rules.map((rule, index) => (
                     <RuleCard key={rule.id ?? `${code}-${index}`} rule={rule} index={index} currencyCode={tariff?.currencyCode} />
                   ))}
