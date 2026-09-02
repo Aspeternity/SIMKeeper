@@ -38,6 +38,7 @@
 - Country/region selectors for destination and roaming rules, including home/current/other destination shortcuts
 - Conditional incoming-SMS summaries that surface as `按条件` on the number list
 - Optional custom tariff items for carrier-specific fees not covered by the common template
+- Shared viewport-level modal portal for consistent full-screen overlays and background scroll locking
 
 ### Changed
 
@@ -65,6 +66,8 @@
 - Advanced conditional rules and optional passes are hidden behind per-service `特殊规则` controls
 - Monetary values and billing units now appear after the numeric input rather than before it
 - Tariff modal is rendered through a document-body portal with background scroll locking to remove the top-edge gap and keep header/footer stable
+- SIM create/edit and carrier create/edit dialogs now use the same document-body portal so all existing overlays cover the complete viewport without a top white gap
+- Number Management no longer duplicates Dashboard overview cards; it is now focused on the searchable/filterable number list and per-number actions
 
 ## v0.1.0-alpha.2
 
