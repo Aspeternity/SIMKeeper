@@ -21,7 +21,7 @@ const simSchema = z
     label: z.string().trim().min(1, "请输入号码名称").max(80, "号码名称不能超过 80 个字符"),
     phoneNumber: z.string().trim().max(40, "手机号不能超过 40 个字符").optional().default(""),
     carrierId: z.coerce.number().int().positive("请选择运营商"),
-    simType: z.enum(["physical", "esim", "esim_adapter"]),
+    simType: z.enum(["physical", "esim"]),
     iccid: z
       .string()
       .trim()
