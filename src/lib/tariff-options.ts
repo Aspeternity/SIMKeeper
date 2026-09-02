@@ -102,6 +102,7 @@ export const SMS_RECEIVE_POLICIES = [
   { value: "free", label: "免费" },
   { value: "charged", label: "收费" },
   { value: "included", label: "套餐内" },
+  { value: "variable", label: "按条件" },
   { value: "unavailable", label: "不可用" },
   { value: "unknown", label: "未知" },
 ] as const;
