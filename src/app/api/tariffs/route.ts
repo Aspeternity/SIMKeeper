@@ -4,6 +4,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import {
   simCards,
+  simTariffCustomItems,
   simTariffRateRules,
   simTariffRates,
   simTariffRuleConditions,
@@ -15,6 +16,7 @@ import {
   getAllowanceUnitsForService,
   getBillingUnitsForService,
   getConditionTypesForService,
+  getCustomBillingUnits,
   smsPolicyFromRateMode,
   TARIFF_SERVICES,
 } from "@/lib/tariff-options";
@@ -86,6 +88,15 @@ const conditionalRuleSchema = z.object({
   validityUnit: z.union([z.enum(["day", "month", "year"]), z.literal("")]).optional().default(""),
   autoRenew: z.enum(["unknown", "yes", "no"]).optional().default("unknown"),
   conditions: z.array(conditionSchema).max(8, "单条规则最多添加 8 个条件"),
+});
+
+const customItemSchema = z.object({
+  label: z.string().trim().min(1, "请输入自定义资费名称").max(100, "自定义资费名称不能超过 100 个字符"),
+  kind: z.enum(["generic", "call", "sms", "data"]),
+  mode: z.enum(["unknown", "free", "charged", "unavailable"]),
+  amount: nullableNumber("自定义资费金额不能小于 0"),
+  billingUnit: z.string().trim().max(32, "自定义资费单位不正确").optional().default(""),
+  notes: z.string().trim().max(300, "自定义资费备注不能超过 300 个字符").optional().default(""),
 });
 
 function validateModeFields(
@@ -179,6 +190,7 @@ const tariffSchema = z
     planName: z.string().trim().max(120, "套餐/资费名称不能超过 120 个字符").optional().default(""),
     planType: z.enum(["unknown", "prepaid", "postpaid"]),
     currencyCode: z.string().trim().toUpperCase().regex(/^[A-Z]{3}$/, "请选择资费币种"),
+    purchaseCost: nullableNumber("购卡费用不能小于 0"),
     recurringFee: nullableNumber("基础/月费不能小于 0"),
     recurringPeriodValue: nullablePositiveInteger("计费周期必须为正整数"),
     recurringPeriodUnit: z.union([z.enum(["day", "month", "year"]), z.literal("")]).optional().default(""),
@@ -186,7 +198,8 @@ const tariffSchema = z
     autoRenew: z.enum(["unknown", "yes", "no"]),
     roamingAvailable: z.enum(["yes", "no", "unknown"]),
     rates: z.record(z.string(), rateSchema).optional().default({}),
-    rules: z.record(z.string(), z.array(conditionalRuleSchema).max(30, "单个资费项目最多保存 30 条条件规则")).optional().default({}),
+    rules: z.record(z.string(), z.array(conditionalRuleSchema).max(30, "单个资费项目最多保存 30 条特殊规则")).optional().default({}),
+    customItems: z.array(customItemSchema).max(30, "最多保存 30 个自定义资费项").optional().default([]),
     usageSummary: z.string().trim().max(300, "使用结论不能超过 300 个字符").optional().default(""),
     sourceUrl: urlField,
     verifiedAt: dateField,
@@ -194,11 +207,7 @@ const tariffSchema = z
   })
   .superRefine((value, context) => {
     if ((value.recurringPeriodValue === null) !== (value.recurringPeriodUnit === "")) {
-      context.addIssue({
-        code: "custom",
-        path: ["recurringPeriodValue"],
-        message: "计费周期的数字和单位需要同时填写",
-      });
+      context.addIssue({ code: "custom", path: ["recurringPeriodValue"], message: "计费周期的数字和单位需要同时填写" });
     }
 
     for (const [serviceCode, rate] of Object.entries(value.rates)) {
@@ -211,7 +220,7 @@ const tariffSchema = z
 
     for (const [serviceCode, rules] of Object.entries(value.rules)) {
       if (!serviceCodes.has(serviceCode)) {
-        context.addIssue({ code: "custom", path: ["rules", serviceCode], message: "存在未知条件资费项目" });
+        context.addIssue({ code: "custom", path: ["rules", serviceCode], message: "存在未知特殊资费项目" });
         continue;
       }
 
@@ -219,20 +228,29 @@ const tariffSchema = z
         const rulePath = ["rules", serviceCode, ruleIndex];
         validateModeFields(serviceCode, rule, context, rulePath);
         if (rule.mode !== "package" && rule.conditions.length === 0) {
-          context.addIssue({ code: "custom", path: [...rulePath, "conditions"], message: "条件资费至少需要一个适用条件" });
+          context.addIssue({ code: "custom", path: [...rulePath, "conditions"], message: "特殊规则至少需要一个适用条件" });
         }
         rule.conditions.forEach((condition, conditionIndex) => {
           validateCondition(serviceCode, condition, context, [...rulePath, "conditions", conditionIndex]);
         });
       });
     }
+
+    value.customItems.forEach((item, index) => {
+      if (item.mode !== "charged") return;
+      if (item.amount === null) {
+        context.addIssue({ code: "custom", path: ["customItems", index, "amount"], message: "收费的自定义资费项请输入金额" });
+      }
+      const allowedUnits = getCustomBillingUnits(item.kind).map((unit) => unit.value);
+      if (!item.billingUnit || !allowedUnits.some((unit) => unit === item.billingUnit)) {
+        context.addIssue({ code: "custom", path: ["customItems", index, "billingUnit"], message: "请选择适用于该自定义项目的计费单位" });
+      }
+    });
   });
 
 async function requireUser() {
   const user = await getCurrentUser();
-  if (!user) {
-    return NextResponse.json({ error: "登录状态已失效，请重新登录" }, { status: 401 });
-  }
+  if (!user) return NextResponse.json({ error: "登录状态已失效，请重新登录" }, { status: 401 });
   return null;
 }
 
@@ -249,20 +267,9 @@ function inferLegacyMode(value: string | null) {
 }
 
 function getConditionalRules(tariffId: number) {
-  const ruleRows = db
-    .select()
-    .from(simTariffRateRules)
-    .where(eq(simTariffRateRules.tariffId, tariffId))
-    .orderBy(asc(simTariffRateRules.sortOrder), asc(simTariffRateRules.id))
-    .all();
-
+  const ruleRows = db.select().from(simTariffRateRules).where(eq(simTariffRateRules.tariffId, tariffId)).orderBy(asc(simTariffRateRules.sortOrder), asc(simTariffRateRules.id)).all();
   const conditionRows = ruleRows.length
-    ? db
-        .select()
-        .from(simTariffRuleConditions)
-        .where(inArray(simTariffRuleConditions.ruleId, ruleRows.map((row) => row.id)))
-        .orderBy(asc(simTariffRuleConditions.sortOrder), asc(simTariffRuleConditions.id))
-        .all()
+    ? db.select().from(simTariffRuleConditions).where(inArray(simTariffRuleConditions.ruleId, ruleRows.map((row) => row.id))).orderBy(asc(simTariffRuleConditions.sortOrder), asc(simTariffRuleConditions.id)).all()
     : [];
 
   const conditionsByRule = new Map<number, typeof conditionRows>();
@@ -287,19 +294,32 @@ function getConditionalRules(tariffId: number) {
       validityValue: rule.validityValue,
       validityUnit: rule.validityUnit,
       autoRenew: rule.autoRenew,
-      conditions: (conditionsByRule.get(rule.id) ?? []).map((condition) => ({
-        type: condition.conditionType,
-        value: condition.value,
-        value2: condition.value2 ?? "",
-      })),
+      conditions: (conditionsByRule.get(rule.id) ?? []).map((condition) => ({ type: condition.conditionType, value: condition.value, value2: condition.value2 ?? "" })),
     });
   }
   return grouped;
 }
 
+function getCustomItems(tariffId: number) {
+  return db
+    .select()
+    .from(simTariffCustomItems)
+    .where(eq(simTariffCustomItems.tariffId, tariffId))
+    .orderBy(asc(simTariffCustomItems.sortOrder), asc(simTariffCustomItems.id))
+    .all()
+    .map((item) => ({
+      id: item.id,
+      label: item.label,
+      kind: item.kind,
+      mode: item.mode,
+      amount: item.amount,
+      billingUnit: item.billingUnit,
+      notes: item.notes,
+    }));
+}
+
 function buildTariffResponse(tariff: typeof simTariffs.$inferSelect | null) {
   if (!tariff) return null;
-
   const rows = db.select().from(simTariffRates).where(eq(simTariffRates.tariffId, tariff.id)).all();
   const rowMap = new Map(rows.map((row) => [row.serviceCode, row]));
   const legacyValues = tariff as typeof tariff & Record<string, string | null>;
@@ -309,102 +329,36 @@ function buildTariffResponse(tariff: typeof simTariffs.$inferSelect | null) {
       const row = rowMap.get(service.code);
       if (row) {
         const fallbackUnit = row.mode === "included" ? service.defaultAllowanceUnit : service.defaultUnit;
-        return [
-          service.code,
-          {
-            mode: row.mode,
-            amount: row.amount,
-            billingUnit: row.billingUnit || fallbackUnit,
-            legacyText: row.legacyText,
-          },
-        ];
+        return [service.code, { mode: row.mode, amount: row.amount, billingUnit: row.billingUnit || fallbackUnit, legacyText: row.legacyText }];
       }
-
       const legacyText = legacyValues[service.code] || null;
-      return [
-        service.code,
-        {
-          mode: inferLegacyMode(legacyText),
-          amount: null,
-          billingUnit: service.defaultUnit,
-          legacyText,
-        },
-      ];
+      return [service.code, { mode: inferLegacyMode(legacyText), amount: null, billingUnit: service.defaultUnit, legacyText }];
     }),
   );
 
-  return { ...tariff, rates, rules: getConditionalRules(tariff.id) };
+  return { ...tariff, rates, rules: getConditionalRules(tariff.id), customItems: getCustomItems(tariff.id) };
 }
 
 function normalizeRate(serviceCode: string, rate: z.infer<typeof rateSchema> | undefined) {
   const service = TARIFF_SERVICES.find((item) => item.code === serviceCode)!;
   const mode = rate?.mode ?? "unknown";
-
-  if (mode === "charged") {
-    return { mode, amount: rate?.amount ?? null, billingUnit: rate?.billingUnit || service.defaultUnit };
-  }
-
-  if (mode === "included") {
-    return { mode, amount: rate?.amount ?? null, billingUnit: rate?.billingUnit || service.defaultAllowanceUnit };
-  }
-
+  if (mode === "charged") return { mode, amount: rate?.amount ?? null, billingUnit: rate?.billingUnit || service.defaultUnit };
+  if (mode === "included") return { mode, amount: rate?.amount ?? null, billingUnit: rate?.billingUnit || service.defaultAllowanceUnit };
   return { mode, amount: null, billingUnit: null };
 }
 
 function normalizeRule(serviceCode: string, rule: z.infer<typeof conditionalRuleSchema>) {
   const service = TARIFF_SERVICES.find((item) => item.code === serviceCode)!;
   if (rule.mode === "charged") {
-    return {
-      ...rule,
-      amount: rule.amount,
-      billingUnit: rule.billingUnit || service.defaultUnit,
-      packagePrice: null,
-      packageAllowanceAmount: null,
-      packageAllowanceUnit: null,
-      validityValue: null,
-      validityUnit: null,
-      autoRenew: "unknown" as const,
-    };
+    return { ...rule, amount: rule.amount, billingUnit: rule.billingUnit || service.defaultUnit, packagePrice: null, packageAllowanceAmount: null, packageAllowanceUnit: null, validityValue: null, validityUnit: null, autoRenew: "unknown" as const };
   }
-
   if (rule.mode === "included") {
-    return {
-      ...rule,
-      amount: rule.amount,
-      billingUnit: rule.billingUnit || service.defaultAllowanceUnit,
-      packagePrice: null,
-      packageAllowanceAmount: null,
-      packageAllowanceUnit: null,
-      validityValue: null,
-      validityUnit: null,
-      autoRenew: "unknown" as const,
-    };
+    return { ...rule, amount: rule.amount, billingUnit: rule.billingUnit || service.defaultAllowanceUnit, packagePrice: null, packageAllowanceAmount: null, packageAllowanceUnit: null, validityValue: null, validityUnit: null, autoRenew: "unknown" as const };
   }
-
   if (rule.mode === "package") {
-    return {
-      ...rule,
-      amount: null,
-      billingUnit: null,
-      packagePrice: rule.packagePrice,
-      packageAllowanceAmount: rule.packageAllowanceAmount,
-      packageAllowanceUnit: rule.packageAllowanceUnit || service.defaultAllowanceUnit,
-      validityValue: rule.validityValue,
-      validityUnit: nullable(rule.validityUnit),
-    };
+    return { ...rule, amount: null, billingUnit: null, packagePrice: rule.packagePrice, packageAllowanceAmount: rule.packageAllowanceAmount, packageAllowanceUnit: rule.packageAllowanceUnit || service.defaultAllowanceUnit, validityValue: rule.validityValue, validityUnit: nullable(rule.validityUnit) };
   }
-
-  return {
-    ...rule,
-    amount: null,
-    billingUnit: null,
-    packagePrice: null,
-    packageAllowanceAmount: null,
-    packageAllowanceUnit: null,
-    validityValue: null,
-    validityUnit: null,
-    autoRenew: "unknown" as const,
-  };
+  return { ...rule, amount: null, billingUnit: null, packagePrice: null, packageAllowanceAmount: null, packageAllowanceUnit: null, validityValue: null, validityUnit: null, autoRenew: "unknown" as const };
 }
 
 export async function GET(request: NextRequest) {
@@ -412,9 +366,7 @@ export async function GET(request: NextRequest) {
   if (unauthorized) return unauthorized;
 
   const simId = Number(request.nextUrl.searchParams.get("simId"));
-  if (!Number.isInteger(simId) || simId <= 0) {
-    return NextResponse.json({ error: "无效的号码 ID" }, { status: 400 });
-  }
+  if (!Number.isInteger(simId) || simId <= 0) return NextResponse.json({ error: "无效的号码 ID" }, { status: 400 });
 
   const sim = db.select({ id: simCards.id }).from(simCards).where(eq(simCards.id, simId)).get();
   if (!sim) return NextResponse.json({ error: "号码不存在" }, { status: 404 });
@@ -428,25 +380,17 @@ export async function PUT(request: NextRequest) {
   if (unauthorized) return unauthorized;
 
   const parsed = tariffSchema.safeParse(await request.json().catch(() => null));
-  if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "提交的资费数据不正确" }, { status: 400 });
-  }
+  if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "提交的资费数据不正确" }, { status: 400 });
 
   const sim = db.select({ id: simCards.id }).from(simCards).where(eq(simCards.id, parsed.data.simId)).get();
   if (!sim) return NextResponse.json({ error: "号码不存在" }, { status: 404 });
 
   const now = new Date().toISOString();
-  const normalizedRates = Object.fromEntries(
-    TARIFF_SERVICES.map((service) => [service.code, normalizeRate(service.code, parsed.data.rates[service.code])]),
-  );
+  const normalizedRates = Object.fromEntries(TARIFF_SERVICES.map((service) => [service.code, normalizeRate(service.code, parsed.data.rates[service.code])]));
   const localConditionalRules = parsed.data.rules.localIncomingSms ?? [];
   const roamingConditionalRules = parsed.data.rules.roamingIncomingSms ?? [];
-  const localIncomingSmsPolicy = localConditionalRules.length
-    ? "variable"
-    : smsPolicyFromRateMode(normalizedRates.localIncomingSms.mode);
-  const roamingIncomingSmsPolicy = roamingConditionalRules.length
-    ? "variable"
-    : smsPolicyFromRateMode(normalizedRates.roamingIncomingSms.mode);
+  const localIncomingSmsPolicy = localConditionalRules.length ? "variable" : smsPolicyFromRateMode(normalizedRates.localIncomingSms.mode);
+  const roamingIncomingSmsPolicy = roamingConditionalRules.length ? "variable" : smsPolicyFromRateMode(normalizedRates.roamingIncomingSms.mode);
 
   db.transaction((tx) => {
     const existing = tx.select({ id: simTariffs.id }).from(simTariffs).where(eq(simTariffs.simId, parsed.data.simId)).get();
@@ -455,6 +399,7 @@ export async function PUT(request: NextRequest) {
       planName: nullable(parsed.data.planName),
       planType: parsed.data.planType,
       currencyCode: parsed.data.currencyCode,
+      purchaseCost: parsed.data.purchaseCost,
       recurringFee: parsed.data.recurringFee,
       recurringPeriodValue: parsed.data.recurringPeriodValue,
       recurringPeriodUnit: nullable(parsed.data.recurringPeriodUnit),
@@ -474,75 +419,67 @@ export async function PUT(request: NextRequest) {
       tariffId = existing.id;
       tx.update(simTariffs).set({ ...values, updatedAt: now }).where(eq(simTariffs.id, tariffId)).run();
     } else {
-      tariffId = tx
-        .insert(simTariffs)
-        .values({ ...values, createdAt: now, updatedAt: now })
-        .returning({ id: simTariffs.id })
-        .get().id;
+      tariffId = tx.insert(simTariffs).values({ ...values, createdAt: now, updatedAt: now }).returning({ id: simTariffs.id }).get().id;
     }
 
     tx.delete(simTariffRates).where(eq(simTariffRates.tariffId, tariffId)).run();
     tx.insert(simTariffRates)
-      .values(
-        TARIFF_SERVICES.map((service) => {
-          const rate = normalizedRates[service.code];
-          return {
-            tariffId,
-            serviceCode: service.code,
-            mode: rate.mode,
-            amount: rate.amount,
-            billingUnit: rate.billingUnit,
-            legacyText: null,
-            createdAt: now,
-            updatedAt: now,
-          };
-        }),
-      )
+      .values(TARIFF_SERVICES.map((service) => {
+        const rate = normalizedRates[service.code];
+        return { tariffId, serviceCode: service.code, mode: rate.mode, amount: rate.amount, billingUnit: rate.billingUnit, legacyText: null, createdAt: now, updatedAt: now };
+      }))
       .run();
 
     tx.delete(simTariffRateRules).where(eq(simTariffRateRules.tariffId, tariffId)).run();
-
     for (const service of TARIFF_SERVICES) {
       const rules = parsed.data.rules[service.code] ?? [];
       rules.forEach((rawRule, ruleIndex) => {
         const rule = normalizeRule(service.code, rawRule);
-        const insertedRule = tx
-          .insert(simTariffRateRules)
-          .values({
-            tariffId,
-            serviceCode: service.code,
-            label: nullable(rule.label),
-            mode: rule.mode,
-            amount: rule.amount,
-            billingUnit: rule.billingUnit,
-            packagePrice: rule.packagePrice,
-            packageAllowanceAmount: rule.packageAllowanceAmount,
-            packageAllowanceUnit: rule.packageAllowanceUnit,
-            validityValue: rule.validityValue,
-            validityUnit: rule.validityUnit,
-            autoRenew: rule.autoRenew,
-            sortOrder: ruleIndex,
-            createdAt: now,
-            updatedAt: now,
-          })
-          .returning({ id: simTariffRateRules.id })
-          .get();
+        const insertedRule = tx.insert(simTariffRateRules).values({
+          tariffId,
+          serviceCode: service.code,
+          label: nullable(rule.label),
+          mode: rule.mode,
+          amount: rule.amount,
+          billingUnit: rule.billingUnit,
+          packagePrice: rule.packagePrice,
+          packageAllowanceAmount: rule.packageAllowanceAmount,
+          packageAllowanceUnit: rule.packageAllowanceUnit,
+          validityValue: rule.validityValue,
+          validityUnit: rule.validityUnit,
+          autoRenew: rule.autoRenew,
+          sortOrder: ruleIndex,
+          createdAt: now,
+          updatedAt: now,
+        }).returning({ id: simTariffRateRules.id }).get();
 
         if (rule.conditions.length) {
-          tx.insert(simTariffRuleConditions)
-            .values(
-              rule.conditions.map((condition, conditionIndex) => ({
-                ruleId: insertedRule.id,
-                conditionType: condition.type,
-                value: condition.value,
-                value2: nullable(condition.value2),
-                sortOrder: conditionIndex,
-                createdAt: now,
-              })),
-            )
-            .run();
+          tx.insert(simTariffRuleConditions).values(rule.conditions.map((condition, conditionIndex) => ({
+            ruleId: insertedRule.id,
+            conditionType: condition.type,
+            value: condition.value,
+            value2: nullable(condition.value2),
+            sortOrder: conditionIndex,
+            createdAt: now,
+          }))).run();
         }
       });
+    }
+
+    tx.delete(simTariffCustomItems).where(eq(simTariffCustomItems.tariffId, tariffId)).run();
+    if (parsed.data.customItems.length) {
+      tx.insert(simTariffCustomItems).values(parsed.data.customItems.map((item, index) => ({
+        tariffId,
+        label: item.label,
+        kind: item.kind,
+        mode: item.mode,
+        amount: item.mode === "charged" ? item.amount : null,
+        billingUnit: item.mode === "charged" ? item.billingUnit : null,
+        notes: nullable(item.notes),
+        sortOrder: index,
+        createdAt: now,
+        updatedAt: now,
+      }))).run();
     }
   });
 
@@ -555,9 +492,7 @@ export async function DELETE(request: NextRequest) {
   if (unauthorized) return unauthorized;
 
   const simId = Number(request.nextUrl.searchParams.get("simId"));
-  if (!Number.isInteger(simId) || simId <= 0) {
-    return NextResponse.json({ error: "无效的号码 ID" }, { status: 400 });
-  }
+  if (!Number.isInteger(simId) || simId <= 0) return NextResponse.json({ error: "无效的号码 ID" }, { status: 400 });
 
   db.delete(simTariffs).where(eq(simTariffs.simId, simId)).run();
   return NextResponse.json({ ok: true });
