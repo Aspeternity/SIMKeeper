@@ -67,7 +67,7 @@ jobs:
             for file in "$tmp"/*.html "$tmp"/*.json; do
               [ -f "$file" ] || continue
               echo "----- $file -----"
-              head -c 4000 "$file" || true
+              head -c 8000 "$file" || true
               echo
             done
           }
@@ -149,44 +149,61 @@ jobs:
           expect_header '^location: /[[:space:]]*$' "Login Location header is not relative root /"
           expect_header '^set-cookie: simkeeper_session=' "Login response did not set session cookie"
 
-          echo "[8/11] Creating carrier"
+          echo "[8/11] Creating Hong Kong carrier"
           status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/carrier.json" -w '%{http_code}' \
             -X POST -H 'Content-Type: application/json' \
-            --data '{"name":"Smoke Carrier","countryCode":"PH","website":"","notes":""}' \
+            --data '{"name":"Smoke HK Carrier","countryCode":"HK","website":"","notes":""}' \
             "$base/api/carriers")" || fail "POST /api/carriers failed"
           [ "$status" = "201" ] || fail "Carrier creation returned HTTP $status"
           carrier_id="$(jq -r '.carrier.id // empty' "$tmp/carrier.json")"
           [ -n "$carrier_id" ] || fail "Carrier response did not contain an id"
 
           echo "[9/11] Creating SIM with normalized phone number"
-          jq -n --argjson carrierId "$carrier_id" '{label:"Smoke SIM",phoneNumber:"9171234567",carrierId:$carrierId,simType:"physical",iccid:"",balance:"",currencyCode:"PHP",status:"active",activationDate:"",validUntil:"",notes:""}' > "$tmp/sim-payload.json"
+          jq -n --argjson carrierId "$carrier_id" '{label:"Smoke SIM",phoneNumber:"51234567",carrierId:$carrierId,simType:"esim",iccid:"",balance:"",currencyCode:"HKD",status:"active",activationDate:"",validUntil:"",notes:""}' > "$tmp/sim-payload.json"
           status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/sim.json" -w '%{http_code}' \
             -X POST -H 'Content-Type: application/json' --data-binary @"$tmp/sim-payload.json" "$base/api/sims")" || fail "POST /api/sims failed"
           [ "$status" = "201" ] || fail "SIM creation returned HTTP $status"
           sim_id="$(jq -r '.sim.id // empty' "$tmp/sim.json")"
           [ -n "$sim_id" ] || fail "SIM response did not contain an id"
-          [ "$(jq -r '.sim.phoneNumber' "$tmp/sim.json")" = "+639171234567" ] || fail "SIM phone number was not normalized to E.164"
+          [ "$(jq -r '.sim.phoneNumber' "$tmp/sim.json")" = "+85251234567" ] || fail "SIM phone number was not normalized to E.164"
 
-          echo "[10/11] Saving structured tariff profile"
+          echo "[10/11] Saving CSL-style conditional tariff profile"
           jq -n --argjson simId "$sim_id" '{
             simId:$simId,
-            planName:"Smoke Tariff",
+            planName:"Conditional Smoke Tariff",
             planType:"prepaid",
-            currencyCode:"PHP",
-            recurringFee:199,
-            recurringPeriodValue:30,
-            recurringPeriodUnit:"day",
-            administrationFee:0,
-            autoRenew:"yes",
+            currencyCode:"HKD",
+            recurringFee:null,
+            recurringPeriodValue:null,
+            recurringPeriodUnit:"",
+            administrationFee:3,
+            autoRenew:"unknown",
             roamingAvailable:"yes",
             rates:{
-              localOutgoingCall:{mode:"included_unlimited",amount:null,billingUnit:""},
-              localData:{mode:"included",amount:10,billingUnit:"gb"},
               localIncomingSms:{mode:"free",amount:null,billingUnit:""},
-              roamingIncomingSms:{mode:"free",amount:null,billingUnit:""},
-              roamingIncomingCall:{mode:"charged",amount:12.5,billingUnit:"per_minute"}
+              roamingIncomingSms:{mode:"unknown",amount:null,billingUnit:""}
             },
-            usageSummary:"Smoke-test structured tariff profile",
+            rules:{
+              localOutgoingSms:[
+                {label:"Same network",mode:"charged",amount:0.3,billingUnit:"per_sms",packagePrice:null,packageAllowanceAmount:null,packageAllowanceUnit:"",validityValue:null,validityUnit:"",autoRenew:"unknown",conditions:[{type:"network_scope",value:"same_network",value2:""}]},
+                {label:"Other network",mode:"charged",amount:0.7,billingUnit:"per_sms",packagePrice:null,packageAllowanceAmount:null,packageAllowanceUnit:"",validityValue:null,validityUnit:"",autoRenew:"unknown",conditions:[{type:"network_scope",value:"other_network",value2:""}]}
+              ],
+              internationalOutgoingSms:[
+                {label:"Mainland China",mode:"charged",amount:1.5,billingUnit:"per_sms",packagePrice:null,packageAllowanceAmount:null,packageAllowanceUnit:"",validityValue:null,validityUnit:"",autoRenew:"unknown",conditions:[{type:"destination",value:"CN",value2:""}]},
+                {label:"Other destinations",mode:"charged",amount:1.8,billingUnit:"per_sms",packagePrice:null,packageAllowanceAmount:null,packageAllowanceUnit:"",validityValue:null,validityUnit:"",autoRenew:"unknown",conditions:[{type:"destination",value:"OTHER",value2:""}]}
+              ],
+              roamingOutgoingCall:[
+                {label:"China to home or local",mode:"charged",amount:3,billingUnit:"per_minute",packagePrice:null,packageAllowanceAmount:null,packageAllowanceUnit:"",validityValue:null,validityUnit:"",autoRenew:"unknown",conditions:[{type:"roaming_region",value:"CN",value2:""},{type:"destination",value:"HOME",value2:""},{type:"destination",value:"CURRENT",value2:""}]},
+                {label:"China to other destinations",mode:"charged",amount:18,billingUnit:"per_minute",packagePrice:null,packageAllowanceAmount:null,packageAllowanceUnit:"",validityValue:null,validityUnit:"",autoRenew:"unknown",conditions:[{type:"roaming_region",value:"CN",value2:""},{type:"destination",value:"OTHER",value2:""}]}
+              ],
+              roamingIncomingSms:[
+                {label:"China or Macau",mode:"free",amount:null,billingUnit:"",packagePrice:null,packageAllowanceAmount:null,packageAllowanceUnit:"",validityValue:null,validityUnit:"",autoRenew:"unknown",conditions:[{type:"roaming_region",value:"CN",value2:""},{type:"roaming_region",value:"MO",value2:""}]}
+              ],
+              roamingData:[
+                {label:"2GB 365-day pass",mode:"package",amount:null,billingUnit:"",packagePrice:30,packageAllowanceAmount:2,packageAllowanceUnit:"gb",validityValue:365,validityUnit:"day",autoRenew:"no",conditions:[{type:"roaming_region",value:"CN",value2:""},{type:"roaming_region",value:"MO",value2:""}]}
+              ]
+            },
+            usageSummary:"Smoke-test conditional tariff profile",
             sourceUrl:"",
             verifiedAt:"",
             notes:""
@@ -194,26 +211,25 @@ jobs:
           status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/tariff.json" -w '%{http_code}' \
             -X PUT -H 'Content-Type: application/json' --data-binary @"$tmp/tariff-payload.json" "$base/api/tariffs")" || fail "PUT /api/tariffs failed"
           [ "$status" = "200" ] || fail "Tariff save returned HTTP $status"
-          [ "$(jq -r '.tariff.planType' "$tmp/tariff.json")" = "prepaid" ] || fail "Tariff plan type was not saved"
-          [ "$(jq -r '.tariff.recurringFee' "$tmp/tariff.json")" = "199" ] || fail "Tariff recurring fee was not saved"
-          [ "$(jq -r '.tariff.recurringPeriodValue' "$tmp/tariff.json")" = "30" ] || fail "Tariff recurring period was not saved"
-          [ "$(jq -r '.tariff.autoRenew' "$tmp/tariff.json")" = "yes" ] || fail "Tariff auto-renew setting was not saved"
-          [ "$(jq -r '.tariff.currencyCode' "$tmp/tariff.json")" = "PHP" ] || fail "Tariff currency was not saved"
-          [ "$(jq -r '.tariff.localIncomingSmsPolicy' "$tmp/tariff.json")" = "free" ] || fail "Tariff local incoming SMS policy was not derived"
-          [ "$(jq -r '.tariff.roamingIncomingSmsPolicy' "$tmp/tariff.json")" = "free" ] || fail "Tariff roaming incoming SMS policy was not derived"
-          [ "$(jq -r '.tariff.rates.localOutgoingCall.mode' "$tmp/tariff.json")" = "included_unlimited" ] || fail "Unlimited included call allowance was not saved"
-          [ "$(jq -r '.tariff.rates.localData.mode' "$tmp/tariff.json")" = "included" ] || fail "Included data allowance mode was not saved"
-          [ "$(jq -r '.tariff.rates.localData.amount' "$tmp/tariff.json")" = "10" ] || fail "Included data allowance amount was not saved"
-          [ "$(jq -r '.tariff.rates.localData.billingUnit' "$tmp/tariff.json")" = "gb" ] || fail "Included data allowance unit was not saved"
-          [ "$(jq -r '.tariff.rates.roamingIncomingCall.mode' "$tmp/tariff.json")" = "charged" ] || fail "Structured roaming call mode was not saved"
-          [ "$(jq -r '.tariff.rates.roamingIncomingCall.amount' "$tmp/tariff.json")" = "12.5" ] || fail "Structured roaming call amount was not saved"
-          [ "$(jq -r '.tariff.rates.roamingIncomingCall.billingUnit' "$tmp/tariff.json")" = "per_minute" ] || fail "Structured roaming call billing unit was not saved"
+          [ "$(jq -r '.tariff.currencyCode' "$tmp/tariff.json")" = "HKD" ] || fail "Tariff currency was not saved"
+          [ "$(jq -r '.tariff.localIncomingSmsPolicy' "$tmp/tariff.json")" = "free" ] || fail "Base incoming SMS policy was not derived"
+          [ "$(jq -r '.tariff.roamingIncomingSmsPolicy' "$tmp/tariff.json")" = "variable" ] || fail "Conditional roaming SMS policy was not marked variable"
+          [ "$(jq -r '.tariff.rules.localOutgoingSms | length' "$tmp/tariff.json")" = "2" ] || fail "Local SMS conditional rules were not saved"
+          [ "$(jq -r '.tariff.rules.localOutgoingSms[0].amount' "$tmp/tariff.json")" = "0.3" ] || fail "Same-network SMS amount was not saved"
+          [ "$(jq -r '.tariff.rules.localOutgoingSms[1].amount' "$tmp/tariff.json")" = "0.7" ] || fail "Other-network SMS amount was not saved"
+          [ "$(jq -r '.tariff.rules.roamingOutgoingCall[0].conditions | length' "$tmp/tariff.json")" = "3" ] || fail "Multi-condition roaming call rule was not saved"
+          [ "$(jq -r '.tariff.rules.roamingOutgoingCall[1].amount' "$tmp/tariff.json")" = "18" ] || fail "Roaming destination price tier was not saved"
+          [ "$(jq -r '.tariff.rules.roamingData[0].mode' "$tmp/tariff.json")" = "package" ] || fail "Roaming data pass mode was not saved"
+          [ "$(jq -r '.tariff.rules.roamingData[0].packagePrice' "$tmp/tariff.json")" = "30" ] || fail "Roaming data pass price was not saved"
+          [ "$(jq -r '.tariff.rules.roamingData[0].packageAllowanceAmount' "$tmp/tariff.json")" = "2" ] || fail "Roaming data pass allowance was not saved"
+          [ "$(jq -r '.tariff.rules.roamingData[0].validityValue' "$tmp/tariff.json")" = "365" ] || fail "Roaming data pass validity was not saved"
+          [ "$(jq -r '.tariff.rules.roamingData[0].conditions | length' "$tmp/tariff.json")" = "2" ] || fail "Roaming data pass multi-region conditions were not saved"
 
           echo "[11/11] Verifying tariff summary is joined into SIM list"
           status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/sims.json" -w '%{http_code}' "$base/api/sims")" || fail "GET /api/sims failed"
           [ "$status" = "200" ] || fail "SIM list returned HTTP $status"
-          [ "$(jq -r --argjson id "$sim_id" '.sims[] | select(.id == $id) | .tariffPlanName' "$tmp/sims.json")" = "Smoke Tariff" ] || fail "SIM list did not include tariff summary"
-          [ "$(jq -r --argjson id "$sim_id" '.sims[] | select(.id == $id) | .roamingIncomingSmsPolicy' "$tmp/sims.json")" = "free" ] || fail "SIM list did not include roaming SMS summary"
+          [ "$(jq -r --argjson id "$sim_id" '.sims[] | select(.id == $id) | .tariffPlanName' "$tmp/sims.json")" = "Conditional Smoke Tariff" ] || fail "SIM list did not include tariff summary"
+          [ "$(jq -r --argjson id "$sim_id" '.sims[] | select(.id == $id) | .roamingIncomingSmsPolicy' "$tmp/sims.json")" = "variable" ] || fail "SIM list did not include conditional roaming SMS summary"
 
           echo "Application smoke test passed."
 
