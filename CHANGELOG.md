@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.1.0-alpha.8
+
+### Added
+
+- Dedicated notification-channel management page for turning reminder-center items into proactive alerts
+- Notification providers for generic Webhook, Bark, Gotify and Telegram Bot
+- Per-channel enable/disable state, provider-specific configuration and one-click test notifications
+- Container-internal notification scheduler started with the Next.js runtime, requiring no extra cron container
+- Automatic reminder checks every 15 minutes with a configurable daily start hour in `Asia/Shanghai`
+- Catch-up behavior when the container starts after the configured daily notification time
+- Same-day automatic deduplication per channel, reminder key, reminder status and due date
+- Manual `立即发送当前提醒` action that intentionally bypasses daily deduplication
+- Notification delivery history for both test and reminder sends, including success/failure state and error details
+- Loopback-compatible GET Webhook mode in addition to standard POST JSON Webhooks
+- Optional Bearer authentication for Webhook notifications
+- Custom Bark server URL, device key and notification group
+- Custom Gotify server URL, application token and priority
+- Custom Telegram API base URL, bot token and chat ID
+- Notification channels and delivery history included in portable/local backups and restores
+- Post-publish notification smoke workflow that validates a real loopback Webhook test, due-reminder delivery, same-day deduplication and backup coverage against the newly published Docker image
+
+### Changed
+
+- Sidebar and package version updated to `v0.1.0-alpha.8`
+- Added `通知渠道` directly after `提醒中心` in the primary navigation
+- Automatic notifications are disabled by default after upgrade and must be explicitly enabled after at least one channel is configured and tested
+- Notification credentials are treated as sensitive configuration and are explicitly called out as part of complete backups
+
 ## v0.1.0-alpha.7
 
 ### Added
