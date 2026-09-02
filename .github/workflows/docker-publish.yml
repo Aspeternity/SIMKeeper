@@ -167,12 +167,31 @@ jobs:
           [ -n "$sim_id" ] || fail "SIM response did not contain an id"
           [ "$(jq -r '.sim.phoneNumber' "$tmp/sim.json")" = "+639171234567" ] || fail "SIM phone number was not normalized to E.164"
 
-          echo "[10/11] Saving tariff profile"
-          jq -n --argjson simId "$sim_id" '{simId:$simId,planName:"Smoke Tariff",localIncomingSms:"Free",localIncomingSmsPolicy:"free",roamingIncomingSms:"Free while roaming",roamingIncomingSmsPolicy:"free",roamingAvailable:"yes",usageSummary:"Smoke-test tariff profile",sourceUrl:"",verifiedAt:"",notes:""}' > "$tmp/tariff-payload.json"
+          echo "[10/11] Saving structured tariff profile"
+          jq -n --argjson simId "$sim_id" '{
+            simId:$simId,
+            planName:"Smoke Tariff",
+            currencyCode:"PHP",
+            roamingAvailable:"yes",
+            rates:{
+              localIncomingSms:{mode:"free",amount:null,billingUnit:"per_sms"},
+              roamingIncomingSms:{mode:"free",amount:null,billingUnit:"per_sms"},
+              roamingIncomingCall:{mode:"charged",amount:12.5,billingUnit:"per_minute"}
+            },
+            usageSummary:"Smoke-test structured tariff profile",
+            sourceUrl:"",
+            verifiedAt:"",
+            notes:""
+          }' > "$tmp/tariff-payload.json"
           status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/tariff.json" -w '%{http_code}' \
             -X PUT -H 'Content-Type: application/json' --data-binary @"$tmp/tariff-payload.json" "$base/api/tariffs")" || fail "PUT /api/tariffs failed"
           [ "$status" = "200" ] || fail "Tariff save returned HTTP $status"
-          [ "$(jq -r '.tariff.localIncomingSmsPolicy' "$tmp/tariff.json")" = "free" ] || fail "Tariff local incoming SMS policy was not saved"
+          [ "$(jq -r '.tariff.currencyCode' "$tmp/tariff.json")" = "PHP" ] || fail "Tariff currency was not saved"
+          [ "$(jq -r '.tariff.localIncomingSmsPolicy' "$tmp/tariff.json")" = "free" ] || fail "Tariff local incoming SMS policy was not derived"
+          [ "$(jq -r '.tariff.roamingIncomingSmsPolicy' "$tmp/tariff.json")" = "free" ] || fail "Tariff roaming incoming SMS policy was not derived"
+          [ "$(jq -r '.tariff.rates.roamingIncomingCall.mode' "$tmp/tariff.json")" = "charged" ] || fail "Structured roaming call mode was not saved"
+          [ "$(jq -r '.tariff.rates.roamingIncomingCall.amount' "$tmp/tariff.json")" = "12.5" ] || fail "Structured roaming call amount was not saved"
+          [ "$(jq -r '.tariff.rates.roamingIncomingCall.billingUnit' "$tmp/tariff.json")" = "per_minute" ] || fail "Structured roaming call billing unit was not saved"
 
           echo "[11/11] Verifying tariff summary is joined into SIM list"
           status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/sims.json" -w '%{http_code}' "$base/api/sims")" || fail "GET /api/sims failed"
