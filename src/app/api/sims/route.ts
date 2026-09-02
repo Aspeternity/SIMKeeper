@@ -43,6 +43,7 @@ const simSchema = z
       .union([z.enum(["national_id", "passport", "residence_permit", "business_registration", "other"]), z.literal("")])
       .optional()
       .default(""),
+    identityDocumentTypeCustom: z.string().trim().max(120, "具体证件 / 材料类型不能超过 120 个字符").optional().default(""),
     identityDocumentNumber: z.string().trim().max(120, "证件号码不能超过 120 个字符").optional().default(""),
     identityCountryCode: z
       .string()
@@ -61,6 +62,9 @@ const simSchema = z
     }
     if (value.activationDate && value.validUntil && value.activationDate > value.validUntil) {
       context.addIssue({ code: "custom", path: ["validUntil"], message: "有效期不能早于激活日期" });
+    }
+    if (value.identityDocumentType === "other" && !value.identityDocumentTypeCustom) {
+      context.addIssue({ code: "custom", path: ["identityDocumentTypeCustom"], message: "请输入具体证件 / 材料类型" });
     }
   });
 
@@ -90,6 +94,7 @@ const rowSelection = {
   identityStatus: simCards.identityStatus,
   identityName: simCards.identityName,
   identityDocumentType: simCards.identityDocumentType,
+  identityDocumentTypeCustom: simCards.identityDocumentTypeCustom,
   identityDocumentNumber: simCards.identityDocumentNumber,
   identityCountryCode: simCards.identityCountryCode,
   identityNotes: simCards.identityNotes,
@@ -165,6 +170,7 @@ function normalize(parsed: z.infer<typeof simSchema>, phoneNumber: string | null
     identityStatus: parsed.identityStatus,
     identityName: parsed.identityName || null,
     identityDocumentType: parsed.identityDocumentType || null,
+    identityDocumentTypeCustom: parsed.identityDocumentType === "other" ? parsed.identityDocumentTypeCustom || null : null,
     identityDocumentNumber: parsed.identityDocumentNumber || null,
     identityCountryCode: parsed.identityCountryCode ? parsed.identityCountryCode.toUpperCase() : null,
     identityNotes: parsed.identityNotes || null,
