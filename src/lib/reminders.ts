@@ -33,6 +33,7 @@ type ReminderRule = {
   id: number;
   simId: number;
   name: string;
+  dueDateSource?: string | null;
   nextDueDate: string | null;
   warningDays: number;
   gracePeriodDays: number;
@@ -46,6 +47,14 @@ const statusRank: Record<ReminderStatus, number> = {
   upcoming: 3,
   unscheduled: 4,
 };
+
+function reminderStatusFromRuleState(state: { status: string; days: number | null }): ReminderStatus | null {
+  if (state.status === "ok" || state.status === "disabled") return null;
+  if (state.status === "overdue") return "overdue";
+  if (state.status === "grace") return "grace";
+  if (state.status === "unscheduled") return "unscheduled";
+  return state.days === 0 ? "today" : "upcoming";
+}
 
 export function buildReminderItems({
   sims,
@@ -70,7 +79,38 @@ export function buildReminderItems({
   for (const sim of sims) {
     if (sim.status === "closed") continue;
 
-    if (sim.validUntil) {
+    const simRules = rulesBySim.get(sim.id) ?? [];
+    const linkedValidityRule = simRules.find((rule) => rule.enabled && rule.dueDateSource === "sim_validity");
+
+    if (linkedValidityRule) {
+      const state = getKeepAliveRuleStatus({
+        enabled: linkedValidityRule.enabled,
+        nextDueDate: sim.validUntil,
+        warningDays: linkedValidityRule.warningDays,
+        gracePeriodDays: linkedValidityRule.gracePeriodDays,
+        today,
+      });
+      const status = reminderStatusFromRuleState(state);
+      if (status) {
+        reminders.push({
+          key: `validity-${sim.id}`,
+          simId: sim.id,
+          simLabel: sim.label,
+          phoneNumber: sim.phoneNumber,
+          carrierName: sim.carrierName,
+          country: sim.country,
+          kind: "sim_validity",
+          title: "号码有效期",
+          dueDate: sim.validUntil,
+          status,
+          days: state.days,
+          href: "/sims",
+          detail: sim.validUntil
+            ? `号码有效期将在 ${sim.validUntil} 到期 · 跟随保号规则“${linkedValidityRule.name}” · 提前 ${linkedValidityRule.warningDays} 天提醒`
+            : `跟随号码有效期的保号规则“${linkedValidityRule.name}”已启用，但号码尚未设置有效期`,
+        });
+      }
+    } else if (sim.validUntil) {
       const days = daysBetweenDates(today, sim.validUntil);
       if (days <= validityWarningDays) {
         reminders.push({
@@ -91,8 +131,8 @@ export function buildReminderItems({
       }
     }
 
-    for (const rule of rulesBySim.get(sim.id) ?? []) {
-      if (!rule.enabled) continue;
+    for (const rule of simRules) {
+      if (!rule.enabled || rule.dueDateSource === "sim_validity") continue;
       const state = getKeepAliveRuleStatus({
         enabled: rule.enabled,
         nextDueDate: rule.nextDueDate,
@@ -100,18 +140,8 @@ export function buildReminderItems({
         gracePeriodDays: rule.gracePeriodDays,
         today,
       });
-
-      if (state.status === "ok" || state.status === "disabled") continue;
-
-      const status: ReminderStatus = state.status === "overdue"
-        ? "overdue"
-        : state.status === "grace"
-          ? "grace"
-          : state.status === "unscheduled"
-            ? "unscheduled"
-            : state.days === 0
-              ? "today"
-              : "upcoming";
+      const status = reminderStatusFromRuleState(state);
+      if (!status) continue;
 
       reminders.push({
         key: `keep-alive-${rule.id}`,
