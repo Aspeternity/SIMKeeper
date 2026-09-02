@@ -1,4 +1,5 @@
 import { asc, eq } from "drizzle-orm";
+import { parsePhoneNumberFromString, type CountryCode } from "libphonenumber-js";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/db";
@@ -110,10 +111,28 @@ function getRow(id: number) {
     .get();
 }
 
-function normalize(parsed: z.infer<typeof simSchema>) {
+function normalizePhoneNumber(phoneNumber: string, countryCode: string) {
+  const value = phoneNumber.trim();
+  if (!value) return { phoneNumber: null, error: null };
+
+  try {
+    const parsed = parsePhoneNumberFromString(value, countryCode as CountryCode);
+    if (!parsed || !parsed.isPossible()) {
+      return { phoneNumber: null, error: "手机号格式与所选运营商所在国家/地区不匹配" };
+    }
+    if (parsed.country && parsed.country !== countryCode) {
+      return { phoneNumber: null, error: "手机号国家/地区与所选运营商不一致" };
+    }
+    return { phoneNumber: parsed.number, error: null };
+  } catch {
+    return { phoneNumber: null, error: "手机号格式不正确" };
+  }
+}
+
+function normalize(parsed: z.infer<typeof simSchema>, phoneNumber: string | null) {
   return {
     label: parsed.label,
-    phoneNumber: parsed.phoneNumber || null,
+    phoneNumber,
     carrierId: parsed.carrierId,
     simType: parsed.simType,
     iccid: parsed.iccid || null,
@@ -141,15 +160,24 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "提交的数据不正确" }, { status: 400 });
   }
 
-  const carrier = db.select({ id: carriers.id }).from(carriers).where(eq(carriers.id, parsed.data.carrierId)).get();
+  const carrier = db
+    .select({ id: carriers.id, countryCode: carriers.countryCode })
+    .from(carriers)
+    .where(eq(carriers.id, parsed.data.carrierId))
+    .get();
   if (!carrier) {
     return NextResponse.json({ error: "所选运营商不存在，请重新选择" }, { status: 400 });
+  }
+
+  const normalizedPhone = normalizePhoneNumber(parsed.data.phoneNumber, carrier.countryCode);
+  if (normalizedPhone.error) {
+    return NextResponse.json({ error: normalizedPhone.error }, { status: 400 });
   }
 
   const now = new Date().toISOString();
   const inserted = db
     .insert(simCards)
-    .values({ ...normalize(parsed.data), createdAt: now, updatedAt: now })
+    .values({ ...normalize(parsed.data, normalizedPhone.phoneNumber), createdAt: now, updatedAt: now })
     .returning({ id: simCards.id })
     .get();
 
@@ -176,13 +204,22 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: "号码不存在" }, { status: 404 });
   }
 
-  const carrier = db.select({ id: carriers.id }).from(carriers).where(eq(carriers.id, parsed.data.carrierId)).get();
+  const carrier = db
+    .select({ id: carriers.id, countryCode: carriers.countryCode })
+    .from(carriers)
+    .where(eq(carriers.id, parsed.data.carrierId))
+    .get();
   if (!carrier) {
     return NextResponse.json({ error: "所选运营商不存在，请重新选择" }, { status: 400 });
   }
 
+  const normalizedPhone = normalizePhoneNumber(parsed.data.phoneNumber, carrier.countryCode);
+  if (normalizedPhone.error) {
+    return NextResponse.json({ error: normalizedPhone.error }, { status: 400 });
+  }
+
   db.update(simCards)
-    .set({ ...normalize(parsed.data), updatedAt: new Date().toISOString() })
+    .set({ ...normalize(parsed.data, normalizedPhone.phoneNumber), updatedAt: new Date().toISOString() })
     .where(eq(simCards.id, id))
     .run();
 
