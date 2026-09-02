@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-  CalendarDays,
   CircleDollarSign,
   ExternalLink,
   Loader2,
@@ -100,7 +99,8 @@ function rateText(tariff: TariffDetail | null, code: TariffServiceCode) {
   const rate = tariff?.rates?.[code];
   if (!rate) return "未记录";
 
-  const ruleCount = Array.isArray(tariff?.rules?.[code]) ? tariff!.rules![code].length : 0;
+  const rules = tariff?.rules?.[code];
+  const ruleCount = Array.isArray(rules) ? rules.length : 0;
   let value = getTariffRateModeLabel(rate.mode || "unknown");
 
   if (rate.mode === "charged" && rate.amount !== null && rate.amount !== undefined) {
@@ -306,16 +306,6 @@ export function SimOverviewModal({
                 <p className="mt-1 text-xs text-slate-400">录入后，这里会集中展示本地和漫游核心资费。</p>
               </div>
             )}
-          </section>
-
-          <section className="border-t pt-6">
-            <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/40 px-4 py-4">
-              <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
-                <CalendarDays className="h-4 w-4 text-slate-400" />
-                生命周期详情入口
-              </div>
-              <p className="mt-1 text-xs leading-5 text-slate-400">后续绑定服务、保号规则与记录、充值记录开发完成后，会继续汇总到同一个号码详情中。</p>
-            </div>
           </section>
         </div>
 
