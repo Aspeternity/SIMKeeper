@@ -84,7 +84,7 @@ jobs:
             grep -Eiq "$pattern" "$headers" || fail "$description"
           }
 
-          echo "[1/15] Starting disposable SIMKeeper container"
+          echo "[1/17] Starting disposable SIMKeeper container"
           mkdir -p "$tmp/data"
           docker run -d \
             --name "$container" \
@@ -95,7 +95,7 @@ jobs:
             -v "$tmp/data:/app/data" \
             simkeeper:smoke >/dev/null || fail "Unable to start smoke-test container"
 
-          echo "[2/15] Waiting for health endpoint"
+          echo "[2/17] Waiting for health endpoint"
           ready=0
           for _ in $(seq 1 40); do
             if curl -fsS --max-time 2 "$base/api/health" >"$tmp/health.json" 2>/dev/null; then
@@ -106,12 +106,12 @@ jobs:
           done
           [ "$ready" -eq 1 ] || fail "SIMKeeper did not become healthy"
 
-          echo "[3/15] Verifying fresh instance setup page"
+          echo "[3/17] Verifying fresh instance setup page"
           status="$(curl -sS --max-time 5 -o "$tmp/setup.html" -w '%{http_code}' "$base/setup")" || fail "GET /setup failed"
           [ "$status" = "200" ] || fail "GET /setup returned HTTP $status"
           grep -q '创建管理员账户' "$tmp/setup.html" || fail "Fresh /setup page does not show administrator creation form"
 
-          echo "[4/15] Creating administrator and validating session cookie"
+          echo "[4/17] Creating administrator and validating session cookie"
           : > "$headers"
           curl -sS --max-time 10 -D "$headers" -o /dev/null -c "$cookies" \
             -X POST \
@@ -124,12 +124,12 @@ jobs:
           expect_header '^set-cookie: simkeeper_session=' "Setup response did not set session cookie"
           grep -q 'simkeeper_session' "$cookies" || fail "Session cookie was not written to curl cookie jar"
 
-          echo "[5/15] Verifying authenticated Dashboard"
+          echo "[5/17] Verifying authenticated Dashboard"
           status="$(curl -sS --max-time 5 -b "$cookies" -o "$tmp/dashboard.html" -w '%{http_code}' "$base/")" || fail "Authenticated GET / failed"
           [ "$status" = "200" ] || fail "Authenticated GET / returned HTTP $status"
           grep -q '你的号码生命周期' "$tmp/dashboard.html" || fail "Authenticated Dashboard content was not rendered"
 
-          echo "[6/15] Logging out and verifying unauthenticated gate"
+          echo "[6/17] Logging out and verifying unauthenticated gate"
           : > "$headers"
           curl -sS --max-time 5 -D "$headers" -o /dev/null -b "$cookies" -c "$cookies" -X POST "$base/api/auth/logout" || fail "POST /api/auth/logout failed"
           expect_header '^HTTP/[^ ]+ 303' "Logout did not return HTTP 303"
@@ -138,7 +138,7 @@ jobs:
           [ "$status" = "200" ] || fail "Unauthenticated GET / returned HTTP $status"
           grep -q '需要登录' "$tmp/gate.html" || fail "Logged-out Dashboard did not render login gate"
 
-          echo "[7/15] Logging back in"
+          echo "[7/17] Logging back in"
           : > "$headers"
           curl -sS --max-time 10 -D "$headers" -o /dev/null -b "$cookies" -c "$cookies" \
             -X POST \
@@ -149,7 +149,7 @@ jobs:
           expect_header '^location: /[[:space:]]*$' "Login Location header is not relative root /"
           expect_header '^set-cookie: simkeeper_session=' "Login response did not set session cookie"
 
-          echo "[8/15] Creating Hong Kong carrier"
+          echo "[8/17] Creating Hong Kong carrier"
           status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/carrier.json" -w '%{http_code}' \
             -X POST -H 'Content-Type: application/json' \
             --data '{"name":"Smoke HK Carrier","countryCode":"HK","website":"","notes":""}' \
@@ -158,7 +158,7 @@ jobs:
           carrier_id="$(jq -r '.carrier.id // empty' "$tmp/carrier.json")"
           [ -n "$carrier_id" ] || fail "Carrier response did not contain an id"
 
-          echo "[9/15] Creating SIM with normalized phone number"
+          echo "[9/17] Creating SIM with normalized phone number"
           jq -n --argjson carrierId "$carrier_id" '{label:"Smoke SIM",phoneNumber:"51234567",carrierId:$carrierId,simType:"esim",iccid:"",balance:"",currencyCode:"HKD",status:"active",activationDate:"",validUntil:"",notes:""}' > "$tmp/sim-payload.json"
           status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/sim.json" -w '%{http_code}' \
             -X POST -H 'Content-Type: application/json' --data-binary @"$tmp/sim-payload.json" "$base/api/sims")" || fail "POST /api/sims failed"
@@ -167,7 +167,7 @@ jobs:
           [ -n "$sim_id" ] || fail "SIM response did not contain an id"
           [ "$(jq -r '.sim.phoneNumber' "$tmp/sim.json")" = "+85251234567" ] || fail "SIM phone number was not normalized to E.164"
 
-          echo "[10/15] Saving tariff profile with advanced and custom data"
+          echo "[10/17] Saving tariff profile with advanced and custom data"
           jq -n --argjson simId "$sim_id" '{
             simId:$simId,
             planName:"Conditional Smoke Tariff",
@@ -232,13 +232,13 @@ jobs:
           [ "$(jq -r '.tariff.customItems | length' "$tmp/tariff.json")" = "1" ] || fail "Custom tariff item was not saved"
           [ "$(jq -r '.tariff.customItems[0].billingUnit' "$tmp/tariff.json")" = "per_call" ] || fail "Custom tariff billing unit was not saved"
 
-          echo "[11/15] Verifying tariff summary is joined into SIM list"
+          echo "[11/17] Verifying tariff summary is joined into SIM list"
           status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/sims.json" -w '%{http_code}' "$base/api/sims")" || fail "GET /api/sims failed"
           [ "$status" = "200" ] || fail "SIM list returned HTTP $status"
           [ "$(jq -r --argjson id "$sim_id" '.sims[] | select(.id == $id) | .tariffPlanName' "$tmp/sims.json")" = "Conditional Smoke Tariff" ] || fail "SIM list did not include tariff summary"
           [ "$(jq -r --argjson id "$sim_id" '.sims[] | select(.id == $id) | .roamingIncomingSmsPolicy' "$tmp/sims.json")" = "variable" ] || fail "SIM list did not include conditional roaming SMS summary"
 
-          echo "[12/15] Creating multiple keep-alive rules"
+          echo "[12/17] Creating multiple keep-alive rules"
           jq -n --argjson simId "$sim_id" '{simId:$simId,name:"Recharge validity",intervalValue:365,intervalUnit:"day",qualifyingActions:["recharge"],nextDueDate:"2026-09-30",warningDays:30,gracePeriodDays:0,enabled:true,notes:"Recharge should advance this rule"}' > "$tmp/keepalive-rule1.json"
           status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/keepalive-rule1-response.json" -w '%{http_code}' -X PUT -H 'Content-Type: application/json' --data-binary @"$tmp/keepalive-rule1.json" "$base/api/keep-alive")" || fail "PUT first keep-alive rule failed"
           [ "$status" = "200" ] || fail "First keep-alive rule returned HTTP $status"
@@ -251,7 +251,7 @@ jobs:
           rule2_id="$(jq -r '.rule.id // empty' "$tmp/keepalive-rule2-response.json")"
           [ -n "$rule2_id" ] || fail "Second keep-alive rule did not return an id"
 
-          echo "[13/15] Recording qualifying recharge and verifying automatic advancement"
+          echo "[13/17] Recording qualifying recharge and verifying automatic advancement"
           jq -n --argjson simId "$sim_id" '{simId:$simId,activityType:"recharge",activityDate:"2026-09-03",amount:20,currencyCode:"HKD",balanceAfter:62,validUntilAfter:"2027-09-03",notes:"Keep-alive smoke recharge"}' > "$tmp/keepalive-event.json"
           status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/keepalive-event-response.json" -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data-binary @"$tmp/keepalive-event.json" "$base/api/keep-alive")" || fail "POST keep-alive event failed"
           [ "$status" = "201" ] || fail "Keep-alive event returned HTTP $status"
@@ -267,7 +267,7 @@ jobs:
           [ "$(jq -r --argjson id "$sim_id" '.sims[] | select(.id == $id) | .rules | length' "$tmp/keepalive-list.json")" = "2" ] || fail "Keep-alive overview did not include both rules"
           [ "$(jq -r --argjson id "$sim_id" '.sims[] | select(.id == $id) | .latestEvent.activityType' "$tmp/keepalive-list.json")" = "recharge" ] || fail "Keep-alive overview did not include latest activity"
 
-          echo "[14/15] Creating and verifying bound service"
+          echo "[14/17] Creating and verifying bound service"
           jq -n --argjson simId "$sim_id" '{simId:$simId,serviceName:"Smoke Bank",category:"finance",bindingType:"two_factor",accountIdentifier:"smoke-account-01",importance:"critical",status:"active",website:"https://example.com",boundAt:"2026-09-01",verifiedAt:"2026-09-03",notes:"Bound service smoke test"}' > "$tmp/service-payload.json"
           status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/service.json" -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data-binary @"$tmp/service-payload.json" "$base/api/services")" || fail "POST /api/services failed"
           [ "$status" = "201" ] || fail "Bound service creation returned HTTP $status"
@@ -285,11 +285,49 @@ jobs:
           [ "$status" = "200" ] || fail "Bound services page returned HTTP $status"
           grep -q '绑定服务' "$tmp/services.html" || fail "Bound services page heading was not rendered"
 
-          echo "[15/15] Verifying reminder center renders due keep-alive rule"
+          echo "[15/17] Exporting and creating full backups"
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/export.json" -w '%{http_code}' "$base/api/backups?export=1")" || fail "GET portable backup export failed"
+          [ "$status" = "200" ] || fail "Portable backup export returned HTTP $status"
+          [ "$(jq -r '.format' "$tmp/export.json")" = "simkeeper-portable-backup" ] || fail "Portable backup format marker is missing"
+          [ "$(jq -r '.tables.sim_cards | length' "$tmp/export.json")" = "1" ] || fail "Portable backup did not include SIM data"
+          [ "$(jq -r '.tables.sim_bound_services | length' "$tmp/export.json")" = "1" ] || fail "Portable backup did not include bound services"
+
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/local-backup.json" -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{"action":"create"}' "$base/api/backups")" || fail "POST local backup creation failed"
+          [ "$status" = "201" ] || fail "Local backup creation returned HTTP $status"
+          backup_name="$(jq -r '.backup.name // empty' "$tmp/local-backup.json")"
+          [ -n "$backup_name" ] || fail "Local backup did not return a filename"
+
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/backups-list.json" -w '%{http_code}' "$base/api/backups")" || fail "GET backup list failed"
+          [ "$status" = "200" ] || fail "Backup list returned HTTP $status"
+          [ "$(jq -r '.backups | length' "$tmp/backups-list.json")" -ge 1 ] || fail "Created local backup was not listed"
+
+          echo "[16/17] Mutating data and verifying full restore rollback"
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/temp-carrier.json" -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{"name":"Temporary Restore Probe","countryCode":"SG","website":"","notes":"must disappear after restore"}' "$base/api/carriers")" || fail "Creating restore probe carrier failed"
+          [ "$status" = "201" ] || fail "Restore probe carrier returned HTTP $status"
+
+          jq -n --slurpfile backup "$tmp/export.json" '{action:"restoreImported",backup:$backup[0]}' > "$tmp/restore-payload.json"
+          status="$(curl -sS --max-time 20 -b "$cookies" -o "$tmp/restore.json" -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data-binary @"$tmp/restore-payload.json" "$base/api/backups")" || fail "Portable backup restore failed"
+          [ "$status" = "200" ] || fail "Portable backup restore returned HTTP $status"
+          [ -n "$(jq -r '.safetyBackup // empty' "$tmp/restore.json")" ] || fail "Restore did not create a pre-restore safety backup"
+
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/carriers-after-restore.json" -w '%{http_code}' "$base/api/carriers")" || fail "GET carriers after restore failed"
+          [ "$status" = "200" ] || fail "Carrier list after restore returned HTTP $status"
+          [ "$(jq -r '[.carriers[] | select(.name == "Temporary Restore Probe")] | length' "$tmp/carriers-after-restore.json")" = "0" ] || fail "Restore probe data survived the restore"
+          [ "$(jq -r '[.carriers[] | select(.name == "Smoke HK Carrier")] | length' "$tmp/carriers-after-restore.json")" = "1" ] || fail "Original carrier was not restored"
+
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/services-after-restore.json" -w '%{http_code}' "$base/api/services?simId=$sim_id")" || fail "GET bound services after restore failed"
+          [ "$status" = "200" ] || fail "Bound services after restore returned HTTP $status"
+          [ "$(jq -r '.bindings[0].serviceName' "$tmp/services-after-restore.json")" = "Smoke Bank" ] || fail "Bound service was not restored"
+
+          echo "[17/17] Verifying reminder and settings pages"
           status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/reminders.html" -w '%{http_code}' "$base/reminders")" || fail "GET /reminders failed"
           [ "$status" = "200" ] || fail "Reminder center returned HTTP $status"
           grep -q '提醒中心' "$tmp/reminders.html" || fail "Reminder center heading was not rendered"
           grep -q 'Usage activity' "$tmp/reminders.html" || fail "Due keep-alive rule was not rendered in reminder center"
+
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/settings.html" -w '%{http_code}' "$base/settings")" || fail "GET /settings failed"
+          [ "$status" = "200" ] || fail "Settings and backup page returned HTTP $status"
+          grep -q '设置与备份' "$tmp/settings.html" || fail "Settings and backup heading was not rendered"
 
           echo "Application smoke test passed."
 
