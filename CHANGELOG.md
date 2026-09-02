@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.1.0-alpha.3
+
+### Added
+
+- SIM / eSIM number management page
+- Authenticated SIM CRUD API
+- SQLite-backed SIM lifecycle records with automatic table/index initialization
+- Carrier association with inherited country/region information
+- SIM type options for physical SIM, eSIM and eSIM adapter cards
+- Phone number / MSISDN, ICCID, balance, currency, status, activation date, validity date and notes
+- Built-in currency catalog with automatic defaults based on carrier country/region
+- Number search and filtering by status and carrier
+- Lifecycle summary cards for total, active, due-soon and overdue numbers
+- Dashboard action list for expired and 30-day upcoming validity dates
+
+### Changed
+
+- Enabled the Number Management navigation entry
+- Sidebar version updated to `v0.1.0-alpha.3`
+- Dashboard statistics now use real SQLite SIM data instead of placeholders
+- Carrier deletion is blocked while the carrier is still referenced by a SIM record
+- Country/region remains normalized through the carrier relationship instead of being duplicated in each SIM record
+
 ## v0.1.0-alpha.2
 
 ### Added
