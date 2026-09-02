@@ -17,10 +17,6 @@ if (!isBuildTime) {
 const dbPath = isBuildTime ? ":memory:" : path.join(dataDir, "simkeeper.db");
 const sqlite = new Database(dbPath);
 
-// Give concurrent requests time to wait for short SQLite write locks instead of
-// immediately failing with SQLITE_BUSY. During `next build` every worker gets
-// its own in-memory database, so build-time module evaluation never touches the
-// persistent runtime database.
 sqlite.pragma("busy_timeout = 5000");
 sqlite.pragma("foreign_keys = ON");
 
@@ -80,6 +76,37 @@ sqlite.exec(`
   CREATE INDEX IF NOT EXISTS idx_sim_cards_phone_number ON sim_cards(phone_number);
   CREATE INDEX IF NOT EXISTS idx_sim_cards_status ON sim_cards(status);
   CREATE INDEX IF NOT EXISTS idx_sim_cards_valid_until ON sim_cards(valid_until);
+
+  CREATE TABLE IF NOT EXISTS sim_tariffs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sim_id INTEGER NOT NULL UNIQUE,
+    plan_name TEXT,
+    local_outgoing_call TEXT,
+    local_incoming_call TEXT,
+    local_outgoing_sms TEXT,
+    local_incoming_sms TEXT,
+    local_data TEXT,
+    international_outgoing_call TEXT,
+    international_outgoing_sms TEXT,
+    roaming_outgoing_call TEXT,
+    roaming_incoming_call TEXT,
+    roaming_outgoing_sms TEXT,
+    roaming_incoming_sms TEXT,
+    roaming_data TEXT,
+    local_incoming_sms_policy TEXT NOT NULL DEFAULT 'unknown',
+    roaming_incoming_sms_policy TEXT NOT NULL DEFAULT 'unknown',
+    roaming_available TEXT NOT NULL DEFAULT 'unknown',
+    usage_summary TEXT,
+    source_url TEXT,
+    verified_at TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (sim_id) REFERENCES sim_cards(id) ON DELETE CASCADE
+  );
+
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_sim_tariffs_sim_id ON sim_tariffs(sim_id);
+  CREATE INDEX IF NOT EXISTS idx_sim_tariffs_verified_at ON sim_tariffs(verified_at);
 
   UPDATE sim_cards
   SET sim_type = 'esim'
