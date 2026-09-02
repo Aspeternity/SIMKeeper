@@ -4,7 +4,12 @@ import { z } from "zod";
 import { db } from "@/db";
 import { simCards, simTariffRates, simTariffs } from "@/db/schema";
 import { getCurrentUser } from "@/lib/auth";
-import { getBillingUnitsForService, smsPolicyFromRateMode, TARIFF_SERVICES } from "@/lib/tariff-options";
+import {
+  getAllowanceUnitsForService,
+  getBillingUnitsForService,
+  smsPolicyFromRateMode,
+  TARIFF_SERVICES,
+} from "@/lib/tariff-options";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,42 +37,34 @@ const urlField = z
   .optional()
   .default("");
 
+const nullableNumber = (message: string) =>
+  z.preprocess(
+    (value) => (value === "" || value === null || value === undefined ? null : Number(value)),
+    z.number().finite().nonnegative(message).nullable(),
+  );
+
 const serviceCodes = new Set<string>(TARIFF_SERVICES.map((item) => item.code));
 
 const rateSchema = z.object({
-  mode: z.enum(["unknown", "free", "charged", "included", "unavailable"]),
-  amount: z.preprocess(
-    (value) => (value === "" || value === null || value === undefined ? null : Number(value)),
-    z.number().finite().nonnegative("资费金额不能小于 0").nullable(),
-  ),
-  billingUnit: z
-    .union([
-      z.enum([
-        "per_second",
-        "per_6_seconds",
-        "per_10_seconds",
-        "per_15_seconds",
-        "per_30_seconds",
-        "per_minute",
-        "per_call",
-        "per_sms",
-        "per_kb",
-        "per_mb",
-        "per_gb",
-        "per_day",
-        "per_session",
-      ]),
-      z.literal(""),
-    ])
-    .optional()
-    .default(""),
+  mode: z.enum(["unknown", "free", "charged", "included", "included_unlimited", "unavailable"]),
+  amount: nullableNumber("金额不能小于 0"),
+  billingUnit: z.string().trim().max(32, "计费单位不正确").optional().default(""),
 });
 
 const tariffSchema = z
   .object({
     simId: z.coerce.number().int().positive("无效的号码 ID"),
     planName: z.string().trim().max(120, "套餐/资费名称不能超过 120 个字符").optional().default(""),
+    planType: z.enum(["unknown", "prepaid", "postpaid"]),
     currencyCode: z.string().trim().toUpperCase().regex(/^[A-Z]{3}$/, "请选择资费币种"),
+    recurringFee: nullableNumber("基础/月费不能小于 0"),
+    recurringPeriodValue: z.preprocess(
+      (value) => (value === "" || value === null || value === undefined ? null : Number(value)),
+      z.number().int().positive("计费周期必须为正整数").nullable(),
+    ),
+    recurringPeriodUnit: z.union([z.enum(["day", "month", "year"]), z.literal("")]).optional().default(""),
+    administrationFee: nullableNumber("行政/附加费不能小于 0"),
+    autoRenew: z.enum(["unknown", "yes", "no"]),
     roamingAvailable: z.enum(["yes", "no", "unknown"]),
     rates: z.record(z.string(), rateSchema).optional().default({}),
     usageSummary: z.string().trim().max(300, "使用结论不能超过 300 个字符").optional().default(""),
@@ -76,22 +73,37 @@ const tariffSchema = z
     notes: z.string().trim().max(1000, "资费备注不能超过 1000 个字符").optional().default(""),
   })
   .superRefine((value, context) => {
+    if ((value.recurringPeriodValue === null) !== (value.recurringPeriodUnit === "")) {
+      context.addIssue({
+        code: "custom",
+        path: ["recurringPeriodValue"],
+        message: "计费周期的数字和单位需要同时填写",
+      });
+    }
+
     for (const [serviceCode, rate] of Object.entries(value.rates)) {
       if (!serviceCodes.has(serviceCode)) {
         context.addIssue({ code: "custom", path: ["rates", serviceCode], message: "存在未知资费项目" });
         continue;
       }
+
       if (rate.mode === "charged") {
         if (rate.amount === null) {
           context.addIssue({ code: "custom", path: ["rates", serviceCode, "amount"], message: "收费项目请输入金额" });
         }
-        if (!rate.billingUnit) {
-          context.addIssue({ code: "custom", path: ["rates", serviceCode, "billingUnit"], message: "收费项目请选择计费单位" });
-        } else {
-          const allowedUnits = getBillingUnitsForService(serviceCode).map((item) => item.value);
-          if (!allowedUnits.some((unit) => unit === rate.billingUnit)) {
-            context.addIssue({ code: "custom", path: ["rates", serviceCode, "billingUnit"], message: "该计费单位不适用于此资费项目" });
-          }
+        const allowedUnits = getBillingUnitsForService(serviceCode).map((item) => item.value);
+        if (!rate.billingUnit || !allowedUnits.some((unit) => unit === rate.billingUnit)) {
+          context.addIssue({ code: "custom", path: ["rates", serviceCode, "billingUnit"], message: "请选择适用于该项目的计费单位" });
+        }
+      }
+
+      if (rate.mode === "included") {
+        if (rate.amount === null || rate.amount <= 0) {
+          context.addIssue({ code: "custom", path: ["rates", serviceCode, "amount"], message: "套餐内包含项目请输入大于 0 的包含量" });
+        }
+        const allowedUnits = getAllowanceUnitsForService(serviceCode).map((item) => item.value);
+        if (!rate.billingUnit || !allowedUnits.some((unit) => unit === rate.billingUnit)) {
+          context.addIssue({ code: "custom", path: ["rates", serviceCode, "billingUnit"], message: "请选择适用于该项目的包含量单位" });
         }
       }
     }
@@ -112,6 +124,7 @@ function nullable(value: string) {
 function inferLegacyMode(value: string | null) {
   if (!value) return "unknown";
   if (/免费|\bfree\b/i.test(value)) return "free";
+  if (/不限|无限|unlimited/i.test(value)) return "included_unlimited";
   if (/不可用|不支持|unavailable|not available/i.test(value)) return "unavailable";
   return "unknown";
 }
@@ -127,12 +140,13 @@ function buildTariffResponse(tariff: typeof simTariffs.$inferSelect | null) {
     TARIFF_SERVICES.map((service) => {
       const row = rowMap.get(service.code);
       if (row) {
+        const fallbackUnit = row.mode === "included" ? service.defaultAllowanceUnit : service.defaultUnit;
         return [
           service.code,
           {
             mode: row.mode,
             amount: row.amount,
-            billingUnit: row.billingUnit || service.defaultUnit,
+            billingUnit: row.billingUnit || fallbackUnit,
             legacyText: row.legacyText,
           },
         ];
@@ -157,11 +171,24 @@ function buildTariffResponse(tariff: typeof simTariffs.$inferSelect | null) {
 function normalizeRate(serviceCode: string, rate: z.infer<typeof rateSchema> | undefined) {
   const service = TARIFF_SERVICES.find((item) => item.code === serviceCode)!;
   const mode = rate?.mode ?? "unknown";
-  return {
-    mode,
-    amount: mode === "charged" ? (rate?.amount ?? null) : null,
-    billingUnit: mode === "charged" ? (rate?.billingUnit || service.defaultUnit) : null,
-  };
+
+  if (mode === "charged") {
+    return {
+      mode,
+      amount: rate?.amount ?? null,
+      billingUnit: rate?.billingUnit || service.defaultUnit,
+    };
+  }
+
+  if (mode === "included") {
+    return {
+      mode,
+      amount: rate?.amount ?? null,
+      billingUnit: rate?.billingUnit || service.defaultAllowanceUnit,
+    };
+  }
+
+  return { mode, amount: null, billingUnit: null };
 }
 
 export async function GET(request: NextRequest) {
@@ -204,7 +231,13 @@ export async function PUT(request: NextRequest) {
     const values = {
       simId: parsed.data.simId,
       planName: nullable(parsed.data.planName),
+      planType: parsed.data.planType,
       currencyCode: parsed.data.currencyCode,
+      recurringFee: parsed.data.recurringFee,
+      recurringPeriodValue: parsed.data.recurringPeriodValue,
+      recurringPeriodUnit: nullable(parsed.data.recurringPeriodUnit),
+      administrationFee: parsed.data.administrationFee,
+      autoRenew: parsed.data.autoRenew,
       localIncomingSmsPolicy,
       roamingIncomingSmsPolicy,
       roamingAvailable: parsed.data.roamingAvailable,
