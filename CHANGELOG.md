@@ -11,6 +11,7 @@
 - Importance levels for critical, high, normal and low-priority bindings
 - Binding lifecycle states for current, migrated and unbound relationships so historical dependencies can be retained instead of deleted
 - Search and filters by binding status, category, importance, service name, account identifier, SIM and carrier
+- Dedicated SIM selector on the bound-services page for viewing all bindings associated with one specific number
 - Bound-services section in number details with current/critical counts, collapsible service cards and click-to-copy account identifiers
 - Direct links to service websites and the central bound-services manager
 - Dashboard shortcut and progress count for recorded bound services
