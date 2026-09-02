@@ -5,6 +5,7 @@ import { Check, ExternalLink, Loader2, Pencil, Plus, RadioTower, Search, Trash2,
 import { Card } from "@/components/ui/card";
 import { CountryRegionSelect } from "@/components/ui/country-region-select";
 import { Input } from "@/components/ui/input";
+import { ModalPortal } from "@/components/ui/modal-portal";
 import { getCommonCarriers } from "@/lib/carrier-catalog";
 import { getCountryRegion } from "@/lib/countries";
 
@@ -272,8 +273,8 @@ export default function CarriersPage() {
       </Card>
 
       {formOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/30 p-4 backdrop-blur-sm">
-          <Card className="my-6 w-full max-w-xl overflow-visible shadow-2xl">
+        <ModalPortal>
+          <Card className="w-full max-w-xl overflow-visible shadow-2xl">
             <div className="flex items-center justify-between rounded-t-2xl border-b bg-white px-6 py-5">
               <div>
                 <h3 className="font-semibold">{editing ? "编辑运营商" : "新增运营商"}</h3>
@@ -385,7 +386,7 @@ export default function CarriersPage() {
               </div>
             </form>
           </Card>
-        </div>
+        </ModalPortal>
       ) : null}
     </div>
   );
