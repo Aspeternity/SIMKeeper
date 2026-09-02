@@ -273,7 +273,7 @@ export default function CarriersPage() {
       </Card>
 
       {formOpen ? (
-        <ModalPortal>
+        <ModalPortal onBackdropClick={closeForm}>
           <Card className="w-full max-w-xl overflow-visible shadow-2xl">
             <div className="flex items-center justify-between rounded-t-2xl border-b bg-white px-6 py-5">
               <div>
