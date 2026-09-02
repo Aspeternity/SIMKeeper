@@ -4,7 +4,7 @@ import { AlertTriangle, BellRing, CheckCircle2, Clock3, ShieldCheck, Smartphone,
 import { Card } from "@/components/ui/card";
 import { db } from "@/db";
 import { carriers, simBoundServices, simCards, simKeepAliveRules } from "@/db/schema";
-import { getKeepAliveRuleStatus } from "@/lib/keep-alive";
+import { buildReminderItems } from "@/lib/reminders";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,84 +48,50 @@ export default function DashboardPage() {
     .from(simCards)
     .innerJoin(carriers, eq(simCards.carrierId, carriers.id))
     .all();
-  const keepAliveRules = db.select().from(simKeepAliveRules).all();
+  const keepAliveRules = db
+    .select({
+      id: simKeepAliveRules.id,
+      simId: simKeepAliveRules.simId,
+      name: simKeepAliveRules.name,
+      dueDateSource: simKeepAliveRules.dueDateSource,
+      nextDueDate: simKeepAliveRules.nextDueDate,
+      warningDays: simKeepAliveRules.warningDays,
+      gracePeriodDays: simKeepAliveRules.gracePeriodDays,
+      enabled: simKeepAliveRules.enabled,
+    })
+    .from(simKeepAliveRules)
+    .all();
 
   const today = dateInSingapore(new Date());
-  const thirtyDaysLater = dateInSingapore(new Date(Date.now() + 30 * 86400000));
-  const rulesBySim = new Map<number, typeof keepAliveRules>();
-  for (const rule of keepAliveRules) {
-    const list = rulesBySim.get(rule.simId) ?? [];
-    list.push(rule);
-    rulesBySim.set(rule.simId, list);
-  }
-
+  const reminders = buildReminderItems({ sims: rows, rules: keepAliveRules, today });
   const overdueSimIds = new Set<number>();
   const attentionSimIds = new Set<number>();
-  const actions: ActionItem[] = [];
 
   for (const sim of rows) {
-    const validOverdue = Boolean(sim.validUntil && sim.validUntil < today);
-    if (sim.status === "expired" || validOverdue) overdueSimIds.add(sim.id);
-    if (sim.status !== "closed" && sim.validUntil && sim.validUntil <= thirtyDaysLater) {
-      if (!validOverdue) attentionSimIds.add(sim.id);
-      actions.push({
-        key: `valid-${sim.id}`,
-        simId: sim.id,
-        label: sim.label,
-        phoneNumber: sim.phoneNumber,
-        carrierName: sim.carrierName,
-        country: sim.country,
-        title: "号码有效期",
-        date: sim.validUntil,
-        severity: validOverdue ? "overdue" : "warning",
-        href: "/reminders",
-      });
-    }
-
-    for (const rule of rulesBySim.get(sim.id) ?? []) {
-      const state = getKeepAliveRuleStatus({
-        enabled: rule.enabled,
-        nextDueDate: rule.nextDueDate,
-        warningDays: rule.warningDays,
-        gracePeriodDays: rule.gracePeriodDays,
-        today,
-      });
-      if (!rule.nextDueDate || !rule.enabled) continue;
-      if (state.status === "overdue") {
-        overdueSimIds.add(sim.id);
-        actions.push({
-          key: `rule-${rule.id}`,
-          simId: sim.id,
-          label: sim.label,
-          phoneNumber: sim.phoneNumber,
-          carrierName: sim.carrierName,
-          country: sim.country,
-          title: `保号 · ${rule.name}`,
-          date: rule.nextDueDate,
-          severity: "overdue",
-          href: "/reminders",
-        });
-      } else if (state.status === "grace" || state.status === "due_soon") {
-        attentionSimIds.add(sim.id);
-        actions.push({
-          key: `rule-${rule.id}`,
-          simId: sim.id,
-          label: sim.label,
-          phoneNumber: sim.phoneNumber,
-          carrierName: sim.carrierName,
-          country: sim.country,
-          title: `保号 · ${rule.name}`,
-          date: rule.nextDueDate,
-          severity: state.status === "grace" ? "overdue" : "warning",
-          href: "/reminders",
-        });
-      }
-    }
+    if (sim.status === "expired") overdueSimIds.add(sim.id);
   }
-
+  for (const reminder of reminders) {
+    if (reminder.status === "overdue") overdueSimIds.add(reminder.simId);
+    else attentionSimIds.add(reminder.simId);
+  }
   for (const id of overdueSimIds) attentionSimIds.delete(id);
 
-  const activeCount = rows.filter((sim) => sim.status === "active" && !(sim.validUntil && sim.validUntil < today) && !overdueSimIds.has(sim.id)).length;
+  const actions: ActionItem[] = reminders
+    .filter((reminder) => reminder.dueDate)
+    .map((reminder) => ({
+      key: reminder.key,
+      simId: reminder.simId,
+      label: reminder.simLabel,
+      phoneNumber: reminder.phoneNumber,
+      carrierName: reminder.carrierName,
+      country: reminder.country,
+      title: reminder.title,
+      date: reminder.dueDate as string,
+      severity: reminder.status === "overdue" || reminder.status === "grace" ? "overdue" : "warning",
+      href: "/reminders",
+    }));
+
+  const activeCount = rows.filter((sim) => sim.status === "active" && !overdueSimIds.has(sim.id)).length;
   const actionable = actions.sort((a, b) => a.date.localeCompare(b.date)).slice(0, 8);
   const enabledRuleCount = keepAliveRules.filter((rule) => rule.enabled).length;
 
@@ -141,7 +107,7 @@ export default function DashboardPage() {
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
           <h2 className="text-2xl font-semibold tracking-tight">你的号码生命周期，一处管理</h2>
-          <p className="mt-1 text-sm text-slate-500">alpha.6 已加入绑定服务：号码、实名、资费、保号、提醒和账号绑定关系逐步汇总成完整档案。</p>
+          <p className="mt-1 text-sm text-slate-500">号码、实名、资费、保号、提醒、绑定服务与外部通知统一汇总成完整生命周期档案。</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Link href="/services" className="inline-flex h-10 items-center gap-2 rounded-xl border px-4 text-sm font-medium text-slate-700 transition hover:bg-white">
@@ -179,7 +145,7 @@ export default function DashboardPage() {
           <div className="flex items-start justify-between gap-4 border-b px-6 py-5">
             <div>
               <h3 className="font-semibold">需要处理</h3>
-              <p className="mt-1 text-sm text-slate-500">这里只显示最优先的待处理事项，完整列表请前往提醒中心。</p>
+              <p className="mt-1 text-sm text-slate-500">与提醒中心使用同一套生命周期计算，只显示最优先的待处理事项。</p>
             </div>
             <Link href="/reminders" className="shrink-0 text-xs font-medium text-slate-500 underline underline-offset-4">查看全部</Link>
           </div>
@@ -208,7 +174,7 @@ export default function DashboardPage() {
             <div className="flex min-h-56 flex-col items-center justify-center px-6 text-center">
               <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-500"><CheckCircle2 className="h-5 w-5" /></div>
               <p className="mt-4 text-sm font-medium">当前没有待处理事项</p>
-              <p className="mt-1 max-w-sm text-xs leading-5 text-slate-400">号码进入有效期提醒窗口或保号规则提醒窗口后，会自动汇总到首页和提醒中心。</p>
+              <p className="mt-1 max-w-sm text-xs leading-5 text-slate-400">号码进入有效期提醒窗口或独立保号规则提醒窗口后，会自动汇总到首页和提醒中心。</p>
             </div>
           )}
         </Card>
@@ -226,7 +192,7 @@ export default function DashboardPage() {
               [`绑定服务 · ${boundServiceCount} 条`, true],
               [`保号规则 · ${enabledRuleCount} 条`, true],
               ["站内提醒中心", true],
-              ["外部通知渠道", false],
+              ["外部通知渠道", true],
             ].map(([label, done]) => (
               <div key={String(label)} className="flex items-center gap-3">
                 <span className={`h-2.5 w-2.5 rounded-full ${done ? "bg-emerald-500" : "bg-slate-200"}`} />
