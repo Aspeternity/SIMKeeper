@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.1.0-alpha.7
+
+### Added
+
+- Settings and Backup page for protecting and migrating all long-lived SIMKeeper data
+- Portable JSON backup format covering administrator accounts, settings, carriers, SIM records, real-name/KYC data, tariffs, conditional tariff rules, custom tariff items, keep-alive rules/events and bound services
+- One-click local backup creation inside the persistent data directory
+- Downloadable portable JSON exports for moving data between SIMKeeper instances
+- Local backup listing with creation time, app version, reason, file size and high-level record counts
+- Full restore from either a local backup or an imported JSON backup
+- Automatic pre-restore safety backup before every destructive restore operation
+- Transactional restore with child-first deletion, parent-first insertion and SQLite foreign-key integrity validation before commit
+- Forward/backward-friendly logical restore that ignores unknown future columns and lets missing older columns use current database defaults
+- Configurable local backup retention with automatic pruning
+- Explicit sensitive-data warning because backups include real-name details, account identifiers and password hashes
+- CI disaster-recovery smoke test covering export, local backup creation, deliberate data mutation, full import restore and post-restore verification
+
+### Changed
+
+- Enabled `设置与备份` in the sidebar
+- Sidebar and package version updated to `v0.1.0-alpha.7`
+- Backup retention is persisted in the existing settings table instead of introducing a separate configuration store
+- Restore operations preserve the current running database connection and recover logical data rather than replacing the live SQLite/WAL files in place
+
 ## v0.1.0-alpha.6
 
 ### Added
