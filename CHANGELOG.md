@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.1.0-alpha.2
+
+### Added
+
+- Carrier management page
+- Carrier create, edit, delete and search workflows
+- Authenticated carrier CRUD API
+- SQLite carrier persistence with automatic table/index initialization
+- Country/region code, website and notes fields for carrier profiles
+
+### Changed
+
+- Enabled the Carriers navigation entry
+- Added active navigation highlighting
+- Dashboard now reports carrier-management progress
+- Prepared carrier data as the source for the upcoming SIM number workflow
+
 ## v0.1.0-alpha.1
 
 ### Added
