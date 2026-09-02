@@ -33,6 +33,20 @@ export const TARIFF_BILLING_UNITS = [
   { value: "per_session", label: "每次", kind: "data" },
 ] as const;
 
+export const GENERIC_BILLING_UNITS = [
+  { value: "one_time", label: "一次性" },
+  { value: "per_use", label: "每次" },
+  { value: "per_day_generic", label: "每天" },
+  { value: "per_month", label: "每月" },
+] as const;
+
+export const CUSTOM_TARIFF_KINDS = [
+  { value: "generic", label: "通用" },
+  { value: "call", label: "通话" },
+  { value: "sms", label: "短信" },
+  { value: "data", label: "数据" },
+] as const;
+
 export const TARIFF_ALLOWANCE_UNITS = [
   { value: "minute", label: "分钟", kind: "call" },
   { value: "sms", label: "条", kind: "sms" },
@@ -98,6 +112,7 @@ export type TariffRuleMode = (typeof TARIFF_RULE_MODES)[number]["value"];
 export type TariffBillingUnit = (typeof TARIFF_BILLING_UNITS)[number]["value"];
 export type TariffAllowanceUnit = (typeof TARIFF_ALLOWANCE_UNITS)[number]["value"];
 export type TariffRuleConditionType = (typeof TARIFF_RULE_CONDITION_TYPES)[number]["value"];
+export type CustomTariffKind = (typeof CUSTOM_TARIFF_KINDS)[number]["value"];
 
 export const SMS_RECEIVE_POLICIES = [
   { value: "free", label: "免费" },
@@ -122,6 +137,11 @@ export function getBillingUnitsForService(code: string) {
   const service = getTariffService(code);
   if (!service) return [];
   return TARIFF_BILLING_UNITS.filter((unit) => unit.kind === service.kind);
+}
+
+export function getCustomBillingUnits(kind: string) {
+  if (kind === "generic") return GENERIC_BILLING_UNITS;
+  return TARIFF_BILLING_UNITS.filter((unit) => unit.kind === kind);
 }
 
 export function getAllowanceUnitsForService(code: string) {
@@ -163,6 +183,7 @@ export function getBillingUnitLabel(value: string | null | undefined) {
   if (!value) return "";
   return TARIFF_BILLING_UNITS.find((item) => item.value === value)?.label
     ?? TARIFF_ALLOWANCE_UNITS.find((item) => item.value === value)?.label
+    ?? GENERIC_BILLING_UNITS.find((item) => item.value === value)?.label
     ?? value;
 }
 
