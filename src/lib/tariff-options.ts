@@ -7,6 +7,15 @@ export const TARIFF_RATE_MODES = [
   { value: "unavailable", label: "不可用" },
 ] as const;
 
+export const TARIFF_RULE_MODES = [
+  { value: "free", label: "免费" },
+  { value: "charged", label: "收费" },
+  { value: "included", label: "套餐内包含" },
+  { value: "included_unlimited", label: "套餐内无限" },
+  { value: "package", label: "套餐 / 通行证" },
+  { value: "unavailable", label: "不可用" },
+] as const;
+
 export const TARIFF_BILLING_UNITS = [
   { value: "per_second", label: "每秒", kind: "call" },
   { value: "per_6_seconds", label: "每 6 秒", kind: "call" },
@@ -64,10 +73,30 @@ export const AUTO_RENEW_OPTIONS = [
   { value: "no", label: "不自动续订" },
 ] as const;
 
+export const TARIFF_RULE_CONDITION_TYPES = [
+  { value: "network_scope", label: "网络范围" },
+  { value: "destination", label: "目的地" },
+  { value: "roaming_region", label: "漫游地区" },
+  { value: "time_window", label: "时间段" },
+] as const;
+
+export const NETWORK_SCOPE_OPTIONS = [
+  { value: "same_network", label: "同网" },
+  { value: "other_network", label: "异网" },
+] as const;
+
+export const DESTINATION_SPECIAL_OPTIONS = [
+  { value: "HOME", label: "号码归属地" },
+  { value: "CURRENT", label: "当前漫游地" },
+  { value: "OTHER", label: "其他国家 / 地区" },
+] as const;
+
 export type TariffServiceCode = (typeof TARIFF_SERVICES)[number]["code"];
 export type TariffRateMode = (typeof TARIFF_RATE_MODES)[number]["value"];
+export type TariffRuleMode = (typeof TARIFF_RULE_MODES)[number]["value"];
 export type TariffBillingUnit = (typeof TARIFF_BILLING_UNITS)[number]["value"];
 export type TariffAllowanceUnit = (typeof TARIFF_ALLOWANCE_UNITS)[number]["value"];
+export type TariffRuleConditionType = (typeof TARIFF_RULE_CONDITION_TYPES)[number]["value"];
 
 export const SMS_RECEIVE_POLICIES = [
   { value: "free", label: "免费" },
@@ -99,9 +128,33 @@ export function getAllowanceUnitsForService(code: string) {
   return TARIFF_ALLOWANCE_UNITS.filter((unit) => unit.kind === service.kind);
 }
 
+export function getConditionTypesForService(code: string) {
+  const service = getTariffService(code);
+  if (!service) return [];
+
+  if (service.group === "local") {
+    if (service.kind === "sms" || service.kind === "call") {
+      return TARIFF_RULE_CONDITION_TYPES.filter((item) => item.value === "network_scope" || item.value === "time_window");
+    }
+    return TARIFF_RULE_CONDITION_TYPES.filter((item) => item.value === "time_window");
+  }
+
+  if (service.group === "international") {
+    return TARIFF_RULE_CONDITION_TYPES.filter((item) => item.value === "destination" || item.value === "time_window");
+  }
+
+  if (service.code === "roamingOutgoingCall" || service.code === "roamingOutgoingSms") {
+    return TARIFF_RULE_CONDITION_TYPES.filter((item) => item.value === "roaming_region" || item.value === "destination" || item.value === "time_window");
+  }
+
+  return TARIFF_RULE_CONDITION_TYPES.filter((item) => item.value === "roaming_region" || item.value === "time_window");
+}
+
 export function getTariffRateModeLabel(value: string | null | undefined) {
   if (!value) return "未知";
-  return TARIFF_RATE_MODES.find((item) => item.value === value)?.label ?? value;
+  return TARIFF_RATE_MODES.find((item) => item.value === value)?.label
+    ?? TARIFF_RULE_MODES.find((item) => item.value === value)?.label
+    ?? value;
 }
 
 export function getBillingUnitLabel(value: string | null | undefined) {
