@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CalendarDays, CreditCard, Loader2, Pencil, Plus, ReceiptText, Search, Smartphone, Trash2 } from "lucide-react";
+import { Loader2, Pencil, Plus, ReceiptText, Search, Smartphone, Trash2 } from "lucide-react";
 import { SimEditorModal } from "@/components/sims/sim-editor-modal";
 import { TariffModal } from "@/components/sims/tariff-modal";
 import { Card } from "@/components/ui/card";
@@ -139,21 +139,7 @@ export default function SimsPage() {
     });
   }, [carrierFilter, query, sims, statusFilter]);
 
-  const summary = useMemo(() => {
-    const today = todayDate();
-    let active = 0;
-    let dueSoon = 0;
-    let overdue = 0;
-    let tariffs = 0;
-    for (const sim of sims) {
-      const expiredByDate = Boolean(sim.validUntil && sim.validUntil < today);
-      if (sim.status === "expired" || expiredByDate) overdue += 1;
-      if (sim.status === "active" && !expiredByDate) active += 1;
-      if (sim.status === "active" && sim.validUntil && sim.validUntil >= today && daysUntil(sim.validUntil) <= 30) dueSoon += 1;
-      if (sim.tariffId) tariffs += 1;
-    }
-    return { active, dueSoon, overdue, tariffs };
-  }, [sims]);
+  const tariffCount = useMemo(() => sims.filter((sim) => Boolean(sim.tariffId)).length, [sims]);
 
   function openCreate() {
     if (!carriers.length) return;
@@ -216,32 +202,12 @@ export default function SimsPage() {
         </Card>
       ) : null}
 
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {[
-          ["号码总数", sims.length, Smartphone],
-          ["正常", summary.active, CreditCard],
-          ["30 天内到期", summary.dueSoon, CalendarDays],
-          ["已逾期 / 失效", summary.overdue, CalendarDays],
-        ].map(([label, value, Icon]) => {
-          const IconComponent = Icon as typeof Smartphone;
-          return (
-            <Card key={String(label)} className="p-5">
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-500">{String(label)}</span>
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 text-slate-600"><IconComponent className="h-4 w-4" /></div>
-              </div>
-              <div className="mt-4 text-3xl font-semibold tracking-tight">{String(value)}</div>
-            </Card>
-          );
-        })}
-      </section>
-
       <Card className="overflow-hidden">
         <div className="space-y-3 border-b p-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <div className="font-medium">号码列表</div>
-              <div className="mt-1 text-xs text-slate-400">显示 {filtered.length} / {sims.length} 个号码 · 已录入资费 {summary.tariffs} / {sims.length}</div>
+              <div className="mt-1 text-xs text-slate-400">显示 {filtered.length} / {sims.length} 个号码 · 已录入资费 {tariffCount} / {sims.length}</div>
             </div>
             <div className="relative w-full lg:w-80">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
