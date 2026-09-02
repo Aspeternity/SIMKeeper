@@ -229,6 +229,29 @@ sqlite.exec(`
   CREATE INDEX IF NOT EXISTS idx_sim_keep_alive_events_sim_id ON sim_keep_alive_events(sim_id);
   CREATE INDEX IF NOT EXISTS idx_sim_keep_alive_events_date ON sim_keep_alive_events(sim_id, activity_date);
 
+  CREATE TABLE IF NOT EXISTS sim_bound_services (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sim_id INTEGER NOT NULL,
+    service_name TEXT NOT NULL,
+    category TEXT NOT NULL,
+    binding_type TEXT NOT NULL,
+    account_identifier TEXT,
+    importance TEXT NOT NULL DEFAULT 'normal',
+    status TEXT NOT NULL DEFAULT 'active',
+    website TEXT,
+    bound_at TEXT,
+    verified_at TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (sim_id) REFERENCES sim_cards(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_sim_bound_services_sim_id ON sim_bound_services(sim_id);
+  CREATE INDEX IF NOT EXISTS idx_sim_bound_services_category ON sim_bound_services(category);
+  CREATE INDEX IF NOT EXISTS idx_sim_bound_services_status ON sim_bound_services(status);
+  CREATE INDEX IF NOT EXISTS idx_sim_bound_services_importance ON sim_bound_services(importance);
+
   UPDATE sim_cards SET sim_type = 'esim' WHERE sim_type = 'esim_adapter';
 `);
 
