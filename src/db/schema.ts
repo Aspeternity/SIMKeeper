@@ -42,6 +42,7 @@ export const simCards = sqliteTable("sim_cards", {
   identityStatus: text("identity_status").notNull().default("unknown"),
   identityName: text("identity_name"),
   identityDocumentType: text("identity_document_type"),
+  identityDocumentTypeCustom: text("identity_document_type_custom"),
   identityDocumentNumber: text("identity_document_number"),
   identityCountryCode: text("identity_country_code"),
   identityNotes: text("identity_notes"),
