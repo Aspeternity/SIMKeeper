@@ -64,13 +64,25 @@ type TariffForm = {
   customItems: CustomTariffItemFormValue[];
 };
 
-const CORE_SERVICE_CODES: TariffServiceCode[] = [
+const LOCAL_CORE_SERVICE_CODES: TariffServiceCode[] = [
   "localOutgoingCall",
   "localIncomingCall",
   "localOutgoingSms",
   "localIncomingSms",
   "localData",
+];
+
+const ROAMING_CORE_SERVICE_CODES: TariffServiceCode[] = [
+  "roamingOutgoingCall",
+  "roamingIncomingCall",
+  "roamingOutgoingSms",
   "roamingIncomingSms",
+  "roamingData",
+];
+
+const CORE_SERVICE_CODES: TariffServiceCode[] = [
+  ...LOCAL_CORE_SERVICE_CODES,
+  ...ROAMING_CORE_SERVICE_CODES,
 ];
 
 const EXTENSION_SERVICE_CODES = TARIFF_SERVICES.map((item) => item.code).filter((code) => !CORE_SERVICE_CODES.includes(code)) as TariffServiceCode[];
@@ -449,14 +461,23 @@ export function TariffModal({ sim, onClose, onSaved }: { sim: SimSummary; onClos
                 <label className="block space-y-1.5 text-sm"><span className="font-medium text-slate-700">使用结论</span><textarea value={form.usageSummary} onChange={(event) => setField("usageSummary", event.target.value)} rows={2} placeholder="可选，例如：适合长期保号和接验证码" className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100" /></label>
               </section>
 
-              <section className="space-y-3 border-t pt-6">
-                <div><h4 className="font-medium text-slate-900">常用资费</h4><p className="mt-1 text-xs text-slate-400">默认只显示最常用的项目；特殊分档请在对应项目的“特殊规则”里维护。</p></div>
-                {CORE_SERVICE_CODES.map(renderService)}
+              <section className="space-y-4 border-t pt-6">
+                <div><h4 className="font-medium text-slate-900">常用资费</h4><p className="mt-1 text-xs text-slate-400">默认覆盖本地和漫游最常查询的通话、短信与数据资费；特殊分档请在对应项目的“特殊规则”里维护。</p></div>
+
+                <div className="space-y-3">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">本地使用</div>
+                  {LOCAL_CORE_SERVICE_CODES.map(renderService)}
+                </div>
+
+                <div className="space-y-3 border-t border-slate-100 pt-4">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">国际漫游</div>
+                  {ROAMING_CORE_SERVICE_CODES.map(renderService)}
+                </div>
               </section>
 
               <section className="space-y-3 border-t pt-6">
                 <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
-                  <div><h4 className="font-medium text-slate-900">扩展资费</h4><p className="mt-1 text-xs text-slate-400">国际电话、国际短信、漫游通话、漫游数据等只有需要时才添加。</p></div>
+                  <div><h4 className="font-medium text-slate-900">扩展资费</h4><p className="mt-1 text-xs text-slate-400">国际电话、国际短信等非日常项目只有需要时才添加。</p></div>
                   {availableExtensions.length ? (
                     <div className="flex gap-2">
                       <select value={extensionToAdd} onChange={(event) => setExtensionToAdd(event.target.value)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none"><option value="">选择扩展项目</option>{availableExtensions.map((code) => { const service = TARIFF_SERVICES.find((item) => item.code === code)!; return <option key={code} value={code}>{service.label}</option>; })}</select>
