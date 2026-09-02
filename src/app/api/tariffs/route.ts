@@ -85,7 +85,7 @@ const conditionalRuleSchema = z.object({
   validityValue: nullablePositiveInteger("有效期必须为正整数"),
   validityUnit: z.union([z.enum(["day", "month", "year"]), z.literal("")]).optional().default(""),
   autoRenew: z.enum(["unknown", "yes", "no"]).optional().default("unknown"),
-  conditions: z.array(conditionSchema).min(1, "条件资费至少需要一个适用条件").max(8, "单条规则最多添加 8 个条件"),
+  conditions: z.array(conditionSchema).max(8, "单条规则最多添加 8 个条件"),
 });
 
 function validateModeFields(
@@ -218,6 +218,9 @@ const tariffSchema = z
       rules.forEach((rule, ruleIndex) => {
         const rulePath = ["rules", serviceCode, ruleIndex];
         validateModeFields(serviceCode, rule, context, rulePath);
+        if (rule.mode !== "package" && rule.conditions.length === 0) {
+          context.addIssue({ code: "custom", path: [...rulePath, "conditions"], message: "条件资费至少需要一个适用条件" });
+        }
         rule.conditions.forEach((condition, conditionIndex) => {
           validateCondition(serviceCode, condition, context, [...rulePath, "conditions", conditionIndex]);
         });
@@ -525,18 +528,20 @@ export async function PUT(request: NextRequest) {
           .returning({ id: simTariffRateRules.id })
           .get();
 
-        tx.insert(simTariffRuleConditions)
-          .values(
-            rule.conditions.map((condition, conditionIndex) => ({
-              ruleId: insertedRule.id,
-              conditionType: condition.type,
-              value: condition.value,
-              value2: nullable(condition.value2),
-              sortOrder: conditionIndex,
-              createdAt: now,
-            })),
-          )
-          .run();
+        if (rule.conditions.length) {
+          tx.insert(simTariffRuleConditions)
+            .values(
+              rule.conditions.map((condition, conditionIndex) => ({
+                ruleId: insertedRule.id,
+                conditionType: condition.type,
+                value: condition.value,
+                value2: nullable(condition.value2),
+                sortOrder: conditionIndex,
+                createdAt: now,
+              })),
+            )
+            .run();
+        }
       });
     }
   });
