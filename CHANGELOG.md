@@ -30,6 +30,12 @@
 - Structured included allowances for voice minutes, SMS units and data volume
 - Dedicated unlimited-in-plan tariff state for unlimited voice/data entitlements
 - Plan fee/type/renewal summaries directly on the number list
+- Multiple conditional tariff rules per service while preserving a simple default rate
+- Structured conditions for same/other network, destination, roaming region and time windows
+- Multi-condition rules where repeated condition types are alternatives and different types are combined
+- Package/pass tariff rules with price, included allowance, validity period and renewal behavior
+- Country/region selectors for destination and roaming rules, including home/current/other destination shortcuts
+- Conditional incoming-SMS summaries that surface as `按条件` on the number list
 
 ### Changed
 
@@ -50,6 +56,8 @@
 - Incoming-SMS summary statuses are now derived automatically from the corresponding structured tariff rows
 - Backend validation now restricts billing and allowance units by service type so calls, SMS and data cannot store incompatible units
 - Existing databases are upgraded in place with tariff-plan metadata columns without rebuilding SIM or tariff records
+- Complex carrier tariffs such as network-specific SMS rates, roaming destination tiers and regional data passes no longer need to be flattened into notes
+- Conditional tariff storage is additive, so existing default-rate records continue working without migration or data loss
 
 ## v0.1.0-alpha.2
 
