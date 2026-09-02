@@ -28,7 +28,7 @@ function eventSummary(event: KeepAliveEventRecord) {
 }
 
 export function KeepAliveOverviewSection({ simId }: { simId: number }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [rules, setRules] = useState<KeepAliveRuleRecord[]>([]);
