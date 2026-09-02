@@ -188,6 +188,9 @@ jobs:
                 {label:"Same network",mode:"charged",amount:0.3,billingUnit:"per_sms",packagePrice:null,packageAllowanceAmount:null,packageAllowanceUnit:"",validityValue:null,validityUnit:"",autoRenew:"unknown",conditions:[{type:"network_scope",value:"same_network",value2:""}]},
                 {label:"Other network",mode:"charged",amount:0.7,billingUnit:"per_sms",packagePrice:null,packageAllowanceAmount:null,packageAllowanceUnit:"",validityValue:null,validityUnit:"",autoRenew:"unknown",conditions:[{type:"network_scope",value:"other_network",value2:""}]}
               ],
+              localData:[
+                {label:"Global 1GB local pass",mode:"package",amount:null,billingUnit:"",packagePrice:28,packageAllowanceAmount:1,packageAllowanceUnit:"gb",validityValue:365,validityUnit:"day",autoRenew:"no",conditions:[]}
+              ],
               internationalOutgoingSms:[
                 {label:"Mainland China",mode:"charged",amount:1.5,billingUnit:"per_sms",packagePrice:null,packageAllowanceAmount:null,packageAllowanceUnit:"",validityValue:null,validityUnit:"",autoRenew:"unknown",conditions:[{type:"destination",value:"CN",value2:""}]},
                 {label:"Other destinations",mode:"charged",amount:1.8,billingUnit:"per_sms",packagePrice:null,packageAllowanceAmount:null,packageAllowanceUnit:"",validityValue:null,validityUnit:"",autoRenew:"unknown",conditions:[{type:"destination",value:"OTHER",value2:""}]}
@@ -217,6 +220,8 @@ jobs:
           [ "$(jq -r '.tariff.rules.localOutgoingSms | length' "$tmp/tariff.json")" = "2" ] || fail "Local SMS conditional rules were not saved"
           [ "$(jq -r '.tariff.rules.localOutgoingSms[0].amount' "$tmp/tariff.json")" = "0.3" ] || fail "Same-network SMS amount was not saved"
           [ "$(jq -r '.tariff.rules.localOutgoingSms[1].amount' "$tmp/tariff.json")" = "0.7" ] || fail "Other-network SMS amount was not saved"
+          [ "$(jq -r '.tariff.rules.localData[0].mode' "$tmp/tariff.json")" = "package" ] || fail "Unconditional local pass mode was not saved"
+          [ "$(jq -r '.tariff.rules.localData[0].conditions | length' "$tmp/tariff.json")" = "0" ] || fail "Unconditional local pass unexpectedly gained conditions"
           [ "$(jq -r '.tariff.rules.roamingOutgoingCall[0].conditions | length' "$tmp/tariff.json")" = "3" ] || fail "Multi-condition roaming call rule was not saved"
           [ "$(jq -r '.tariff.rules.roamingOutgoingCall[1].amount' "$tmp/tariff.json")" = "18" ] || fail "Roaming destination price tier was not saved"
           [ "$(jq -r '.tariff.rules.roamingData[0].mode' "$tmp/tariff.json")" = "package" ] || fail "Roaming data pass mode was not saved"
