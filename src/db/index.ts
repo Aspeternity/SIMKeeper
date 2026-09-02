@@ -43,6 +43,20 @@ sqlite.exec(`
     value TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS carriers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    country TEXT NOT NULL,
+    country_code TEXT NOT NULL,
+    website TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_carriers_country_code ON carriers(country_code);
+  CREATE INDEX IF NOT EXISTS idx_carriers_name ON carriers(name);
 `);
 
 export const db = drizzle(sqlite, { schema });
