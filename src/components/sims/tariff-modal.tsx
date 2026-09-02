@@ -59,10 +59,10 @@ function createEmptyRates() {
 }
 
 function createEmptyRules() {
-  return Object.fromEntries(TARIFF_SERVICES.map((service) => [service.code, []])) as Record<
-    TariffServiceCode,
-    TariffConditionalRuleFormValue[]
-  >;
+  return TARIFF_SERVICES.reduce((result, service) => {
+    result[service.code] = [];
+    return result;
+  }, {} as Record<TariffServiceCode, TariffConditionalRuleFormValue[]>);
 }
 
 function createEmptyTariff(currencyCode: string): TariffForm {
@@ -143,15 +143,13 @@ function tariffToForm(value: Record<string, unknown> | null, fallbackCurrency: s
   ) as Record<TariffServiceCode, TariffRateFormValue>;
 
   const rawRules = value.rules && typeof value.rules === "object" ? (value.rules as Record<string, unknown>) : {};
-  const rules = Object.fromEntries(
-    TARIFF_SERVICES.map((service) => {
-      const list = Array.isArray(rawRules[service.code]) ? rawRules[service.code] as unknown[] : [];
-      return [
-        service.code,
-        list.map((item) => ruleToForm(item, service.code)).filter((item): item is TariffConditionalRuleFormValue => Boolean(item)),
-      ];
-    }),
-  ) as Record<TariffServiceCode, TariffConditionalRuleFormValue[]>;
+  const rules = TARIFF_SERVICES.reduce((result, service) => {
+    const list = Array.isArray(rawRules[service.code]) ? rawRules[service.code] as unknown[] : [];
+    result[service.code] = list
+      .map((item) => ruleToForm(item, service.code))
+      .filter((item): item is TariffConditionalRuleFormValue => Boolean(item));
+    return result;
+  }, {} as Record<TariffServiceCode, TariffConditionalRuleFormValue[]>);
 
   return {
     planName: String(value.planName ?? ""),
