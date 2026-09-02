@@ -10,6 +10,8 @@
 - Carrier association with inherited country/region information
 - SIM type options for physical SIM and eSIM
 - Phone number / MSISDN, ICCID, balance, currency, status, activation date, validity date and notes
+- Optional per-number real-name / KYC profile with registration status, holder name, document type, document number, document country/region and notes
+- Real-name information section in number details with collapse controls and click-to-copy values
 - Built-in currency catalog with automatic defaults based on carrier country/region
 - Number search and filtering by status and carrier
 - Lifecycle summary cards for total, active, due-soon and overdue numbers
@@ -43,7 +45,7 @@
 - Full conditional tariff-rule rendering inside the number overview, including rule labels, conditions, pricing and package/pass details
 - Click-to-copy behavior for number details, tariff fields, rate values, special rules, notes and source URLs with brief copy-success feedback
 - Collapsible Basic Information and Tariff Overview sections in the number detail dialog
-- Optional backdrop-click closing for read-only dialogs while keeping edit forms protected from accidental dismissal
+- Optional backdrop-click closing for dialogs
 
 ### Changed
 
@@ -63,15 +65,17 @@
 - Included tariff items now use numeric allowance plus service-specific allowance units, while unlimited-in-plan requires no numeric input
 - Incoming-SMS summary statuses are now derived automatically from the corresponding structured tariff rows
 - Backend validation now restricts billing and allowance units by service type so calls, SMS and data cannot store incompatible units
-- Existing databases are upgraded in place with tariff-plan metadata columns without rebuilding SIM or tariff records
+- Existing databases are upgraded in place with tariff-plan metadata and real-name/KYC columns without rebuilding SIM or tariff records
 - Complex carrier tariffs such as network-specific SMS rates, roaming destination tiers and regional data passes no longer need to be flattened into notes
 - Conditional tariff storage is additive, so existing default-rate records continue working without migration or data loss
 - Tariff editor common items now cover all five local services and all five roaming services: outgoing/incoming calls, outgoing/incoming SMS and mobile data
 - International call and international SMS remain opt-in extension items instead of being permanently expanded
 - Advanced conditional rules and optional passes are hidden behind per-service `特殊规则` controls
+- Conditional services with no meaningful fallback price now render as `按条件计费` instead of showing contradictory `未知` or zero-value base rates
 - Monetary values and billing units now appear after the numeric input rather than before it
 - Tariff modal is rendered through a document-body portal with background scroll locking to remove the top-edge gap and keep header/footer stable
 - SIM create/edit and carrier create/edit dialogs now use the same document-body portal so all existing overlays cover the complete viewport without a top white gap
+- Number, carrier and tariff edit dialogs can be dismissed by clicking the backdrop when no save is in progress
 - Number Management no longer duplicates Dashboard overview cards; it is now focused on the searchable/filterable number list and per-number actions
 - Local and roaming verification-code summary lines now use the same font size, weight and spacing in the number list
 - Number and tariff edit actions now live beside their corresponding overview section headers instead of being split between the section header and modal footer
