@@ -57,6 +57,29 @@ sqlite.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_carriers_country_code ON carriers(country_code);
   CREATE INDEX IF NOT EXISTS idx_carriers_name ON carriers(name);
+
+  CREATE TABLE IF NOT EXISTS sim_cards (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    label TEXT NOT NULL,
+    phone_number TEXT,
+    carrier_id INTEGER NOT NULL,
+    sim_type TEXT NOT NULL,
+    iccid TEXT,
+    balance REAL,
+    currency_code TEXT,
+    status TEXT NOT NULL,
+    activation_date TEXT,
+    valid_until TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (carrier_id) REFERENCES carriers(id) ON DELETE RESTRICT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_sim_cards_carrier_id ON sim_cards(carrier_id);
+  CREATE INDEX IF NOT EXISTS idx_sim_cards_phone_number ON sim_cards(phone_number);
+  CREATE INDEX IF NOT EXISTS idx_sim_cards_status ON sim_cards(status);
+  CREATE INDEX IF NOT EXISTS idx_sim_cards_valid_until ON sim_cards(valid_until);
 `);
 
 export const db = drizzle(sqlite, { schema });
