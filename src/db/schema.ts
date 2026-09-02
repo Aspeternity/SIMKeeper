@@ -170,3 +170,50 @@ export const simTariffCustomItems = sqliteTable(
   },
   (table) => [index("idx_sim_tariff_custom_items_tariff_id").on(table.tariffId)],
 );
+
+export const simKeepAliveRules = sqliteTable(
+  "sim_keep_alive_rules",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    simId: integer("sim_id")
+      .notNull()
+      .references(() => simCards.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    intervalValue: integer("interval_value").notNull(),
+    intervalUnit: text("interval_unit").notNull(),
+    qualifyingActions: text("qualifying_actions").notNull(),
+    nextDueDate: text("next_due_date"),
+    warningDays: integer("warning_days").notNull().default(30),
+    gracePeriodDays: integer("grace_period_days").notNull().default(0),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    notes: text("notes"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    index("idx_sim_keep_alive_rules_sim_id").on(table.simId),
+    index("idx_sim_keep_alive_rules_due").on(table.nextDueDate),
+  ],
+);
+
+export const simKeepAliveEvents = sqliteTable(
+  "sim_keep_alive_events",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    simId: integer("sim_id")
+      .notNull()
+      .references(() => simCards.id, { onDelete: "cascade" }),
+    activityType: text("activity_type").notNull(),
+    activityDate: text("activity_date").notNull(),
+    amount: real("amount"),
+    currencyCode: text("currency_code"),
+    balanceAfter: real("balance_after"),
+    validUntilAfter: text("valid_until_after"),
+    notes: text("notes"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    index("idx_sim_keep_alive_events_sim_id").on(table.simId),
+    index("idx_sim_keep_alive_events_date").on(table.simId, table.activityDate),
+  ],
+);
