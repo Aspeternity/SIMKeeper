@@ -11,6 +11,8 @@
 - Country/region code, website and notes fields for carrier profiles
 - Built-in standardized country/region catalog using ISO two-letter codes
 - Reusable searchable country/region selector with name and ISO-code filtering
+- Built-in common carrier catalog with official website presets for frequently used countries and regions
+- One-click carrier preset selection after choosing a country or region
 
 ### Changed
 
@@ -21,6 +23,7 @@
 - Replaced freeform country/region and country-code inputs with a controlled selector
 - Country/region names are now derived server-side from the selected standardized code
 - Country/region selection now supports both dropdown browsing and instant search
+- Carrier creation now prioritizes country/region selection before carrier details and keeps manual entry as a fallback
 
 ## v0.1.0-alpha.1
 
