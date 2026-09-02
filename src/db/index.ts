@@ -81,7 +81,13 @@ sqlite.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     sim_id INTEGER NOT NULL UNIQUE,
     plan_name TEXT,
+    plan_type TEXT NOT NULL DEFAULT 'unknown',
     currency_code TEXT,
+    recurring_fee REAL,
+    recurring_period_value INTEGER,
+    recurring_period_unit TEXT,
+    administration_fee REAL,
+    auto_renew TEXT NOT NULL DEFAULT 'unknown',
     local_outgoing_call TEXT,
     local_incoming_call TEXT,
     local_outgoing_sms TEXT,
@@ -131,8 +137,19 @@ sqlite.exec(`
 `);
 
 const tariffColumns = sqlite.prepare("PRAGMA table_info(sim_tariffs)").all() as Array<{ name: string }>;
-if (!tariffColumns.some((column) => column.name === "currency_code")) {
-  sqlite.exec("ALTER TABLE sim_tariffs ADD COLUMN currency_code TEXT");
+const tariffColumnNames = new Set(tariffColumns.map((column) => column.name));
+const tariffMigrations = [
+  ["currency_code", "ALTER TABLE sim_tariffs ADD COLUMN currency_code TEXT"],
+  ["plan_type", "ALTER TABLE sim_tariffs ADD COLUMN plan_type TEXT NOT NULL DEFAULT 'unknown'"],
+  ["recurring_fee", "ALTER TABLE sim_tariffs ADD COLUMN recurring_fee REAL"],
+  ["recurring_period_value", "ALTER TABLE sim_tariffs ADD COLUMN recurring_period_value INTEGER"],
+  ["recurring_period_unit", "ALTER TABLE sim_tariffs ADD COLUMN recurring_period_unit TEXT"],
+  ["administration_fee", "ALTER TABLE sim_tariffs ADD COLUMN administration_fee REAL"],
+  ["auto_renew", "ALTER TABLE sim_tariffs ADD COLUMN auto_renew TEXT NOT NULL DEFAULT 'unknown'"],
+] as const;
+
+for (const [column, sql] of tariffMigrations) {
+  if (!tariffColumnNames.has(column)) sqlite.exec(sql);
 }
 
 export const db = drizzle(sqlite, { schema });
