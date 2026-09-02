@@ -53,6 +53,7 @@ export const simTariffs = sqliteTable("sim_tariffs", {
   planName: text("plan_name"),
   planType: text("plan_type").notNull().default("unknown"),
   currencyCode: text("currency_code"),
+  purchaseCost: real("purchase_cost"),
   recurringFee: real("recurring_fee"),
   recurringPeriodValue: integer("recurring_period_value"),
   recurringPeriodUnit: text("recurring_period_unit"),
@@ -141,4 +142,24 @@ export const simTariffRuleConditions = sqliteTable(
     createdAt: text("created_at").notNull(),
   },
   (table) => [index("idx_sim_tariff_rule_conditions_rule_id").on(table.ruleId)],
+);
+
+export const simTariffCustomItems = sqliteTable(
+  "sim_tariff_custom_items",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    tariffId: integer("tariff_id")
+      .notNull()
+      .references(() => simTariffs.id, { onDelete: "cascade" }),
+    label: text("label").notNull(),
+    kind: text("kind").notNull(),
+    mode: text("mode").notNull(),
+    amount: real("amount"),
+    billingUnit: text("billing_unit"),
+    notes: text("notes"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [index("idx_sim_tariff_custom_items_tariff_id").on(table.tariffId)],
 );
