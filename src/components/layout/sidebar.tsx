@@ -24,7 +24,7 @@ export function Sidebar() {
         </div>
         <div>
           <div className="font-semibold tracking-tight">SIMKeeper</div>
-          <div className="text-xs text-slate-400">v0.1.0-alpha.6</div>
+          <div className="text-xs text-slate-400">v0.1.0-alpha.7</div>
         </div>
       </div>
 
@@ -48,11 +48,15 @@ export function Sidebar() {
       </nav>
 
       <div className="border-t p-4">
-        <div className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-500">
+        <Link
+          href="/settings"
+          className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition ${
+            pathname.startsWith("/settings") ? "bg-slate-100 font-medium text-slate-950" : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
+          }`}
+        >
           <Settings className="h-4 w-4" />
-          设置
-          <span className="ml-auto text-[10px] uppercase tracking-wider">Soon</span>
-        </div>
+          设置与备份
+        </Link>
       </div>
     </aside>
   );
