@@ -1,0 +1,181 @@
+name: Verify Lifecycle Date Consistency
+
+on:
+  workflow_run:
+    workflows:
+      - Build and Publish Docker Image
+    types:
+      - completed
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  lifecycle-consistency-smoke:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull verified SIMKeeper image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="${{ github.event.workflow_run.head_sha }}"
+          short="${sha:0:7}"
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          image="ghcr.io/${owner}/simkeeper:sha-${short}"
+          docker pull "$image"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Verify SIM validity and keep-alive date stay consistent
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          container="simkeeper-lifecycle-consistency-smoke"
+          tmp="$(mktemp -d)"
+          base="http://127.0.0.1:18083"
+          cookies="$tmp/cookies.txt"
+          initial_due="$(TZ=Asia/Shanghai date -d '+365 days' +%F)"
+          linked_due="$(TZ=Asia/Shanghai date -d '+17 days' +%F)"
+
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            rm -rf "$tmp"
+          }
+          trap cleanup EXIT
+
+          fail() {
+            echo "::error::$1"
+            docker logs "$container" 2>&1 || true
+            for file in "$tmp"/*.json "$tmp"/*.html; do
+              [ -f "$file" ] || continue
+              echo "----- $file -----"
+              head -c 12000 "$file" || true
+              echo
+            done
+            exit 1
+          }
+
+          mkdir -p "$tmp/data"
+          docker run -d \
+            --name "$container" \
+            -p 18083:3000 \
+            -e SIMKEEPER_COOKIE_SECURE=false \
+            -e PUID="$(id -u)" \
+            -e PGID="$(id -g)" \
+            -v "$tmp/data:/app/data" \
+            "$IMAGE" >/dev/null || fail "Unable to start lifecycle consistency smoke container"
+
+          ready=0
+          for _ in $(seq 1 40); do
+            if curl -fsS --max-time 2 "$base/api/health" >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          [ "$ready" -eq 1 ] || fail "SIMKeeper did not become healthy"
+
+          curl -fsS --max-time 10 -c "$cookies" -o /dev/null \
+            -X POST \
+            --data-urlencode 'username=lifecycleadmin' \
+            --data-urlencode 'password=lifecycle-smoke-123' \
+            --data-urlencode 'confirmPassword=lifecycle-smoke-123' \
+            "$base/api/auth/setup" || fail "Administrator setup failed"
+
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/carrier.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' \
+            --data '{"name":"Lifecycle HK Carrier","countryCode":"HK","website":"","notes":""}' \
+            "$base/api/carriers")" || fail "Carrier creation failed"
+          [ "$status" = "201" ] || fail "Carrier creation returned HTTP $status"
+          carrier_id="$(jq -r '.carrier.id // empty' "$tmp/carrier.json")"
+          [ -n "$carrier_id" ] || fail "Carrier id missing"
+
+          jq -n --argjson carrierId "$carrier_id" --arg initialDue "$initial_due" '{
+            label:"Validity Sync SIM",
+            phoneNumber:"52329748",
+            carrierId:$carrierId,
+            simType:"esim",
+            iccid:"",
+            balance:42,
+            currencyCode:"HKD",
+            status:"active",
+            activationDate:"",
+            validUntil:$initialDue,
+            notes:"Lifecycle consistency smoke test"
+          }' > "$tmp/sim-create.json"
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/sim.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' --data-binary @"$tmp/sim-create.json" "$base/api/sims")" || fail "SIM creation failed"
+          [ "$status" = "201" ] || fail "SIM creation returned HTTP $status"
+          sim_id="$(jq -r '.sim.id // empty' "$tmp/sim.json")"
+          [ -n "$sim_id" ] || fail "SIM id missing"
+          [ "$(jq -r '.sim.validUntil' "$tmp/sim.json")" = "$initial_due" ] || fail "Initial SIM validity was not saved"
+
+          jq -n --argjson simId "$sim_id" --arg initialDue "$initial_due" '{
+            simId:$simId,
+            name:"号码有效期",
+            intervalValue:180,
+            intervalUnit:"day",
+            qualifyingActions:["recharge"],
+            dueDateSource:"sim_validity",
+            nextDueDate:$initialDue,
+            warningDays:30,
+            gracePeriodDays:0,
+            enabled:true,
+            notes:"Must follow SIM validity"
+          }' > "$tmp/linked-rule.json"
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/linked-rule-response.json" -w '%{http_code}' \
+            -X PUT -H 'Content-Type: application/json' --data-binary @"$tmp/linked-rule.json" "$base/api/keep-alive")" || fail "Linked validity rule creation failed"
+          [ "$status" = "200" ] || fail "Linked validity rule creation returned HTTP $status"
+          [ "$(jq -r '.rule.dueDateSource' "$tmp/linked-rule-response.json")" = "sim_validity" ] || fail "Rule was not stored as SIM-validity linked"
+          [ "$(jq -r '.rule.nextDueDate' "$tmp/linked-rule-response.json")" = "$initial_due" ] || fail "Linked rule did not initially resolve to SIM validity"
+
+          jq -n --argjson id "$sim_id" --argjson carrierId "$carrier_id" --arg linkedDue "$linked_due" '{
+            id:$id,
+            label:"Validity Sync SIM",
+            phoneNumber:"52329748",
+            carrierId:$carrierId,
+            simType:"esim",
+            iccid:"",
+            balance:42,
+            currencyCode:"HKD",
+            status:"active",
+            activationDate:"",
+            validUntil:$linkedDue,
+            notes:"Lifecycle consistency smoke test"
+          }' > "$tmp/sim-update.json"
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/sim-update-response.json" -w '%{http_code}' \
+            -X PATCH -H 'Content-Type: application/json' --data-binary @"$tmp/sim-update.json" "$base/api/sims")" || fail "SIM validity update failed"
+          [ "$status" = "200" ] || fail "SIM validity update returned HTTP $status"
+          [ "$(jq -r '.sim.validUntil' "$tmp/sim-update-response.json")" = "$linked_due" ] || fail "SIM validity did not change to regression-test date"
+
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/keepalive-after-update.json" -w '%{http_code}' "$base/api/keep-alive?simId=$sim_id")" || fail "Keep-alive reload failed"
+          [ "$status" = "200" ] || fail "Keep-alive reload returned HTTP $status"
+          [ "$(jq -r '.rules[0].dueDateSource' "$tmp/keepalive-after-update.json")" = "sim_validity" ] || fail "Linked rule lost its date source"
+          [ "$(jq -r '.rules[0].nextDueDate' "$tmp/keepalive-after-update.json")" = "$linked_due" ] || fail "Keep-alive next date did not immediately follow edited SIM validity"
+          [ "$(jq -r '.rules[0].status' "$tmp/keepalive-after-update.json")" = "due_soon" ] || fail "Linked rule did not enter due-soon status after SIM validity moved into warning window"
+
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/reminders.html" -w '%{http_code}' "$base/reminders")" || fail "Reminder center request failed"
+          [ "$status" = "200" ] || fail "Reminder center returned HTTP $status"
+          grep -q 'Validity Sync SIM' "$tmp/reminders.html" || fail "Reminder center did not show the linked SIM"
+          grep -q "$linked_due" "$tmp/reminders.html" || fail "Reminder center did not use the edited SIM validity date"
+          if grep -q '保号 · 号码有效期' "$tmp/reminders.html"; then
+            fail "Linked validity produced a duplicate keep-alive reminder"
+          fi
+
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/history.html" -w '%{http_code}' "$base/history")" || fail "Keep-alive page request failed"
+          [ "$status" = "200" ] || fail "Keep-alive page returned HTTP $status"
+          grep -q "$linked_due" "$tmp/history.html" || fail "Keep-alive page did not render the linked SIM validity date"
+          grep -q '跟随号码有效期' "$tmp/history.html" || fail "Keep-alive page did not identify the linked date source"
+
+          echo "Lifecycle date consistency smoke test passed."
