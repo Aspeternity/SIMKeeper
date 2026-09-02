@@ -1,0 +1,147 @@
+name: Verify Notification Delivery
+
+on:
+  workflow_run:
+    workflows:
+      - Build and Publish Docker Image
+    types:
+      - completed
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  notification-smoke:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull verified SIMKeeper image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="${{ github.event.workflow_run.head_sha }}"
+          short="${sha:0:7}"
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          image="ghcr.io/${owner}/simkeeper:sha-${short}"
+          docker pull "$image"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Verify notification delivery and deduplication
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          container="simkeeper-notification-smoke"
+          tmp="$(mktemp -d)"
+          base="http://127.0.0.1:18082"
+          cookies="$tmp/cookies.txt"
+          today="$(TZ=Asia/Shanghai date +%F)"
+
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            rm -rf "$tmp"
+          }
+          trap cleanup EXIT
+
+          fail() {
+            echo "::error::$1"
+            docker logs "$container" 2>&1 || true
+            for file in "$tmp"/*.json "$tmp"/*.html; do
+              [ -f "$file" ] || continue
+              echo "----- $file -----"
+              head -c 12000 "$file" || true
+              echo
+            done
+            exit 1
+          }
+
+          mkdir -p "$tmp/data"
+          docker run -d \
+            --name "$container" \
+            -p 18082:3000 \
+            -e SIMKEEPER_COOKIE_SECURE=false \
+            -e PUID="$(id -u)" \
+            -e PGID="$(id -g)" \
+            -v "$tmp/data:/app/data" \
+            "$IMAGE" >/dev/null || fail "Unable to start notification smoke container"
+
+          ready=0
+          for _ in $(seq 1 40); do
+            if curl -fsS --max-time 2 "$base/api/health" >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          [ "$ready" -eq 1 ] || fail "SIMKeeper did not become healthy"
+
+          curl -fsS --max-time 10 -c "$cookies" -o /dev/null \
+            -X POST \
+            --data-urlencode 'username=notifyadmin' \
+            --data-urlencode 'password=notification-smoke-123' \
+            --data-urlencode 'confirmPassword=notification-smoke-123' \
+            "$base/api/auth/setup" || fail "Administrator setup failed"
+
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/carrier.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' \
+            --data '{"name":"Notification HK Carrier","countryCode":"HK","website":"","notes":""}' \
+            "$base/api/carriers")" || fail "Carrier creation failed"
+          [ "$status" = "201" ] || fail "Carrier creation returned HTTP $status"
+          carrier_id="$(jq -r '.carrier.id // empty' "$tmp/carrier.json")"
+          [ -n "$carrier_id" ] || fail "Carrier id missing"
+
+          jq -n --argjson carrierId "$carrier_id" --arg today "$today" '{label:"Notification SIM",phoneNumber:"51234567",carrierId:$carrierId,simType:"esim",iccid:"",balance:"",currencyCode:"HKD",status:"active",activationDate:"",validUntil:$today,notes:""}' > "$tmp/sim-payload.json"
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/sim.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' --data-binary @"$tmp/sim-payload.json" "$base/api/sims")" || fail "SIM creation failed"
+          [ "$status" = "201" ] || fail "SIM creation returned HTTP $status"
+
+          jq -n '{action:"create",channel:{name:"Loopback Webhook",type:"webhook",enabled:true,config:{url:"http://127.0.0.1:3000/api/health",method:"GET",bearerToken:""}}}' > "$tmp/channel-payload.json"
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/channel.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' --data-binary @"$tmp/channel-payload.json" "$base/api/notifications")" || fail "Notification channel creation failed"
+          [ "$status" = "201" ] || fail "Notification channel creation returned HTTP $status"
+          channel_id="$(jq -r '.channel.id // empty' "$tmp/channel.json")"
+          [ -n "$channel_id" ] || fail "Notification channel id missing"
+
+          status="$(curl -sS --max-time 15 -b "$cookies" -o "$tmp/test.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' --data "{\"action\":\"test\",\"id\":$channel_id}" "$base/api/notifications")" || fail "Test notification request failed"
+          [ "$status" = "200" ] || fail "Test notification returned HTTP $status"
+          [ "$(jq -r '.deliveries[0].status' "$tmp/test.json")" = "success" ] || fail "Test notification did not record success"
+
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/settings.json" -w '%{http_code}' \
+            -X PATCH -H 'Content-Type: application/json' \
+            --data '{"action":"settings","settings":{"enabled":true,"dailyHour":0}}' "$base/api/notifications")" || fail "Notification settings update failed"
+          [ "$status" = "200" ] || fail "Notification settings update returned HTTP $status"
+          [ "$(jq -r '.settings.enabled' "$tmp/settings.json")" = "true" ] || fail "Notification master switch was not enabled"
+
+          status="$(curl -sS --max-time 15 -b "$cookies" -o "$tmp/dispatch1.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' --data '{"action":"dispatchDue"}' "$base/api/notifications")" || fail "First due dispatch failed"
+          [ "$status" = "200" ] || fail "First due dispatch returned HTTP $status"
+          [ "$(jq -r '.result.failed' "$tmp/dispatch1.json")" = "0" ] || fail "First due dispatch recorded a failure"
+          first_handled="$(jq -r '.result.sent + .result.skipped' "$tmp/dispatch1.json")"
+          [ "$first_handled" -ge 1 ] || fail "Due reminder was neither sent nor deduplicated"
+
+          status="$(curl -sS --max-time 15 -b "$cookies" -o "$tmp/dispatch2.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' --data '{"action":"dispatchDue"}' "$base/api/notifications")" || fail "Second due dispatch failed"
+          [ "$status" = "200" ] || fail "Second due dispatch returned HTTP $status"
+          [ "$(jq -r '.result.skipped' "$tmp/dispatch2.json")" -ge 1 ] || fail "Same-day reminder deduplication did not skip the second attempt"
+
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/notifications.html" -w '%{http_code}' "$base/notifications")" || fail "Notification page request failed"
+          [ "$status" = "200" ] || fail "Notification page returned HTTP $status"
+          grep -q '通知渠道' "$tmp/notifications.html" || fail "Notification page heading was not rendered"
+
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/backup.json" -w '%{http_code}' "$base/api/backups?export=1")" || fail "Portable backup export failed"
+          [ "$status" = "200" ] || fail "Portable backup export returned HTTP $status"
+          [ "$(jq -r '.tables.notification_channels | length' "$tmp/backup.json")" = "1" ] || fail "Notification channel was not included in portable backup"
+          [ "$(jq -r '.tables.notification_deliveries | length' "$tmp/backup.json")" -ge 2 ] || fail "Notification delivery history was not included in portable backup"
+
+          echo "Notification delivery smoke test passed."
