@@ -8,6 +8,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
   getKeepAliveActivityLabel,
+  getKeepAliveDueDateSourceLabel,
   getKeepAliveIntervalLabel,
   getKeepAliveRuleStatusLabel,
   type KeepAliveRuleStatus,
@@ -121,7 +122,7 @@ export default function KeepAlivePage() {
       <div>
         <div className="flex items-center gap-2 text-sm font-medium text-slate-500"><ShieldCheck className="h-4 w-4" />生命周期</div>
         <h2 className="mt-2 text-2xl font-semibold tracking-tight">保号管理</h2>
-        <p className="mt-1 text-sm text-slate-500">为每个号码维护一条或多条保号规则，记录真实充值/使用活动并自动计算下一次需要操作的日期。</p>
+        <p className="mt-1 text-sm text-slate-500">号码有效期类规则直接跟随号码资料；独立活跃规则单独计算自己的下一次操作日期。</p>
       </div>
 
       {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
@@ -190,6 +191,7 @@ export default function KeepAlivePage() {
                               <div className="flex flex-wrap items-center gap-2">
                                 <span className="text-sm font-medium text-slate-800">{rule.name}</span>
                                 <span className={`rounded-md px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset ${ruleStatusClass(rule.status)}`}>{getKeepAliveRuleStatusLabel(rule.status)}</span>
+                                <span className="rounded-md bg-slate-50 px-2 py-0.5 text-[10px] text-slate-500 ring-1 ring-inset ring-slate-100">{getKeepAliveDueDateSourceLabel(rule.dueDateSource)}</span>
                               </div>
                               <div className="mt-1 text-xs text-slate-400">每 {getKeepAliveIntervalLabel(rule.intervalValue, rule.intervalUnit)} · {rule.qualifyingActions.map(getKeepAliveActivityLabel).join(" / ")}</div>
                             </div>
@@ -200,7 +202,7 @@ export default function KeepAlivePage() {
                           </div>
                           <div className="mt-3 flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2.5">
                             <div>
-                              <div className="text-[10px] text-slate-400">下一次操作日期</div>
+                              <div className="text-[10px] text-slate-400">{rule.dueDateSource === "sim_validity" ? "下一次操作日期 · 跟随号码有效期" : "下一次操作日期"}</div>
                               <div className="mt-0.5 text-sm font-medium text-slate-700">{rule.nextDueDate || "待设置"}</div>
                             </div>
                             <CalendarClock className="h-4 w-4 text-slate-300" />
@@ -210,7 +212,7 @@ export default function KeepAlivePage() {
                       ))}
                     </div>
                   ) : (
-                    <div className="rounded-xl border border-dashed border-slate-200 px-4 py-5 text-center text-xs text-slate-400">还没有保号规则。建议先把运营商当前显示的下一次到期/保号日期录入，再通过后续活动自动向后推算。</div>
+                    <div className="rounded-xl border border-dashed border-slate-200 px-4 py-5 text-center text-xs text-slate-400">还没有保号规则。号码有效期类规则建议选择“跟随号码有效期”；90 天活跃等要求选择“独立日期”。</div>
                   )}
                 </div>
               );
@@ -223,6 +225,7 @@ export default function KeepAlivePage() {
         <KeepAliveRuleModal
           simId={ruleTarget.sim.id}
           simLabel={ruleTarget.sim.label}
+          simValidUntil={ruleTarget.sim.validUntil}
           rule={ruleTarget.rule}
           onClose={() => setRuleTarget(null)}
           onSaved={loadData}
