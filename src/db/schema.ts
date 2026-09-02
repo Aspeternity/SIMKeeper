@@ -1,4 +1,4 @@
-import { integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const users = sqliteTable("users", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -51,6 +51,7 @@ export const simTariffs = sqliteTable("sim_tariffs", {
     .unique()
     .references(() => simCards.id, { onDelete: "cascade" }),
   planName: text("plan_name"),
+  currencyCode: text("currency_code"),
   localOutgoingCall: text("local_outgoing_call"),
   localIncomingCall: text("local_incoming_call"),
   localOutgoingSms: text("local_outgoing_sms"),
@@ -73,3 +74,21 @@ export const simTariffs = sqliteTable("sim_tariffs", {
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });
+
+export const simTariffRates = sqliteTable(
+  "sim_tariff_rates",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    tariffId: integer("tariff_id")
+      .notNull()
+      .references(() => simTariffs.id, { onDelete: "cascade" }),
+    serviceCode: text("service_code").notNull(),
+    mode: text("mode").notNull(),
+    amount: real("amount"),
+    billingUnit: text("billing_unit"),
+    legacyText: text("legacy_text"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [uniqueIndex("idx_sim_tariff_rates_tariff_service").on(table.tariffId, table.serviceCode)],
+);
