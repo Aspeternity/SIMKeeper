@@ -85,7 +85,9 @@ const CORE_SERVICE_CODES: TariffServiceCode[] = [
   ...ROAMING_CORE_SERVICE_CODES,
 ];
 
-const EXTENSION_SERVICE_CODES = TARIFF_SERVICES.map((item) => item.code).filter((code) => !CORE_SERVICE_CODES.includes(code)) as TariffServiceCode[];
+const EXTENSION_SERVICE_CODES = TARIFF_SERVICES
+  .map((item) => item.code)
+  .filter((code) => !CORE_SERVICE_CODES.includes(code)) as TariffServiceCode[];
 
 const selectClass = "h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100";
 
@@ -174,10 +176,12 @@ function customItemToForm(value: unknown): CustomTariffItemFormValue | null {
 function tariffToForm(value: Record<string, unknown> | null, fallbackCurrency: string): TariffForm {
   if (!value) return createEmptyTariff(fallbackCurrency);
 
-  const rawRates = value.rates && typeof value.rates === "object" ? (value.rates as Record<string, unknown>) : {};
+  const rawRates = value.rates && typeof value.rates === "object" ? value.rates as Record<string, unknown> : {};
   const rates = Object.fromEntries(
     TARIFF_SERVICES.map((service) => {
-      const raw = rawRates[service.code] && typeof rawRates[service.code] === "object" ? (rawRates[service.code] as Record<string, unknown>) : {};
+      const raw = rawRates[service.code] && typeof rawRates[service.code] === "object"
+        ? rawRates[service.code] as Record<string, unknown>
+        : {};
       return [service.code, {
         mode: String(raw.mode ?? "unknown"),
         amount: raw.amount === null || raw.amount === undefined ? "" : String(raw.amount),
@@ -187,10 +191,12 @@ function tariffToForm(value: Record<string, unknown> | null, fallbackCurrency: s
     }),
   ) as Record<TariffServiceCode, TariffRateFormValue>;
 
-  const rawRules = value.rules && typeof value.rules === "object" ? (value.rules as Record<string, unknown>) : {};
+  const rawRules = value.rules && typeof value.rules === "object" ? value.rules as Record<string, unknown> : {};
   const rules = TARIFF_SERVICES.reduce((result, service) => {
     const list = Array.isArray(rawRules[service.code]) ? rawRules[service.code] as unknown[] : [];
-    result[service.code] = list.map((item) => ruleToForm(item, service.code)).filter((item): item is TariffConditionalRuleFormValue => Boolean(item));
+    result[service.code] = list
+      .map((item) => ruleToForm(item, service.code))
+      .filter((item): item is TariffConditionalRuleFormValue => Boolean(item));
     return result;
   }, {} as Record<TariffServiceCode, TariffConditionalRuleFormValue[]>);
 
@@ -259,21 +265,10 @@ function CustomTariffRow({
     <div className="rounded-xl border border-slate-200 bg-white p-3">
       <div className="grid gap-2.5 lg:grid-cols-[minmax(160px,1.2fr)_120px_130px_minmax(260px,1.5fr)_36px] lg:items-center">
         <Input value={value.label} onChange={(event) => onChange({ ...value, label: event.target.value })} placeholder="自定义资费名称" />
-        <select
-          value={value.kind}
-          onChange={(event) => {
-            const kind = event.target.value;
-            onChange({ ...value, kind, billingUnit: getCustomBillingUnits(kind)[0]?.value ?? "one_time" });
-          }}
-          className={selectClass}
-        >
+        <select value={value.kind} onChange={(event) => { const kind = event.target.value; onChange({ ...value, kind, billingUnit: getCustomBillingUnits(kind)[0]?.value ?? "one_time" }); }} className={selectClass}>
           {CUSTOM_TARIFF_KINDS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
         </select>
-        <select
-          value={value.mode}
-          onChange={(event) => onChange({ ...value, mode: event.target.value, amount: event.target.value === "charged" ? value.amount : "" })}
-          className={selectClass}
-        >
+        <select value={value.mode} onChange={(event) => onChange({ ...value, mode: event.target.value, amount: event.target.value === "charged" ? value.amount : "" })} className={selectClass}>
           {TARIFF_RATE_MODES.filter((item) => ["unknown", "free", "charged", "unavailable"].includes(item.value)).map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
         </select>
         {charged ? (
@@ -421,7 +416,12 @@ export function TariffModal({ sim, onClose, onSaved }: { sim: SimSummary; onClos
   if (!mounted) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-[100] flex h-[100dvh] items-stretch justify-center bg-slate-950/40 backdrop-blur-sm sm:items-center sm:p-4">
+    <div
+      className="fixed inset-0 z-[100] flex h-[100dvh] items-stretch justify-center bg-slate-950/40 backdrop-blur-sm sm:items-center sm:p-4"
+      onMouseDown={(event) => {
+        if (!saving && event.target === event.currentTarget) onClose();
+      }}
+    >
       <Card className="flex h-[100dvh] w-full max-w-5xl flex-col overflow-hidden rounded-none border-0 shadow-2xl sm:h-auto sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl sm:border">
         <div className="flex shrink-0 items-start justify-between gap-4 border-b bg-white px-5 py-4 sm:px-6">
           <div>
@@ -463,12 +463,10 @@ export function TariffModal({ sim, onClose, onSaved }: { sim: SimSummary; onClos
 
               <section className="space-y-4 border-t pt-6">
                 <div><h4 className="font-medium text-slate-900">常用资费</h4><p className="mt-1 text-xs text-slate-400">默认覆盖本地和漫游最常查询的通话、短信与数据资费；特殊分档请在对应项目的“特殊规则”里维护。</p></div>
-
                 <div className="space-y-3">
                   <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">本地使用</div>
                   {LOCAL_CORE_SERVICE_CODES.map(renderService)}
                 </div>
-
                 <div className="space-y-3 border-t border-slate-100 pt-4">
                   <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">国际漫游</div>
                   {ROAMING_CORE_SERVICE_CODES.map(renderService)}
@@ -485,7 +483,6 @@ export function TariffModal({ sim, onClose, onSaved }: { sim: SimSummary; onClos
                     </div>
                   ) : null}
                 </div>
-
                 {enabledExtensions.length ? (
                   <div className="space-y-3">
                     {enabledExtensions.map((code) => (
