@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { eq } from "drizzle-orm";
-import { AlertTriangle, CheckCircle2, Clock3, ShieldCheck, Smartphone } from "lucide-react";
+import { AlertTriangle, BellRing, CheckCircle2, Clock3, ShieldCheck, Smartphone } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { db } from "@/db";
 import { carriers, simCards, simKeepAliveRules } from "@/db/schema";
@@ -77,7 +77,7 @@ export default function DashboardPage() {
         title: "号码有效期",
         date: sim.validUntil,
         severity: validOverdue ? "overdue" : "warning",
-        href: "/sims",
+        href: "/reminders",
       });
     }
 
@@ -102,7 +102,7 @@ export default function DashboardPage() {
           title: `保号 · ${rule.name}`,
           date: rule.nextDueDate,
           severity: "overdue",
-          href: "/history",
+          href: "/reminders",
         });
       } else if (state.status === "grace" || state.status === "due_soon") {
         attentionSimIds.add(sim.id);
@@ -116,7 +116,7 @@ export default function DashboardPage() {
           title: `保号 · ${rule.name}`,
           date: rule.nextDueDate,
           severity: state.status === "grace" ? "overdue" : "warning",
-          href: "/history",
+          href: "/reminders",
         });
       }
     }
@@ -140,9 +140,12 @@ export default function DashboardPage() {
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
           <h2 className="text-2xl font-semibold tracking-tight">你的号码生命周期，一处管理</h2>
-          <p className="mt-1 text-sm text-slate-500">alpha.4 已接入保号规则与活动记录，首页会同时关注号码有效期和下一次保号操作。</p>
+          <p className="mt-1 text-sm text-slate-500">alpha.5 已加入提醒中心：首页保留关键待处理摘要，完整提醒可集中筛选和查看。</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Link href="/reminders" className="inline-flex h-10 items-center gap-2 rounded-xl border px-4 text-sm font-medium text-slate-700 transition hover:bg-white">
+            <BellRing className="h-4 w-4" />提醒中心
+          </Link>
           <Link href="/history" className="inline-flex h-10 items-center gap-2 rounded-xl border px-4 text-sm font-medium text-slate-700 transition hover:bg-white">
             <ShieldCheck className="h-4 w-4" />保号管理
           </Link>
@@ -169,9 +172,12 @@ export default function DashboardPage() {
 
       <section className="grid gap-6 xl:grid-cols-[1.4fr_0.6fr]">
         <Card className="min-h-80 overflow-hidden">
-          <div className="border-b px-6 py-5">
-            <h3 className="font-semibold">需要处理</h3>
-            <p className="mt-1 text-sm text-slate-500">汇总号码有效期和已进入提醒窗口的保号规则。</p>
+          <div className="flex items-start justify-between gap-4 border-b px-6 py-5">
+            <div>
+              <h3 className="font-semibold">需要处理</h3>
+              <p className="mt-1 text-sm text-slate-500">这里只显示最优先的待处理事项，完整列表请前往提醒中心。</p>
+            </div>
+            <Link href="/reminders" className="shrink-0 text-xs font-medium text-slate-500 underline underline-offset-4">查看全部</Link>
           </div>
           {actionable.length ? (
             <div className="divide-y">
@@ -189,7 +195,7 @@ export default function DashboardPage() {
                   </div>
                   <div className="shrink-0 text-left sm:text-right">
                     <div className={`text-sm font-medium ${item.severity === "overdue" ? "text-rose-700" : "text-amber-700"}`}>{item.date}</div>
-                    <Link href={item.href} className="mt-1 inline-block text-xs text-slate-400 underline underline-offset-4">前往处理</Link>
+                    <Link href={item.href} className="mt-1 inline-block text-xs text-slate-400 underline underline-offset-4">查看提醒</Link>
                   </div>
                 </div>
               ))}
@@ -198,7 +204,7 @@ export default function DashboardPage() {
             <div className="flex min-h-56 flex-col items-center justify-center px-6 text-center">
               <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-500"><CheckCircle2 className="h-5 w-5" /></div>
               <p className="mt-4 text-sm font-medium">当前没有待处理事项</p>
-              <p className="mt-1 max-w-sm text-xs leading-5 text-slate-400">配置保号规则后，SIMKeeper 会结合规则提醒窗口和号码有效期自动汇总。</p>
+              <p className="mt-1 max-w-sm text-xs leading-5 text-slate-400">号码进入有效期提醒窗口或保号规则提醒窗口后，会自动汇总到首页和提醒中心。</p>
             </div>
           )}
         </Card>
@@ -214,7 +220,8 @@ export default function DashboardPage() {
               [`运营商管理 · ${carrierCount} 条`, true],
               [`号码管理 · ${rows.length} 条`, true],
               [`保号规则 · ${enabledRuleCount} 条`, true],
-              ["自动提醒 / 通知", false],
+              ["站内提醒中心", true],
+              ["外部通知渠道", false],
             ].map(([label, done]) => (
               <div key={String(label)} className="flex items-center gap-3">
                 <span className={`h-2.5 w-2.5 rounded-full ${done ? "bg-emerald-500" : "bg-slate-200"}`} />
