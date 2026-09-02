@@ -1,4 +1,4 @@
-import { integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const users = sqliteTable("users", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -97,4 +97,48 @@ export const simTariffRates = sqliteTable(
     updatedAt: text("updated_at").notNull(),
   },
   (table) => [uniqueIndex("idx_sim_tariff_rates_tariff_service").on(table.tariffId, table.serviceCode)],
+);
+
+export const simTariffRateRules = sqliteTable(
+  "sim_tariff_rate_rules",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    tariffId: integer("tariff_id")
+      .notNull()
+      .references(() => simTariffs.id, { onDelete: "cascade" }),
+    serviceCode: text("service_code").notNull(),
+    label: text("label"),
+    mode: text("mode").notNull(),
+    amount: real("amount"),
+    billingUnit: text("billing_unit"),
+    packagePrice: real("package_price"),
+    packageAllowanceAmount: real("package_allowance_amount"),
+    packageAllowanceUnit: text("package_allowance_unit"),
+    validityValue: integer("validity_value"),
+    validityUnit: text("validity_unit"),
+    autoRenew: text("auto_renew").notNull().default("unknown"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    index("idx_sim_tariff_rate_rules_tariff_id").on(table.tariffId),
+    index("idx_sim_tariff_rate_rules_tariff_service").on(table.tariffId, table.serviceCode),
+  ],
+);
+
+export const simTariffRuleConditions = sqliteTable(
+  "sim_tariff_rule_conditions",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    ruleId: integer("rule_id")
+      .notNull()
+      .references(() => simTariffRateRules.id, { onDelete: "cascade" }),
+    conditionType: text("condition_type").notNull(),
+    value: text("value").notNull(),
+    value2: text("value_2"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [index("idx_sim_tariff_rule_conditions_rule_id").on(table.ruleId)],
 );
