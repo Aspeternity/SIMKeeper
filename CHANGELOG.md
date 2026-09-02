@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.1.0-alpha.5
+
+### Added
+
+- Dedicated reminder center for lifecycle tasks generated from SIM validity dates and keep-alive rules
+- Shared reminder calculation engine with reminder kinds for SIM validity and keep-alive requirements
+- Reminder states for overdue, grace period, today, upcoming and missing next-action dates
+- Automatic 30-day reminder window for SIM validity dates
+- Per-rule reminder windows and grace periods reused directly from keep-alive configuration
+- Reminder search by number, name, carrier or reminder title
+- Reminder filters by lifecycle status and reminder source
+- Reminder summary cards for current reminders, overdue/grace items, today and upcoming items
+- Dashboard shortcut and full-list link to the reminder center
+- CI smoke coverage confirming an in-window keep-alive rule is rendered by the reminder center
+
+### Changed
+
+- Sidebar and package version updated to `v0.1.0-alpha.5`
+- Dashboard remains a concise priority summary while the reminder center owns the complete searchable/filterable reminder list
+- Dashboard action links now route through the reminder center before going to the underlying number or keep-alive management area
+- All number-detail sections now start collapsed by default, including Basic Information, Real-name Information, Keep-alive Status and Tariff Overview
+
 ## v0.1.0-alpha.4
 
 ### Added
