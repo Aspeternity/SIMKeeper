@@ -31,6 +31,7 @@ type FormState = {
   identityStatus: string;
   identityName: string;
   identityDocumentType: string;
+  identityDocumentTypeCustom: string;
   identityDocumentNumber: string;
   identityCountryCode: string;
   identityNotes: string;
@@ -72,6 +73,7 @@ function initialForm(carriers: CarrierRecord[], editing: SimRecord | null): Form
       identityStatus: editing.identityStatus || "unknown",
       identityName: editing.identityName || "",
       identityDocumentType: editing.identityDocumentType || "",
+      identityDocumentTypeCustom: editing.identityDocumentTypeCustom || "",
       identityDocumentNumber: editing.identityDocumentNumber || "",
       identityCountryCode: editing.identityCountryCode || "",
       identityNotes: editing.identityNotes || "",
@@ -94,6 +96,7 @@ function initialForm(carriers: CarrierRecord[], editing: SimRecord | null): Form
     identityStatus: "unknown",
     identityName: "",
     identityDocumentType: "",
+    identityDocumentTypeCustom: "",
     identityDocumentNumber: "",
     identityCountryCode: "",
     identityNotes: "",
@@ -125,10 +128,22 @@ export function SimEditorModal({ carriers, editing, onClose, onSaved }: { carrie
     }));
   }
 
+  function changeIdentityDocumentType(identityDocumentType: string) {
+    setForm((current) => ({
+      ...current,
+      identityDocumentType,
+      identityDocumentTypeCustom: identityDocumentType === "other" ? current.identityDocumentTypeCustom : "",
+    }));
+  }
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!form.carrierId) {
       setError("请选择运营商");
+      return;
+    }
+    if (form.identityDocumentType === "other" && !form.identityDocumentTypeCustom.trim()) {
+      setError("请输入具体证件 / 材料类型");
       return;
     }
 
@@ -253,7 +268,7 @@ export function SimEditorModal({ carriers, editing, onClose, onSaved }: { carrie
               <UserRoundCheck className="mt-0.5 h-4 w-4 text-slate-400" />
               <div>
                 <h4 className="text-sm font-medium text-slate-800">实名信息</h4>
-                <p className="mt-1 text-xs leading-5 text-slate-400">可选，用于备份号码当初的实名主体和证件资料。属于敏感信息，请确保 SIMKeeper 实例及备份文件访问安全。</p>
+                <p className="mt-1 text-xs leading-5 text-slate-400">可选，用于备份号码开户 / KYC 时使用的实名主体、证件或辅助材料。属于敏感信息，请确保 SIMKeeper 实例及备份文件访问安全。</p>
               </div>
             </div>
 
@@ -272,26 +287,40 @@ export function SimEditorModal({ carriers, editing, onClose, onSaved }: { carrie
 
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="space-y-1.5 text-sm">
-                <span className="font-medium text-slate-700">证件类型</span>
-                <select value={form.identityDocumentType} onChange={(event) => setForm({ ...form, identityDocumentType: event.target.value })} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100">
+                <span className="font-medium text-slate-700">证件 / 材料类型</span>
+                <select value={form.identityDocumentType} onChange={(event) => changeIdentityDocumentType(event.target.value)} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100">
                   <option value="">未记录</option>
                   {IDENTITY_DOCUMENT_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
                 </select>
               </label>
               <label className="space-y-1.5 text-sm">
-                <span className="font-medium text-slate-700">证件号码</span>
-                <Input value={form.identityDocumentNumber} onChange={(event) => setForm({ ...form, identityDocumentNumber: event.target.value })} placeholder="可选" autoComplete="off" spellCheck={false} />
+                <span className="font-medium text-slate-700">证件 / 材料编号</span>
+                <Input value={form.identityDocumentNumber} onChange={(event) => setForm({ ...form, identityDocumentNumber: event.target.value })} placeholder="可选，例如证件号、账单编号或账户号" autoComplete="off" spellCheck={false} />
               </label>
             </div>
 
+            {form.identityDocumentType === "other" ? (
+              <label className="block space-y-1.5 text-sm">
+                <span className="font-medium text-slate-700">具体证件 / 材料类型</span>
+                <Input
+                  value={form.identityDocumentTypeCustom}
+                  onChange={(event) => setForm({ ...form, identityDocumentTypeCustom: event.target.value })}
+                  placeholder="例如：港澳通行证、水电账单、地址证明"
+                  autoComplete="off"
+                  required
+                />
+                <span className="block text-xs text-slate-400">选择“其他证件 / 材料”后填写，保存时会作为实际类型显示在号码详情中。</span>
+              </label>
+            ) : null}
+
             <div className="space-y-1.5 text-sm">
-              <span className="font-medium text-slate-700">证件国家 / 地区</span>
+              <span className="font-medium text-slate-700">证件 / 材料国家 / 地区</span>
               <CountryRegionSelect value={form.identityCountryCode} onChange={(identityCountryCode) => setForm({ ...form, identityCountryCode })} disabled={saving} />
             </div>
 
             <label className="block space-y-1.5 text-sm">
               <span className="font-medium text-slate-700">实名备注</span>
-              <textarea value={form.identityNotes} onChange={(event) => setForm({ ...form, identityNotes: event.target.value })} placeholder="可记录实名渠道、证件版本、客服核验提示等" rows={2} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100" />
+              <textarea value={form.identityNotes} onChange={(event) => setForm({ ...form, identityNotes: event.target.value })} placeholder="可记录实名渠道、材料用途、证件版本、客服核验提示等" rows={2} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100" />
             </label>
           </section>
 
