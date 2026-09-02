@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.1.0-alpha.6
+
+### Added
+
+- Dedicated bound-services management page for recording which accounts and businesses depend on each phone number
+- Per-binding service name, category, phone-number usage, account identifier, importance, status, website, binding date, last verification date and notes
+- Common service categories for communication/social, finance/payment, shopping, cloud/accounts, entertainment, work, government/public services, security/identity and custom cases
+- Binding roles for login, verification codes, 2FA, recovery, contact number and other uses
+- Importance levels for critical, high, normal and low-priority bindings
+- Binding lifecycle states for current, migrated and unbound relationships so historical dependencies can be retained instead of deleted
+- Search and filters by binding status, category, importance, service name, account identifier, SIM and carrier
+- Bound-services section in number details with current/critical counts, collapsible service cards and click-to-copy account identifiers
+- Direct links to service websites and the central bound-services manager
+- Dashboard shortcut and progress count for recorded bound services
+- CI smoke coverage for creating, retrieving and rendering a critical finance/2FA binding
+
+### Changed
+
+- Enabled the `绑定服务` sidebar entry
+- Sidebar and package version updated to `v0.1.0-alpha.6`
+- Number details now follow `基本信息 → 实名信息 → 绑定服务 → 保号状态 → 资费概览`, with all sections collapsed by default
+- Bound-service records deliberately exclude password, one-time code and recovery-secret fields; SIMKeeper stores relationship metadata rather than acting as a password manager
+
 ## v0.1.0-alpha.5
 
 ### Added
