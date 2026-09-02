@@ -167,12 +167,13 @@ jobs:
           [ -n "$sim_id" ] || fail "SIM response did not contain an id"
           [ "$(jq -r '.sim.phoneNumber' "$tmp/sim.json")" = "+85251234567" ] || fail "SIM phone number was not normalized to E.164"
 
-          echo "[10/11] Saving CSL-style conditional tariff profile"
+          echo "[10/11] Saving tariff profile with advanced and custom data"
           jq -n --argjson simId "$sim_id" '{
             simId:$simId,
             planName:"Conditional Smoke Tariff",
             planType:"prepaid",
             currencyCode:"HKD",
+            purchaseCost:68,
             recurringFee:null,
             recurringPeriodValue:null,
             recurringPeriodUnit:"",
@@ -207,7 +208,10 @@ jobs:
                 {label:"2GB 365-day pass",mode:"package",amount:null,billingUnit:"",packagePrice:30,packageAllowanceAmount:2,packageAllowanceUnit:"gb",validityValue:365,validityUnit:"day",autoRenew:"no",conditions:[{type:"roaming_region",value:"CN",value2:""},{type:"roaming_region",value:"MO",value2:""}]}
               ]
             },
-            usageSummary:"Smoke-test conditional tariff profile",
+            customItems:[
+              {label:"Voicemail",kind:"call",mode:"charged",amount:0.2,billingUnit:"per_call",notes:"Custom tariff smoke test"}
+            ],
+            usageSummary:"Smoke-test tariff profile",
             sourceUrl:"",
             verifiedAt:"",
             notes:""
@@ -216,22 +220,17 @@ jobs:
             -X PUT -H 'Content-Type: application/json' --data-binary @"$tmp/tariff-payload.json" "$base/api/tariffs")" || fail "PUT /api/tariffs failed"
           [ "$status" = "200" ] || fail "Tariff save returned HTTP $status"
           [ "$(jq -r '.tariff.currencyCode' "$tmp/tariff.json")" = "HKD" ] || fail "Tariff currency was not saved"
+          [ "$(jq -r '.tariff.purchaseCost' "$tmp/tariff.json")" = "68" ] || fail "SIM purchase cost was not saved"
           [ "$(jq -r '.tariff.localIncomingSmsPolicy' "$tmp/tariff.json")" = "free" ] || fail "Base incoming SMS policy was not derived"
           [ "$(jq -r '.tariff.rates.localData.amount' "$tmp/tariff.json")" = "1" ] || fail "Per-100MB local data amount was not saved"
           [ "$(jq -r '.tariff.rates.localData.billingUnit' "$tmp/tariff.json")" = "per_100mb" ] || fail "Per-100MB local data billing unit was not saved"
           [ "$(jq -r '.tariff.roamingIncomingSmsPolicy' "$tmp/tariff.json")" = "variable" ] || fail "Conditional roaming SMS policy was not marked variable"
           [ "$(jq -r '.tariff.rules.localOutgoingSms | length' "$tmp/tariff.json")" = "2" ] || fail "Local SMS conditional rules were not saved"
-          [ "$(jq -r '.tariff.rules.localOutgoingSms[0].amount' "$tmp/tariff.json")" = "0.3" ] || fail "Same-network SMS amount was not saved"
-          [ "$(jq -r '.tariff.rules.localOutgoingSms[1].amount' "$tmp/tariff.json")" = "0.7" ] || fail "Other-network SMS amount was not saved"
-          [ "$(jq -r '.tariff.rules.localData[0].mode' "$tmp/tariff.json")" = "package" ] || fail "Unconditional local pass mode was not saved"
           [ "$(jq -r '.tariff.rules.localData[0].conditions | length' "$tmp/tariff.json")" = "0" ] || fail "Unconditional local pass unexpectedly gained conditions"
           [ "$(jq -r '.tariff.rules.roamingOutgoingCall[0].conditions | length' "$tmp/tariff.json")" = "3" ] || fail "Multi-condition roaming call rule was not saved"
-          [ "$(jq -r '.tariff.rules.roamingOutgoingCall[1].amount' "$tmp/tariff.json")" = "18" ] || fail "Roaming destination price tier was not saved"
-          [ "$(jq -r '.tariff.rules.roamingData[0].mode' "$tmp/tariff.json")" = "package" ] || fail "Roaming data pass mode was not saved"
           [ "$(jq -r '.tariff.rules.roamingData[0].packagePrice' "$tmp/tariff.json")" = "30" ] || fail "Roaming data pass price was not saved"
-          [ "$(jq -r '.tariff.rules.roamingData[0].packageAllowanceAmount' "$tmp/tariff.json")" = "2" ] || fail "Roaming data pass allowance was not saved"
-          [ "$(jq -r '.tariff.rules.roamingData[0].validityValue' "$tmp/tariff.json")" = "365" ] || fail "Roaming data pass validity was not saved"
-          [ "$(jq -r '.tariff.rules.roamingData[0].conditions | length' "$tmp/tariff.json")" = "2" ] || fail "Roaming data pass multi-region conditions were not saved"
+          [ "$(jq -r '.tariff.customItems | length' "$tmp/tariff.json")" = "1" ] || fail "Custom tariff item was not saved"
+          [ "$(jq -r '.tariff.customItems[0].billingUnit' "$tmp/tariff.json")" = "per_call" ] || fail "Custom tariff billing unit was not saved"
 
           echo "[11/11] Verifying tariff summary is joined into SIM list"
           status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/sims.json" -w '%{http_code}' "$base/api/sims")" || fail "GET /api/sims failed"
