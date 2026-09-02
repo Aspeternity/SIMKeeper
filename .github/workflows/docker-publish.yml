@@ -181,6 +181,7 @@ jobs:
             roamingAvailable:"yes",
             rates:{
               localIncomingSms:{mode:"free",amount:null,billingUnit:""},
+              localData:{mode:"charged",amount:1,billingUnit:"per_100mb"},
               roamingIncomingSms:{mode:"unknown",amount:null,billingUnit:""}
             },
             rules:{
@@ -216,6 +217,8 @@ jobs:
           [ "$status" = "200" ] || fail "Tariff save returned HTTP $status"
           [ "$(jq -r '.tariff.currencyCode' "$tmp/tariff.json")" = "HKD" ] || fail "Tariff currency was not saved"
           [ "$(jq -r '.tariff.localIncomingSmsPolicy' "$tmp/tariff.json")" = "free" ] || fail "Base incoming SMS policy was not derived"
+          [ "$(jq -r '.tariff.rates.localData.amount' "$tmp/tariff.json")" = "1" ] || fail "Per-100MB local data amount was not saved"
+          [ "$(jq -r '.tariff.rates.localData.billingUnit' "$tmp/tariff.json")" = "per_100mb" ] || fail "Per-100MB local data billing unit was not saved"
           [ "$(jq -r '.tariff.roamingIncomingSmsPolicy' "$tmp/tariff.json")" = "variable" ] || fail "Conditional roaming SMS policy was not marked variable"
           [ "$(jq -r '.tariff.rules.localOutgoingSms | length' "$tmp/tariff.json")" = "2" ] || fail "Local SMS conditional rules were not saved"
           [ "$(jq -r '.tariff.rules.localOutgoingSms[0].amount' "$tmp/tariff.json")" = "0.3" ] || fail "Same-network SMS amount was not saved"
