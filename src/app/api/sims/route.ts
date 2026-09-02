@@ -3,7 +3,7 @@ import { parsePhoneNumberFromString, type CountryCode } from "libphonenumber-js"
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/db";
-import { carriers, simCards } from "@/db/schema";
+import { carriers, simCards, simTariffs } from "@/db/schema";
 import { getCurrentUser } from "@/lib/auth";
 
 export const runtime = "nodejs";
@@ -57,56 +57,49 @@ async function requireUser() {
   return null;
 }
 
+const rowSelection = {
+  id: simCards.id,
+  label: simCards.label,
+  phoneNumber: simCards.phoneNumber,
+  carrierId: simCards.carrierId,
+  carrierName: carriers.name,
+  country: carriers.country,
+  countryCode: carriers.countryCode,
+  simType: simCards.simType,
+  iccid: simCards.iccid,
+  balance: simCards.balance,
+  currencyCode: simCards.currencyCode,
+  status: simCards.status,
+  activationDate: simCards.activationDate,
+  validUntil: simCards.validUntil,
+  notes: simCards.notes,
+  createdAt: simCards.createdAt,
+  updatedAt: simCards.updatedAt,
+  tariffId: simTariffs.id,
+  tariffPlanName: simTariffs.planName,
+  localIncomingSmsPolicy: simTariffs.localIncomingSmsPolicy,
+  roamingIncomingSmsPolicy: simTariffs.roamingIncomingSmsPolicy,
+  roamingAvailable: simTariffs.roamingAvailable,
+  tariffUsageSummary: simTariffs.usageSummary,
+  tariffVerifiedAt: simTariffs.verifiedAt,
+};
+
 function listRows() {
   return db
-    .select({
-      id: simCards.id,
-      label: simCards.label,
-      phoneNumber: simCards.phoneNumber,
-      carrierId: simCards.carrierId,
-      carrierName: carriers.name,
-      country: carriers.country,
-      countryCode: carriers.countryCode,
-      simType: simCards.simType,
-      iccid: simCards.iccid,
-      balance: simCards.balance,
-      currencyCode: simCards.currencyCode,
-      status: simCards.status,
-      activationDate: simCards.activationDate,
-      validUntil: simCards.validUntil,
-      notes: simCards.notes,
-      createdAt: simCards.createdAt,
-      updatedAt: simCards.updatedAt,
-    })
+    .select(rowSelection)
     .from(simCards)
     .innerJoin(carriers, eq(simCards.carrierId, carriers.id))
+    .leftJoin(simTariffs, eq(simTariffs.simId, simCards.id))
     .orderBy(asc(carriers.country), asc(carriers.name), asc(simCards.label))
     .all();
 }
 
 function getRow(id: number) {
   return db
-    .select({
-      id: simCards.id,
-      label: simCards.label,
-      phoneNumber: simCards.phoneNumber,
-      carrierId: simCards.carrierId,
-      carrierName: carriers.name,
-      country: carriers.country,
-      countryCode: carriers.countryCode,
-      simType: simCards.simType,
-      iccid: simCards.iccid,
-      balance: simCards.balance,
-      currencyCode: simCards.currencyCode,
-      status: simCards.status,
-      activationDate: simCards.activationDate,
-      validUntil: simCards.validUntil,
-      notes: simCards.notes,
-      createdAt: simCards.createdAt,
-      updatedAt: simCards.updatedAt,
-    })
+    .select(rowSelection)
     .from(simCards)
     .innerJoin(carriers, eq(simCards.carrierId, carriers.id))
+    .leftJoin(simTariffs, eq(simTariffs.simId, simCards.id))
     .where(eq(simCards.id, id))
     .get();
 }
