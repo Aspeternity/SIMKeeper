@@ -83,6 +83,7 @@ sqlite.exec(`
     plan_name TEXT,
     plan_type TEXT NOT NULL DEFAULT 'unknown',
     currency_code TEXT,
+    purchase_cost REAL,
     recurring_fee REAL,
     recurring_period_value INTEGER,
     recurring_period_unit TEXT,
@@ -151,10 +152,8 @@ sqlite.exec(`
     FOREIGN KEY (tariff_id) REFERENCES sim_tariffs(id) ON DELETE CASCADE
   );
 
-  CREATE INDEX IF NOT EXISTS idx_sim_tariff_rate_rules_tariff_id
-    ON sim_tariff_rate_rules(tariff_id);
-  CREATE INDEX IF NOT EXISTS idx_sim_tariff_rate_rules_tariff_service
-    ON sim_tariff_rate_rules(tariff_id, service_code);
+  CREATE INDEX IF NOT EXISTS idx_sim_tariff_rate_rules_tariff_id ON sim_tariff_rate_rules(tariff_id);
+  CREATE INDEX IF NOT EXISTS idx_sim_tariff_rate_rules_tariff_service ON sim_tariff_rate_rules(tariff_id, service_code);
 
   CREATE TABLE IF NOT EXISTS sim_tariff_rule_conditions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -167,12 +166,26 @@ sqlite.exec(`
     FOREIGN KEY (rule_id) REFERENCES sim_tariff_rate_rules(id) ON DELETE CASCADE
   );
 
-  CREATE INDEX IF NOT EXISTS idx_sim_tariff_rule_conditions_rule_id
-    ON sim_tariff_rule_conditions(rule_id);
+  CREATE INDEX IF NOT EXISTS idx_sim_tariff_rule_conditions_rule_id ON sim_tariff_rule_conditions(rule_id);
 
-  UPDATE sim_cards
-  SET sim_type = 'esim'
-  WHERE sim_type = 'esim_adapter';
+  CREATE TABLE IF NOT EXISTS sim_tariff_custom_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tariff_id INTEGER NOT NULL,
+    label TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    amount REAL,
+    billing_unit TEXT,
+    notes TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (tariff_id) REFERENCES sim_tariffs(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_sim_tariff_custom_items_tariff_id ON sim_tariff_custom_items(tariff_id);
+
+  UPDATE sim_cards SET sim_type = 'esim' WHERE sim_type = 'esim_adapter';
 `);
 
 const tariffColumns = sqlite.prepare("PRAGMA table_info(sim_tariffs)").all() as Array<{ name: string }>;
@@ -180,6 +193,7 @@ const tariffColumnNames = new Set(tariffColumns.map((column) => column.name));
 const tariffMigrations = [
   ["currency_code", "ALTER TABLE sim_tariffs ADD COLUMN currency_code TEXT"],
   ["plan_type", "ALTER TABLE sim_tariffs ADD COLUMN plan_type TEXT NOT NULL DEFAULT 'unknown'"],
+  ["purchase_cost", "ALTER TABLE sim_tariffs ADD COLUMN purchase_cost REAL"],
   ["recurring_fee", "ALTER TABLE sim_tariffs ADD COLUMN recurring_fee REAL"],
   ["recurring_period_value", "ALTER TABLE sim_tariffs ADD COLUMN recurring_period_value INTEGER"],
   ["recurring_period_unit", "ALTER TABLE sim_tariffs ADD COLUMN recurring_period_unit TEXT"],
