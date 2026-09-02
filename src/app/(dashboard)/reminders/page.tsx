@@ -38,6 +38,7 @@ export default function RemindersPage() {
       id: simKeepAliveRules.id,
       simId: simKeepAliveRules.simId,
       name: simKeepAliveRules.name,
+      dueDateSource: simKeepAliveRules.dueDateSource,
       nextDueDate: simKeepAliveRules.nextDueDate,
       warningDays: simKeepAliveRules.warningDays,
       gracePeriodDays: simKeepAliveRules.gracePeriodDays,
@@ -60,7 +61,7 @@ export default function RemindersPage() {
           生命周期提醒
         </div>
         <h2 className="mt-2 text-2xl font-semibold tracking-tight">提醒中心</h2>
-        <p className="mt-1 text-sm text-slate-500">统一查看号码有效期和保号规则产生的待处理事项；提醒会根据当前日期自动计算，无需重复录入。</p>
+        <p className="mt-1 text-sm text-slate-500">统一查看号码有效期和独立保号规则产生的待处理事项；跟随号码有效期的规则会自动合并为同一条提醒。</p>
       </div>
 
       <ReminderCenter reminders={reminders} />
