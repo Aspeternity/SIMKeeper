@@ -182,6 +182,7 @@ export const simKeepAliveRules = sqliteTable(
     intervalValue: integer("interval_value").notNull(),
     intervalUnit: text("interval_unit").notNull(),
     qualifyingActions: text("qualifying_actions").notNull(),
+    dueDateSource: text("due_date_source").notNull().default("independent"),
     nextDueDate: text("next_due_date"),
     warningDays: integer("warning_days").notNull().default(30),
     gracePeriodDays: integer("grace_period_days").notNull().default(0),
