@@ -1,6 +1,6 @@
 {
   "name": "simkeeper",
-  "version": "0.1.0-alpha.8.1",
+  "version": "0.1.0-alpha.8.2",
   "private": true,
   "scripts": {
     "dev": "next dev",
