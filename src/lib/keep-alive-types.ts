@@ -7,6 +7,8 @@ export type KeepAliveRuleRecord = {
   intervalValue: number;
   intervalUnit: string;
   qualifyingActions: string[];
+  minimumRechargeAmount: number | null;
+  rechargeCurrencyCode: string | null;
   dueDateSource: KeepAliveDueDateSource;
   nextDueDate: string | null;
   warningDays: number;
