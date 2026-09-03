@@ -8,6 +8,7 @@ import {
   getKeepAliveActivityLabel,
   getKeepAliveDueDateSourceLabel,
   getKeepAliveIntervalLabel,
+  getKeepAliveRechargeRequirementLabel,
   getKeepAliveRuleStatusLabel,
   type KeepAliveRuleStatus,
 } from "@/lib/keep-alive";
@@ -71,7 +72,7 @@ export function KeepAliveOverviewSection({ simId }: { simId: number }) {
             <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
             <span className="min-w-0">
               <span className="block font-medium text-slate-900">保号状态</span>
-              <span className="mt-1 block text-xs font-normal leading-5 text-slate-400">查看当前保号规则、日期来源、下一次操作日期和最近活动记录。</span>
+              <span className="mt-1 block text-xs font-normal leading-5 text-slate-400">查看当前保号规则、活动要求、日期来源、下一次操作日期和最近活动记录。</span>
             </span>
           </button>
           <Link href="/history" className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50">
@@ -97,6 +98,9 @@ export function KeepAliveOverviewSection({ simId }: { simId: number }) {
                           <span className="rounded-md bg-slate-50 px-2 py-0.5 text-[10px] text-slate-500 ring-1 ring-inset ring-slate-100">{getKeepAliveDueDateSourceLabel(rule.dueDateSource)}</span>
                         </div>
                         <div className="mt-1 text-xs text-slate-400">每 {getKeepAliveIntervalLabel(rule.intervalValue, rule.intervalUnit)} · {rule.qualifyingActions.map(getKeepAliveActivityLabel).join(" / ")}</div>
+                        {getKeepAliveRechargeRequirementLabel(rule.minimumRechargeAmount, rule.rechargeCurrencyCode) ? (
+                          <div className="mt-1 text-xs font-medium text-slate-500">充值要求：{getKeepAliveRechargeRequirementLabel(rule.minimumRechargeAmount, rule.rechargeCurrencyCode)}</div>
+                        ) : null}
                       </div>
                       <CalendarClock className="h-4 w-4 shrink-0 text-slate-300" />
                     </div>
