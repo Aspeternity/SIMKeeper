@@ -2,22 +2,22 @@
 
 **SIMKeeper — Self-hosted SIM & eSIM lifecycle manager**
 
-`v0.1.0-alpha.1` 是 SIMKeeper 的第一个可运行骨架。
+当前版本：`v0.1.0-alpha.9`
 
 当前已包含：
 
-- 首次部署创建管理员
-- 登录 / 退出
-- SQLite 数据持久化
-- 本地 Session Secret
-- Dashboard 基础框架
-- `/api/health` 健康检查（含当前构建 revision）
-- Docker 单容器运行
-- GitHub Actions 自动构建 Docker 镜像
-- GHCR 发布流程
-- CI 自动认证流程 smoke test
-
-号码、运营商、保号规则等核心业务功能将在后续 alpha 版本逐步加入。
+- 运营商及 SIM / eSIM 号码管理，号码自动规范化为 E.164
+- 实名状态、证件资料、余额、有效期和完整资费档案
+- 多条独立保号规则、最低充值金额要求和保号活动记录
+- 充值后余额与运营商有效期同步更新
+- 号码绑定服务及关键账号依赖管理
+- Dashboard 与提醒中心统一生命周期计算
+- Telegram、Bark、Gotify 和 Webhook 通知渠道
+- 每日精确通知时间、提醒里程碑、渠道筛选和自定义通知模板
+- 完整 JSON 导出、本地备份、恢复前安全备份及保留策略
+- 桌面与手机端响应式导航、页面标题和实时提醒数量
+- SQLite 持久化、管理员登录、本地 Session Secret 和健康检查
+- Docker 单容器运行及 GitHub Actions 验证后自动发布 GHCR 镜像
 
 ## 推荐部署方式
 
@@ -62,7 +62,7 @@ http://HOST:3000
 .github/workflows/docker-publish.yml
 ```
 
-每次 push 到 `main` 后，GitHub Actions 会先构建本地测试镜像并自动执行以下认证链路：
+每次 push 到 `main` 后，GitHub Actions 会先构建本地测试镜像并自动执行完整核心流程：
 
 ```text
 /setup
@@ -70,7 +70,9 @@ http://HOST:3000
 → Dashboard
 → 退出
 → 登录
-→ Dashboard
+→ 运营商 / 号码 / 资费 / 保号 / 绑定服务
+→ 提醒与导航
+→ 完整备份及恢复
 ```
 
 只有 smoke test 通过后，才会发布经过验证的 `linux/amd64` 镜像到 GHCR。alpha 开发阶段优先保证 x86_64 部署与迭代速度；ARM64 会在功能稳定后改为独立构建任务，避免 QEMU 编译 `better-sqlite3` 拖慢每次提交。
@@ -97,7 +99,7 @@ curl http://HOST:3000/api/health
 {
   "status": "ok",
   "database": "connected",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.9",
   "revision": "<git-commit-sha>"
 }
 ```
@@ -122,7 +124,7 @@ docker compose pull
 docker compose up -d --force-recreate
 ```
 
-## 当前版本边界
+## 当前 Alpha 能力
 
 ### 已完成
 
@@ -135,12 +137,12 @@ docker compose up -d --force-recreate
 - [x] Healthcheck
 - [x] GitHub Actions
 - [x] GHCR 自动发布
-- [x] Auth smoke test
-
-### 下一阶段 `v0.1.0-alpha.2`
-
-- [ ] 运营商 CRUD
-- [ ] SIM / eSIM CRUD
-- [ ] E.164 号码规范化
-- [ ] 国家/地区与货币字段
-- [ ] Dashboard 真实统计数据
+- [x] 运营商 CRUD
+- [x] SIM / eSIM CRUD 与 E.164 规范化
+- [x] 实名资料与资费档案
+- [x] 保号规则、活动历史与充值要求
+- [x] 绑定服务
+- [x] 提醒中心与外部通知
+- [x] 完整备份与恢复
+- [x] 桌面 / 手机端响应式导航
+- [x] 核心流程与功能专项 smoke test

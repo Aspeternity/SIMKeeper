@@ -128,6 +128,9 @@ jobs:
           status="$(curl -sS --max-time 5 -b "$cookies" -o "$tmp/dashboard.html" -w '%{http_code}' "$base/")" || fail "Authenticated GET / failed"
           [ "$status" = "200" ] || fail "Authenticated GET / returned HTTP $status"
           grep -q '你的号码生命周期' "$tmp/dashboard.html" || fail "Authenticated Dashboard content was not rendered"
+          grep -q 'aria-label="打开导航"' "$tmp/dashboard.html" || fail "Mobile navigation trigger was not rendered"
+          grep -q 'data-page-title="概览"' "$tmp/dashboard.html" || fail "Dashboard top bar did not render the current page title"
+          grep -q 'data-reminder-count="0"' "$tmp/dashboard.html" || fail "Empty reminder count was not rendered"
 
           echo "[6/17] Logging out and verifying unauthenticated gate"
           : > "$headers"
@@ -324,10 +327,13 @@ jobs:
           [ "$status" = "200" ] || fail "Reminder center returned HTTP $status"
           grep -q '提醒中心' "$tmp/reminders.html" || fail "Reminder center heading was not rendered"
           grep -q 'Usage activity' "$tmp/reminders.html" || fail "Due keep-alive rule was not rendered in reminder center"
+          grep -q 'data-page-title="提醒中心"' "$tmp/reminders.html" || fail "Reminder top bar title was not synchronized with the route"
+          grep -Eq 'data-reminder-count="[1-9][0-9]*"' "$tmp/reminders.html" || fail "Pending reminder count was not rendered in the top bar"
 
           status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/settings.html" -w '%{http_code}' "$base/settings")" || fail "GET /settings failed"
           [ "$status" = "200" ] || fail "Settings and backup page returned HTTP $status"
           grep -q '设置与备份' "$tmp/settings.html" || fail "Settings and backup heading was not rendered"
+          grep -q 'data-page-title="设置与备份"' "$tmp/settings.html" || fail "Settings top bar title was not synchronized with the route"
 
           echo "Application smoke test passed."
 
