@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   BellRing,
+  Braces,
   CheckCircle2,
   Clock3,
   Edit3,
@@ -10,6 +11,7 @@ import {
   MessageSquareText,
   Plus,
   Radio,
+  RotateCcw,
   Save,
   Send,
   ShieldCheck,
@@ -22,6 +24,13 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ModalPortal } from "@/components/ui/modal-portal";
 import { NOTIFICATION_CHANNEL_TYPES, getNotificationChannelTypeLabel, type NotificationChannelType } from "@/lib/notification-options";
+import {
+  DEFAULT_NOTIFICATION_BODY_TEMPLATE,
+  DEFAULT_NOTIFICATION_ITEM_TEMPLATE,
+  DEFAULT_NOTIFICATION_TITLE_TEMPLATE,
+  NOTIFICATION_TEMPLATE_VARIABLES,
+  renderNotificationTemplate,
+} from "@/lib/notification-templates";
 
 type ReminderKind = "sim_validity" | "keep_alive";
 type ReminderStatus = "upcoming" | "today" | "grace" | "overdue" | "unscheduled";
@@ -61,12 +70,15 @@ type NotificationSettings = {
   dailyTime: string;
   dailyHour: number;
   milestoneDays: number[];
+  catchUpEnabled: boolean;
+  titleTemplate: string;
+  bodyTemplate: string;
+  itemTemplate: string;
   lastDispatchAt: string | null;
   lastScheduledDate: string | null;
   nextDispatchAt: string | null;
   timeZone: string;
   scheduleMode: "daily_exact";
-  catchUpEnabled: true;
 };
 
 type FormState = {
@@ -177,6 +189,31 @@ function channelFilterSummary(channel: Channel) {
 
 function secretPlaceholder(form: FormState, key: string, fallback: string) {
   return form.id && form.secrets?.[key] ? "已保存；留空保持不变" : fallback;
+}
+
+function templatePreview(settings: NotificationSettings | null) {
+  if (!settings) return { title: "", body: "" };
+  const date = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date());
+  const shared = { app: "SIMKeeper", heading: "今日提醒", count: 1, date, channelName: "Telegram" };
+  const item = renderNotificationTemplate(settings.itemTemplate, {
+    ...shared,
+    index: 1,
+    simLabel: "CSL香港",
+    phoneNumber: "+852 5123 4567",
+    carrierName: "csl.",
+    country: "香港",
+    title: "号码有效期",
+    kind: "号码有效期",
+    status: "即将到期",
+    relative: "还有 7 天",
+    dueDate: "2026-09-10",
+    dueSuffix: " · 2026-09-10",
+    detail: "号码有效期将在 2026-09-10 到期",
+  });
+  return {
+    title: renderNotificationTemplate(settings.titleTemplate, shared),
+    body: renderNotificationTemplate(settings.bodyTemplate, { ...shared, items: item }),
+  };
 }
 
 function ChannelFields({ form, setForm }: { form: FormState; setForm: (value: FormState) => void }) {
@@ -348,6 +385,7 @@ export default function NotificationsPage() {
 
   const enabledChannels = useMemo(() => channels.filter((channel) => channel.enabled).length, [channels]);
   const recentFailures = useMemo(() => deliveries.filter((item) => item.status === "failed").slice(0, 10).length, [deliveries]);
+  const preview = useMemo(() => templatePreview(settings), [settings]);
 
   function applyData(data: { settings?: NotificationSettings; channels?: Channel[]; deliveries?: Delivery[] }) {
     if (data.settings) setSettings(data.settings);
@@ -363,6 +401,17 @@ export default function NotificationsPage() {
     setSettings({ ...settings, milestoneDays: next });
   }
 
+  function resetTemplates() {
+    if (!settings) return;
+    setSettings({
+      ...settings,
+      titleTemplate: DEFAULT_NOTIFICATION_TITLE_TEMPLATE,
+      bodyTemplate: DEFAULT_NOTIFICATION_BODY_TEMPLATE,
+      itemTemplate: DEFAULT_NOTIFICATION_ITEM_TEMPLATE,
+    });
+    setNotice("已恢复默认模板，点击“保存计划与模板”后生效。");
+  }
+
   async function saveSettings() {
     if (!settings) return;
     setBusy("settings");
@@ -372,12 +421,23 @@ export default function NotificationsPage() {
       const response = await fetch("/api/notifications", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "settings", settings: { enabled: settings.enabled, dailyTime: settings.dailyTime, milestoneDays: settings.milestoneDays } }),
+        body: JSON.stringify({
+          action: "settings",
+          settings: {
+            enabled: settings.enabled,
+            dailyTime: settings.dailyTime,
+            milestoneDays: settings.milestoneDays,
+            catchUpEnabled: settings.catchUpEnabled,
+            titleTemplate: settings.titleTemplate,
+            bodyTemplate: settings.bodyTemplate,
+            itemTemplate: settings.itemTemplate,
+          },
+        }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "通知设置保存失败");
       applyData(data);
-      setNotice("通知计划已保存，后台定时器已经按新时间重新预约。");
+      setNotice("通知计划与模板已保存，后台定时器已经按新设置重新预约。");
     } catch (err) {
       setError(err instanceof Error ? err.message : "通知设置保存失败");
     } finally {
@@ -388,14 +448,8 @@ export default function NotificationsPage() {
   async function saveChannel() {
     if (!form) return;
     const filters = formFilters(form);
-    if (!filters.kinds.length) {
-      setError("至少选择一种提醒来源");
-      return;
-    }
-    if (!filters.statuses.length) {
-      setError("至少选择一种提醒状态");
-      return;
-    }
+    if (!filters.kinds.length) return setError("至少选择一种提醒来源");
+    if (!filters.statuses.length) return setError("至少选择一种提醒状态");
 
     setBusy("channel");
     setError("");
@@ -431,7 +485,7 @@ export default function NotificationsPage() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "测试通知发送失败");
       applyData(data);
-      setNotice(`${channel.name} 测试通知发送成功。`);
+      setNotice(`${channel.name} 测试通知发送成功，测试消息使用当前已保存的通知模板。`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "测试通知发送失败");
       await loadData();
@@ -488,16 +542,17 @@ export default function NotificationsPage() {
       {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
       {notice ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{notice}</div> : null}
 
-      <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+      <div className="grid gap-4 lg:grid-cols-[1.25fr_0.75fr]">
         <Card className="p-5">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <div className="font-medium text-slate-900">每日自动通知</div>
-              <p className="mt-1 text-xs leading-5 text-slate-400">每天在设定时间执行一次；如果当时容器离线，当天恢复后会补发一次，然后直接预约下一天。</p>
+              <p className="mt-1 text-xs leading-5 text-slate-400">每天在设定时间执行一次。是否在错过计划时间后补发，现在可以单独控制。</p>
             </div>
             <div className={`rounded-lg px-2.5 py-1 text-xs font-medium ${settings?.enabled ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{settings?.enabled ? "自动通知已启用" : "自动通知已关闭"}</div>
           </div>
-          <div className="mt-5 grid gap-4 sm:grid-cols-[1fr_170px_auto] sm:items-end">
+
+          <div className="mt-5 grid gap-4 md:grid-cols-[1fr_170px_1fr] md:items-end">
             <label className="flex h-10 items-center gap-3 rounded-xl border border-slate-200 px-3 text-sm text-slate-600">
               <input type="checkbox" checked={settings?.enabled ?? false} onChange={(event) => settings && setSettings({ ...settings, enabled: event.target.checked })} className="h-4 w-4 rounded border-slate-300" />
               启用自动通知总开关
@@ -506,7 +561,10 @@ export default function NotificationsPage() {
               每日通知时间
               <Input type="time" step="60" value={settings?.dailyTime ?? "09:00"} onChange={(event) => settings && setSettings({ ...settings, dailyTime: event.target.value })} />
             </label>
-            <button type="button" onClick={() => void saveSettings()} disabled={!settings || Boolean(busy)} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border px-4 text-sm font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-50">{busy === "settings" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}保存计划</button>
+            <label className="flex h-10 items-center gap-3 rounded-xl border border-slate-200 px-3 text-sm text-slate-600">
+              <input type="checkbox" checked={settings?.catchUpEnabled ?? true} onChange={(event) => settings && setSettings({ ...settings, catchUpEnabled: event.target.checked })} className="h-4 w-4 rounded border-slate-300" />
+              错过计划时间后补发
+            </label>
           </div>
 
           <div className="mt-5 border-t pt-4">
@@ -526,7 +584,7 @@ export default function NotificationsPage() {
 
           <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 border-t pt-4 text-xs text-slate-400">
             <span>时区：{settings?.timeZone ?? "Asia/Shanghai"}</span>
-            <span>错过后补发：开启</span>
+            <span>错过后补发：{settings?.catchUpEnabled ? "开启" : "关闭"}</span>
             <span>最近自动调度日期：{settings?.lastScheduledDate ?? "尚未运行"}</span>
             <span>下次自动发送：{settings?.enabled ? formatDateTime(settings?.nextDispatchAt ?? null) : "已关闭"}</span>
           </div>
@@ -540,9 +598,60 @@ export default function NotificationsPage() {
             <div className="rounded-xl bg-slate-50 p-3"><div className="text-xl font-semibold text-slate-900">{recentFailures}</div><div className="mt-1 text-[11px] text-slate-400">近期失败</div></div>
           </div>
           <button type="button" onClick={() => void dispatchNow()} disabled={Boolean(busy) || enabledChannels === 0} className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-40">{busy === "dispatch" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}立即发送当前提醒</button>
-          <p className="mt-2 text-center text-[11px] leading-5 text-slate-400">手动发送会忽略里程碑，但仍遵守每个渠道自己的发送范围，并把多个提醒合成一条摘要。</p>
+          <p className="mt-2 text-center text-[11px] leading-5 text-slate-400">手动发送忽略里程碑，但仍遵守渠道发送范围并使用当前通知模板。</p>
         </Card>
       </div>
+
+      <Card className="p-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <div className="flex items-center gap-2 font-medium text-slate-900"><Braces className="h-4 w-4" />通知模板</div>
+            <p className="mt-1 text-xs leading-5 text-slate-400">Telegram、Bark、Gotify 和 Webhook 共用这套格式。修改后先保存，再点某个渠道的“测试”即可收到真实模板示例。</p>
+          </div>
+          <button type="button" onClick={resetTemplates} disabled={!settings || Boolean(busy)} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"><RotateCcw className="h-3.5 w-3.5" />恢复默认</button>
+        </div>
+
+        <div className="mt-5 grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
+          <div className="space-y-4">
+            <label className="grid gap-2 text-sm text-slate-600">
+              通知标题模板
+              <Input value={settings?.titleTemplate ?? DEFAULT_NOTIFICATION_TITLE_TEMPLATE} onChange={(event) => settings && setSettings({ ...settings, titleTemplate: event.target.value })} placeholder={DEFAULT_NOTIFICATION_TITLE_TEMPLATE} />
+            </label>
+            <label className="grid gap-2 text-sm text-slate-600">
+              摘要正文模板
+              <textarea value={settings?.bodyTemplate ?? DEFAULT_NOTIFICATION_BODY_TEMPLATE} onChange={(event) => settings && setSettings({ ...settings, bodyTemplate: event.target.value })} rows={4} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm leading-6 text-slate-700 outline-none transition focus:border-slate-400" />
+              <span className="text-xs text-slate-400">通常保留 <code>{"{{items}}"}</code>，系统会把所有符合条件的提醒填进这里。</span>
+            </label>
+            <label className="grid gap-2 text-sm text-slate-600">
+              单条提醒模板
+              <textarea value={settings?.itemTemplate ?? DEFAULT_NOTIFICATION_ITEM_TEMPLATE} onChange={(event) => settings && setSettings({ ...settings, itemTemplate: event.target.value })} rows={5} className="rounded-xl border border-slate-200 bg-white px-3 py-2 font-mono text-xs leading-6 text-slate-700 outline-none transition focus:border-slate-400" />
+            </label>
+
+            <div>
+              <div className="text-xs font-medium text-slate-500">可用变量</div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {NOTIFICATION_TEMPLATE_VARIABLES.map((item) => (
+                  <span key={item.key} title={item.label} className="rounded-md bg-slate-50 px-2 py-1 font-mono text-[11px] text-slate-500 ring-1 ring-inset ring-slate-100">{`{{${item.key}}}`}</span>
+                ))}
+              </div>
+              <p className="mt-2 text-xs leading-5 text-slate-400">标题 / 正文常用：heading、count、date、channelName；单条提醒还可使用号码、运营商、状态、到期日和 detail 等变量。</p>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <div className="text-xs font-medium text-slate-500">实时预览</div>
+            <div className="mt-3 rounded-xl border border-slate-200 bg-white p-4">
+              <div className="text-sm font-semibold text-slate-900">{preview.title || "（标题为空）"}</div>
+              <pre className="mt-3 whitespace-pre-wrap break-words font-sans text-xs leading-6 text-slate-600">{preview.body || "（正文为空）"}</pre>
+            </div>
+            <p className="mt-3 text-[11px] leading-5 text-slate-400">预览使用示例号码生成；实际通知会替换成真实号码和当前提醒。未知变量会原样保留，方便发现拼写错误。</p>
+          </div>
+        </div>
+
+        <div className="mt-5 flex justify-end border-t pt-4">
+          <button type="button" onClick={() => void saveSettings()} disabled={!settings || Boolean(busy)} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-50">{busy === "settings" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}保存计划与模板</button>
+        </div>
+      </Card>
 
       <Card className="overflow-hidden">
         <div className="border-b p-5">
@@ -607,7 +716,7 @@ export default function NotificationsPage() {
               <div><div className="text-xs font-medium text-slate-400">通知渠道</div><h3 className="mt-1 text-xl font-semibold text-slate-950">{form.id ? "编辑通知渠道" : "新增通知渠道"}</h3></div>
               <button type="button" onClick={() => !busy && setForm(null)} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"><X className="h-4 w-4" /></button>
             </div>
-            <div className="max-h-[72vh] space-y-5 overflow-y-auto px-6 py-5">
+            <div className="max-h-[70vh] space-y-5 overflow-y-auto px-6 py-5">
               <div className="grid gap-4 sm:grid-cols-2">
                 <label className="grid gap-2 text-sm text-slate-600">渠道名称<Input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="例如 Telegram" /></label>
                 <label className="grid gap-2 text-sm text-slate-600">
@@ -631,7 +740,7 @@ export default function NotificationsPage() {
         </ModalPortal>
       ) : null}
 
-      <div className="rounded-xl border border-slate-100 bg-white px-4 py-3 text-xs leading-5 text-slate-400"><Clock3 className="mr-1 inline h-3.5 w-3.5" />自动通知只在里程碑日的设定时间运行一次。完成充值、更新有效期或调整保号规则后，提醒从中心消失，也就不会继续发送。</div>
+      <div className="rounded-xl border border-slate-100 bg-white px-4 py-3 text-xs leading-5 text-slate-400"><Clock3 className="mr-1 inline h-3.5 w-3.5" />自动通知只在里程碑日的设定时间运行一次；关闭“错过后补发”后，若容器当时离线，当天将直接跳过并等待下一次计划。</div>
     </div>
   );
 }
