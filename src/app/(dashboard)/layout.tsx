@@ -49,13 +49,13 @@ export default async function DashboardLayout({ children }: { children: React.Re
   if (!user) {
     return <AuthGate mode="login" />;
   }
-  const reminderCount = getCurrentReminderItems().length;
+  const reminders = getCurrentReminderItems();
 
   return (
     <div className="flex min-h-screen bg-slate-50">
       <Sidebar />
       <div className="min-w-0 flex-1">
-        <Topbar username={user.username} reminderCount={reminderCount} />
+        <Topbar username={user.username} reminders={reminders} />
         <main className="p-5 sm:p-8">{children}</main>
       </div>
     </div>

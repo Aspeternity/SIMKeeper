@@ -2,8 +2,17 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
-import { Bell, LogOut, Menu, Smartphone, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import {
+  Bell,
+  CheckCircle2,
+  ChevronRight,
+  LogOut,
+  Menu,
+  ShieldCheck,
+  Smartphone,
+  X,
+} from "lucide-react";
 import {
   APP_VERSION,
   getPageTitle,
@@ -11,16 +20,45 @@ import {
   PRIMARY_NAV_ITEMS,
   SETTINGS_NAV_ITEM,
 } from "@/components/layout/navigation";
+import {
+  getReminderKindLabel,
+  getReminderRelativeLabel,
+  getReminderStatusLabel,
+  type ReminderItem,
+  type ReminderStatus,
+} from "@/lib/reminders";
 
-export function Topbar({ username, reminderCount }: { username: string; reminderCount: number }) {
+function reminderStatusClass(status: ReminderStatus) {
+  if (status === "overdue") return "bg-rose-50 text-rose-700 ring-rose-100";
+  if (status === "grace") return "bg-orange-50 text-orange-700 ring-orange-100";
+  if (status === "today") return "bg-amber-50 text-amber-700 ring-amber-100";
+  if (status === "upcoming") return "bg-sky-50 text-sky-700 ring-sky-100";
+  return "bg-slate-100 text-slate-600 ring-slate-200";
+}
+
+function reminderRelativeClass(status: ReminderStatus) {
+  if (status === "overdue") return "text-rose-700";
+  if (status === "grace") return "text-orange-700";
+  if (status === "today") return "text-amber-700";
+  if (status === "upcoming") return "text-sky-700";
+  return "text-slate-500";
+}
+
+export function Topbar({ username, reminders }: { username: string; reminders: ReminderItem[] }) {
   const pathname = usePathname();
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
+  const [reminderPanelOpen, setReminderPanelOpen] = useState(false);
+  const reminderPanelRef = useRef<HTMLDivElement>(null);
   const pageTitle = getPageTitle(pathname);
-  const reminderLabel = reminderCount > 0 ? `${reminderCount} 项待处理提醒` : "当前没有待处理提醒";
+  const reminderCount = reminders.length;
+  const reminderLabel = reminderCount > 0 ? `${reminderCount} 项待处理提醒` : "当前没有需要处理的提醒";
+  const urgentReminderCount = reminders.filter((item) => ["overdue", "grace", "today"].includes(item.status)).length;
+  const reminderPreview = reminders.slice(0, 5);
   const SettingsIcon = SETTINGS_NAV_ITEM.icon;
 
   useEffect(() => {
     setMobileNavigationOpen(false);
+    setReminderPanelOpen(false);
   }, [pathname]);
 
   useEffect(() => {
@@ -37,13 +75,34 @@ export function Topbar({ username, reminderCount }: { username: string; reminder
     };
   }, [mobileNavigationOpen]);
 
+  useEffect(() => {
+    if (!reminderPanelOpen) return;
+    const closePanel = (event: PointerEvent) => {
+      if (reminderPanelRef.current && !reminderPanelRef.current.contains(event.target as Node)) {
+        setReminderPanelOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setReminderPanelOpen(false);
+    };
+    document.addEventListener("pointerdown", closePanel);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closePanel);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [reminderPanelOpen]);
+
   return (
     <>
       <header data-page-title={pageTitle} className="sticky top-0 z-30 flex h-20 items-center justify-between border-b bg-white/95 px-4 backdrop-blur sm:px-8">
         <div className="flex min-w-0 items-center gap-3">
           <button
             type="button"
-            onClick={() => setMobileNavigationOpen(true)}
+            onClick={() => {
+              setReminderPanelOpen(false);
+              setMobileNavigationOpen(true);
+            }}
             className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-slate-600 transition hover:bg-slate-100 lg:hidden"
             aria-label="打开导航"
             aria-expanded={mobileNavigationOpen}
@@ -57,20 +116,107 @@ export function Topbar({ username, reminderCount }: { username: string; reminder
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Link
-            href="/reminders"
-            className="relative inline-flex h-10 w-10 items-center justify-center rounded-xl text-slate-700 transition hover:bg-slate-100"
-            aria-label={reminderLabel}
-            title={reminderLabel}
-            data-reminder-count={reminderCount}
-          >
-            <Bell className="h-4 w-4" />
-            {reminderCount > 0 ? (
-              <span className="absolute -right-0.5 -top-0.5 flex min-h-4 min-w-4 items-center justify-center rounded-full bg-rose-600 px-1 text-[10px] font-semibold leading-4 text-white ring-2 ring-white">
-                {reminderCount > 99 ? "99+" : reminderCount}
-              </span>
+          <div ref={reminderPanelRef} className="relative">
+            <button
+              type="button"
+              onClick={() => setReminderPanelOpen((open) => !open)}
+              className={`relative inline-flex h-10 w-10 items-center justify-center rounded-xl transition ${reminderPanelOpen ? "bg-slate-100 text-slate-950" : "text-slate-700 hover:bg-slate-100"}`}
+              aria-label={reminderLabel}
+              title={reminderLabel}
+              aria-haspopup="dialog"
+              aria-expanded={reminderPanelOpen}
+              aria-controls="topbar-reminder-panel"
+              data-reminder-count={reminderCount}
+            >
+              <Bell className="h-4 w-4" />
+              {reminderCount > 0 ? (
+                <span className="absolute -right-0.5 -top-0.5 flex min-h-4 min-w-4 items-center justify-center rounded-full bg-rose-600 px-1 text-[10px] font-semibold leading-4 text-white ring-2 ring-white">
+                  {reminderCount > 99 ? "99+" : reminderCount}
+                </span>
+              ) : null}
+            </button>
+
+            {reminderPanelOpen ? (
+              <div
+                id="topbar-reminder-panel"
+                role="dialog"
+                aria-label="提醒概览"
+                className="absolute right-0 top-12 z-50 w-[min(92vw,24rem)] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl shadow-slate-950/10"
+              >
+                <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-4 py-3.5">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-950">提醒</div>
+                    <div className="mt-0.5 text-xs text-slate-400">
+                      {reminderCount > 0
+                        ? urgentReminderCount > 0
+                          ? `${reminderCount} 项待处理 · ${urgentReminderCount} 项需要优先处理`
+                          : `${reminderCount} 项待处理提醒`
+                        : "当前状态正常"}
+                    </div>
+                  </div>
+                  {reminderCount > 0 ? (
+                    <span className="rounded-full bg-rose-50 px-2.5 py-1 text-[11px] font-semibold text-rose-700">{reminderCount > 99 ? "99+" : reminderCount}</span>
+                  ) : null}
+                </div>
+
+                {reminderCount > 0 ? (
+                  <div className="max-h-[26rem] divide-y divide-slate-100 overflow-y-auto">
+                    {reminderPreview.map((item) => {
+                      const Icon = item.kind === "sim_validity" ? Smartphone : ShieldCheck;
+                      return (
+                        <Link
+                          key={item.key}
+                          href={item.href}
+                          onClick={() => setReminderPanelOpen(false)}
+                          className="group flex gap-3 px-4 py-3.5 transition hover:bg-slate-50"
+                        >
+                          <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600 transition group-hover:bg-white">
+                            <Icon className="h-4 w-4" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="truncate text-sm font-medium text-slate-900">{item.simLabel}</div>
+                                <div className="mt-0.5 truncate text-xs text-slate-500">{item.title}</div>
+                              </div>
+                              <span className={`shrink-0 text-xs font-medium ${reminderRelativeClass(item.status)}`}>{getReminderRelativeLabel(item)}</span>
+                            </div>
+                            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                              <span className={`rounded-md px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset ${reminderStatusClass(item.status)}`}>
+                                {getReminderStatusLabel(item.status)}
+                              </span>
+                              <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">{getReminderKindLabel(item.kind)}</span>
+                              <span className="truncate text-[10px] text-slate-400">{item.dueDate || "未设置日期"}</span>
+                            </div>
+                          </div>
+                          <ChevronRight className="mt-2 h-4 w-4 shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-slate-500" />
+                        </Link>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="px-6 py-8 text-center">
+                    <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600">
+                      <CheckCircle2 className="h-5 w-5" />
+                    </div>
+                    <p className="mt-4 text-sm font-medium text-slate-900">当前没有需要处理的提醒</p>
+                    <p className="mx-auto mt-1 max-w-xs text-xs leading-5 text-slate-400">号码有效期或保号规则进入提醒窗口后，会自动显示在这里。</p>
+                  </div>
+                )}
+
+                <div className="border-t border-slate-100 bg-slate-50/70 p-2">
+                  <Link
+                    href="/reminders"
+                    onClick={() => setReminderPanelOpen(false)}
+                    className="flex h-9 items-center justify-center gap-1.5 rounded-xl text-xs font-medium text-slate-600 transition hover:bg-white hover:text-slate-950"
+                  >
+                    {reminderCount > reminderPreview.length ? `查看全部 ${reminderCount} 项提醒` : "打开提醒中心"}
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </Link>
+                </div>
+              </div>
             ) : null}
-          </Link>
+          </div>
           <div className="hidden text-right sm:block">
             <div className="text-sm font-medium">{username}</div>
             <div className="text-xs text-slate-400">Administrator</div>

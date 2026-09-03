@@ -2,7 +2,7 @@
 
 **SIMKeeper — Self-hosted SIM & eSIM lifecycle manager**
 
-当前版本：`v0.1.0-alpha.9`
+当前版本：`v0.1.0-alpha.10`
 
 当前已包含：
 
@@ -15,7 +15,7 @@
 - Telegram、Bark、Gotify 和 Webhook 通知渠道
 - 每日精确通知时间、提醒里程碑、渠道筛选和自定义通知模板
 - 完整 JSON 导出、本地备份、恢复前安全备份及保留策略
-- 桌面与手机端响应式导航、页面标题和实时提醒数量
+- 桌面与手机端响应式导航、页面标题、实时提醒数量和右上角提醒概览
 - SQLite 持久化、管理员登录、本地 Session Secret 和健康检查
 - Docker 单容器运行及 GitHub Actions 验证后自动发布 GHCR 镜像
 
@@ -99,7 +99,7 @@ curl http://HOST:3000/api/health
 {
   "status": "ok",
   "database": "connected",
-  "version": "0.1.0-alpha.9",
+  "version": "0.1.0-alpha.10",
   "revision": "<git-commit-sha>"
 }
 ```
