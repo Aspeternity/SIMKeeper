@@ -182,6 +182,8 @@ export const simKeepAliveRules = sqliteTable(
     intervalValue: integer("interval_value").notNull(),
     intervalUnit: text("interval_unit").notNull(),
     qualifyingActions: text("qualifying_actions").notNull(),
+    minimumRechargeAmount: real("minimum_recharge_amount"),
+    rechargeCurrencyCode: text("recharge_currency_code"),
     dueDateSource: text("due_date_source").notNull().default("independent"),
     nextDueDate: text("next_due_date"),
     warningDays: integer("warning_days").notNull().default(30),
