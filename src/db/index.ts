@@ -199,6 +199,8 @@ sqlite.exec(`
     interval_value INTEGER NOT NULL,
     interval_unit TEXT NOT NULL,
     qualifying_actions TEXT NOT NULL,
+    minimum_recharge_amount REAL,
+    recharge_currency_code TEXT,
     due_date_source TEXT NOT NULL DEFAULT 'independent',
     next_due_date TEXT,
     warning_days INTEGER NOT NULL DEFAULT 30,
@@ -298,6 +300,12 @@ if (!keepAliveColumnNames.has("due_date_source")) {
     SET due_date_source = 'sim_validity', next_due_date = NULL
     WHERE lower(trim(name)) IN ('号码有效期', 'sim有效期', 'sim 卡有效期', '储值卡有效期', '有效期')
   `);
+}
+if (!keepAliveColumnNames.has("minimum_recharge_amount")) {
+  sqlite.exec("ALTER TABLE sim_keep_alive_rules ADD COLUMN minimum_recharge_amount REAL");
+}
+if (!keepAliveColumnNames.has("recharge_currency_code")) {
+  sqlite.exec("ALTER TABLE sim_keep_alive_rules ADD COLUMN recharge_currency_code TEXT");
 }
 
 export const db = drizzle(sqlite, { schema });
