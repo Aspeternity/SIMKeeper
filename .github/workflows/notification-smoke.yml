@@ -36,7 +36,7 @@ jobs:
           docker pull "$image"
           echo "IMAGE=$image" >> "$GITHUB_ENV"
 
-      - name: Verify notification delivery and deduplication
+      - name: Verify precise scheduling, digest delivery and secret masking
         shell: bash
         run: |
           set -euo pipefail
@@ -46,6 +46,7 @@ jobs:
           base="http://127.0.0.1:18082"
           cookies="$tmp/cookies.txt"
           today="$(TZ=Asia/Shanghai date +%F)"
+          secret="notification-smoke-secret"
 
           cleanup() {
             docker rm -f "$container" >/dev/null 2>&1 || true
@@ -100,40 +101,64 @@ jobs:
           carrier_id="$(jq -r '.carrier.id // empty' "$tmp/carrier.json")"
           [ -n "$carrier_id" ] || fail "Carrier id missing"
 
-          jq -n --argjson carrierId "$carrier_id" --arg today "$today" '{label:"Notification SIM",phoneNumber:"51234567",carrierId:$carrierId,simType:"esim",iccid:"",balance:"",currencyCode:"HKD",status:"active",activationDate:"",validUntil:$today,notes:""}' > "$tmp/sim-payload.json"
-          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/sim.json" -w '%{http_code}' \
-            -X POST -H 'Content-Type: application/json' --data-binary @"$tmp/sim-payload.json" "$base/api/sims")" || fail "SIM creation failed"
-          [ "$status" = "201" ] || fail "SIM creation returned HTTP $status"
+          for suffix in A B; do
+            jq -n --argjson carrierId "$carrier_id" --arg today "$today" --arg suffix "$suffix" '{label:("Notification SIM " + $suffix),phoneNumber:(if $suffix == "A" then "51234567" else "51234568" end),carrierId:$carrierId,simType:"esim",iccid:"",balance:"",currencyCode:"HKD",status:"active",activationDate:"",validUntil:$today,notes:""}' > "$tmp/sim-$suffix.json"
+            status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/sim-response-$suffix.json" -w '%{http_code}' \
+              -X POST -H 'Content-Type: application/json' --data-binary @"$tmp/sim-$suffix.json" "$base/api/sims")" || fail "SIM $suffix creation failed"
+            [ "$status" = "201" ] || fail "SIM $suffix creation returned HTTP $status"
+          done
 
-          jq -n '{action:"create",channel:{name:"Loopback Webhook",type:"webhook",enabled:true,config:{url:"http://127.0.0.1:3000/api/health",method:"GET",bearerToken:""}}}' > "$tmp/channel-payload.json"
+          jq -n --arg secret "$secret" '{action:"create",channel:{name:"Loopback Webhook",type:"webhook",enabled:true,config:{url:"http://127.0.0.1:3000/api/health",method:"GET",bearerToken:$secret,filters:{kinds:["sim_validity"],statuses:["today"]}}}}' > "$tmp/channel-payload.json"
           status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/channel.json" -w '%{http_code}' \
             -X POST -H 'Content-Type: application/json' --data-binary @"$tmp/channel-payload.json" "$base/api/notifications")" || fail "Notification channel creation failed"
           [ "$status" = "201" ] || fail "Notification channel creation returned HTTP $status"
           channel_id="$(jq -r '.channel.id // empty' "$tmp/channel.json")"
           [ -n "$channel_id" ] || fail "Notification channel id missing"
+          [ "$(jq -r '.channel.secrets.bearerToken' "$tmp/channel.json")" = "true" ] || fail "Secret metadata did not report the stored Bearer Token"
+          [ "$(jq -r '.channel.config.bearerToken // empty' "$tmp/channel.json")" = "" ] || fail "Bearer Token was returned in channel config"
+          if grep -q "$secret" "$tmp/channel.json"; then fail "Bearer Token leaked through notification API response"; fi
 
           status="$(curl -sS --max-time 15 -b "$cookies" -o "$tmp/test.json" -w '%{http_code}' \
             -X POST -H 'Content-Type: application/json' --data "{\"action\":\"test\",\"id\":$channel_id}" "$base/api/notifications")" || fail "Test notification request failed"
           [ "$status" = "200" ] || fail "Test notification returned HTTP $status"
           [ "$(jq -r '.deliveries[0].status' "$tmp/test.json")" = "success" ] || fail "Test notification did not record success"
+          if grep -q "$secret" "$tmp/test.json"; then fail "Bearer Token leaked after test notification"; fi
+
+          jq -n --argjson id "$channel_id" '{action:"channel",channel:{id:$id,name:"Loopback Webhook",type:"webhook",enabled:true,config:{url:"http://127.0.0.1:3000/api/health",method:"GET",bearerToken:"",filters:{kinds:["sim_validity"],statuses:["today"]}}}}' > "$tmp/channel-update.json"
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/channel-update-response.json" -w '%{http_code}' \
+            -X PATCH -H 'Content-Type: application/json' --data-binary @"$tmp/channel-update.json" "$base/api/notifications")" || fail "Notification channel update failed"
+          [ "$status" = "200" ] || fail "Notification channel update returned HTTP $status"
+          [ "$(jq -r '.channel.secrets.bearerToken' "$tmp/channel-update-response.json")" = "true" ] || fail "Blank secret edit did not preserve stored Bearer Token"
+
+          status="$(curl -sS --max-time 15 -b "$cookies" -o "$tmp/test-after-edit.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' --data "{\"action\":\"test\",\"id\":$channel_id}" "$base/api/notifications")" || fail "Test after secret-preserving edit failed"
+          [ "$status" = "200" ] || fail "Test after secret-preserving edit returned HTTP $status"
 
           status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/settings.json" -w '%{http_code}' \
             -X PATCH -H 'Content-Type: application/json' \
-            --data '{"action":"settings","settings":{"enabled":true,"dailyHour":0}}' "$base/api/notifications")" || fail "Notification settings update failed"
+            --data '{"action":"settings","settings":{"enabled":true,"dailyTime":"00:00","milestoneDays":[0]}}' "$base/api/notifications")" || fail "Notification settings update failed"
           [ "$status" = "200" ] || fail "Notification settings update returned HTTP $status"
           [ "$(jq -r '.settings.enabled' "$tmp/settings.json")" = "true" ] || fail "Notification master switch was not enabled"
+          [ "$(jq -r '.settings.dailyTime' "$tmp/settings.json")" = "00:00" ] || fail "Precise daily notification time was not saved"
+          [ "$(jq -r '.settings.milestoneDays | join(",")' "$tmp/settings.json")" = "0" ] || fail "Notification milestone settings were not saved"
 
           status="$(curl -sS --max-time 15 -b "$cookies" -o "$tmp/dispatch1.json" -w '%{http_code}' \
-            -X POST -H 'Content-Type: application/json' --data '{"action":"dispatchDue"}' "$base/api/notifications")" || fail "First due dispatch failed"
-          [ "$status" = "200" ] || fail "First due dispatch returned HTTP $status"
-          [ "$(jq -r '.result.failed' "$tmp/dispatch1.json")" = "0" ] || fail "First due dispatch recorded a failure"
-          first_handled="$(jq -r '.result.sent + .result.skipped' "$tmp/dispatch1.json")"
-          [ "$first_handled" -ge 1 ] || fail "Due reminder was neither sent nor deduplicated"
+            -X POST -H 'Content-Type: application/json' --data '{"action":"dispatchDue"}' "$base/api/notifications")" || fail "First scheduled dispatch failed"
+          [ "$status" = "200" ] || fail "First scheduled dispatch returned HTTP $status"
+          [ "$(jq -r '.result.failed' "$tmp/dispatch1.json")" = "0" ] || fail "First scheduled dispatch recorded a failure"
+          [ "$(jq -r '.result.sent' "$tmp/dispatch1.json")" = "1" ] || fail "Two reminders were not merged into one channel digest"
+          [ "$(jq -r '.result.deliveredReminders' "$tmp/dispatch1.json")" = "2" ] || fail "Digest did not contain both due reminders"
+          [ "$(jq -r '.settings.lastScheduledDate' "$tmp/dispatch1.json")" = "$today" ] || fail "Scheduled date was not recorded after automatic dispatch"
 
           status="$(curl -sS --max-time 15 -b "$cookies" -o "$tmp/dispatch2.json" -w '%{http_code}' \
-            -X POST -H 'Content-Type: application/json' --data '{"action":"dispatchDue"}' "$base/api/notifications")" || fail "Second due dispatch failed"
-          [ "$status" = "200" ] || fail "Second due dispatch returned HTTP $status"
-          [ "$(jq -r '.result.skipped' "$tmp/dispatch2.json")" -ge 1 ] || fail "Same-day reminder deduplication did not skip the second attempt"
+            -X POST -H 'Content-Type: application/json' --data '{"action":"dispatchDue"}' "$base/api/notifications")" || fail "Second scheduled dispatch failed"
+          [ "$status" = "200" ] || fail "Second scheduled dispatch returned HTTP $status"
+          [ "$(jq -r '.result.reason' "$tmp/dispatch2.json")" = "already_scheduled" ] || fail "Second same-day automatic run was not blocked by daily scheduling state"
+          [ "$(jq -r '.result.sent' "$tmp/dispatch2.json")" = "0" ] || fail "Second same-day automatic run sent another digest"
+
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/notifications-get.json" -w '%{http_code}' "$base/api/notifications")" || fail "Notification API reload failed"
+          [ "$status" = "200" ] || fail "Notification API reload returned HTTP $status"
+          if grep -q "$secret" "$tmp/notifications-get.json"; then fail "Bearer Token leaked through notification API reload"; fi
 
           status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/notifications.html" -w '%{http_code}' "$base/notifications")" || fail "Notification page request failed"
           [ "$status" = "200" ] || fail "Notification page returned HTTP $status"
@@ -142,6 +167,7 @@ jobs:
           status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/backup.json" -w '%{http_code}' "$base/api/backups?export=1")" || fail "Portable backup export failed"
           [ "$status" = "200" ] || fail "Portable backup export returned HTTP $status"
           [ "$(jq -r '.tables.notification_channels | length' "$tmp/backup.json")" = "1" ] || fail "Notification channel was not included in portable backup"
-          [ "$(jq -r '.tables.notification_deliveries | length' "$tmp/backup.json")" -ge 2 ] || fail "Notification delivery history was not included in portable backup"
+          [ "$(jq -r '.tables.notification_deliveries | length' "$tmp/backup.json")" -ge 4 ] || fail "Notification delivery history was not included in portable backup"
+          grep -q "$secret" "$tmp/backup.json" || fail "Complete backup did not retain the server-side notification credential"
 
           echo "Notification delivery smoke test passed."
