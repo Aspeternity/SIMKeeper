@@ -1,8 +1,7 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowRight, CalendarClock, Loader2, Pencil, Plus, Search, ShieldCheck, Trash2 } from "lucide-react";
+import { CalendarClock, Loader2, Pencil, Plus, Search, ShieldCheck, Trash2 } from "lucide-react";
 import { KeepAliveRuleModal } from "@/components/keep-alive/keep-alive-rule-modal";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -138,15 +137,10 @@ export default function KeepAlivePage() {
 
   return (
     <div className="mx-auto max-w-7xl space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <div className="flex items-center gap-2 text-sm font-medium text-slate-500"><ShieldCheck className="h-4 w-4" />生命周期规则</div>
-          <h2 className="mt-2 text-2xl font-semibold tracking-tight">保号规则</h2>
-          <p className="mt-1 text-sm text-slate-500">这里只定义每张卡怎样保号、多久处理一次以及提醒窗口；真实充值、短信、续期等操作统一在处理中心完成。</p>
-        </div>
-        <Link href="/reminders" className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800">
-          前往处理中心 <ArrowRight className="h-4 w-4" />
-        </Link>
+      <div>
+        <div className="flex items-center gap-2 text-sm font-medium text-slate-500"><ShieldCheck className="h-4 w-4" />生命周期规则</div>
+        <h2 className="mt-2 text-2xl font-semibold tracking-tight">保号规则</h2>
+        <p className="mt-1 text-sm text-slate-500">这里只定义每张卡的保号方式、处理周期、日期来源与提醒窗口，不再在这里放“前往处理中心”等执行入口。</p>
       </div>
 
       {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
@@ -200,10 +194,7 @@ export default function KeepAlivePage() {
                         {earliest ? <span>最近需处理：{earliest.nextDueDate} · {earliest.name}</span> : null}
                       </div>
                     </div>
-                    <div className="flex shrink-0 flex-wrap gap-2">
-                      <button type="button" onClick={() => setRuleTarget({ sim, rule: null })} className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50"><Plus className="h-3.5 w-3.5" />新增规则</button>
-                      <Link href="/reminders" className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-slate-950 px-3 text-xs font-medium text-white transition hover:bg-slate-800"><ArrowRight className="h-3.5 w-3.5" />前往处理中心</Link>
-                    </div>
+                    <button type="button" onClick={() => setRuleTarget({ sim, rule: null })} className="inline-flex h-9 shrink-0 items-center gap-1.5 self-start rounded-lg border px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50"><Plus className="h-3.5 w-3.5" />新增规则</button>
                   </div>
 
                   {sim.rules.length ? (

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Bell,
   CheckCircle2,
@@ -61,39 +61,52 @@ export function Topbar({ username, reminders }: { username: string; reminders: R
   const reminderPreview = reminderItems.slice(0, 5);
   const SettingsIcon = SETTINGS_NAV_ITEM.icon;
 
-  useEffect(() => {
-    setReminderItems(reminders);
-  }, [reminders]);
-
-  useEffect(() => {
-    let active = true;
-
-    async function refreshReminderItems() {
-      try {
-        const response = await fetch("/api/reminders", { cache: "no-store" });
-        if (!response.ok) return;
-        const data = await response.json();
-        if (active && Array.isArray(data.reminders)) setReminderItems(data.reminders);
-      } catch {
-        // Keep the last known reminder state when a transient refresh fails.
-      }
+  const refreshReminderItems = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/reminders?_=${Date.now()}`, {
+        cache: "no-store",
+        headers: { "Cache-Control": "no-cache" },
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      if (Array.isArray(data.reminders)) setReminderItems(data.reminders);
+    } catch {
+      // Keep the last known reminder state when a transient refresh fails.
     }
+  }, []);
+
+  useEffect(() => {
+    let retryTimer: number | null = null;
 
     const handleReminderStateChanged = () => {
       void refreshReminderItems();
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
+      retryTimer = window.setTimeout(() => void refreshReminderItems(), 350);
     };
+    const handleWindowFocus = () => void refreshReminderItems();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") void refreshReminderItems();
+    };
+    const interval = window.setInterval(() => void refreshReminderItems(), 15000);
 
     window.addEventListener(REMINDER_STATE_CHANGED_EVENT, handleReminderStateChanged);
+    window.addEventListener("focus", handleWindowFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
     return () => {
-      active = false;
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
+      window.clearInterval(interval);
       window.removeEventListener(REMINDER_STATE_CHANGED_EVENT, handleReminderStateChanged);
+      window.removeEventListener("focus", handleWindowFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, []);
+  }, [refreshReminderItems]);
 
   useEffect(() => {
     setMobileNavigationOpen(false);
     setReminderPanelOpen(false);
-  }, [pathname]);
+    void refreshReminderItems();
+  }, [pathname, refreshReminderItems]);
 
   useEffect(() => {
     if (!mobileNavigationOpen) return;
@@ -153,7 +166,11 @@ export function Topbar({ username, reminders }: { username: string; reminders: R
           <div ref={reminderPanelRef} className="relative">
             <button
               type="button"
-              onClick={() => setReminderPanelOpen((open) => !open)}
+              onClick={() => {
+                const nextOpen = !reminderPanelOpen;
+                setReminderPanelOpen(nextOpen);
+                if (nextOpen) void refreshReminderItems();
+              }}
               className={`relative inline-flex h-10 w-10 items-center justify-center rounded-xl transition ${reminderPanelOpen ? "bg-slate-100 text-slate-950" : "text-slate-700 hover:bg-slate-100"}`}
               aria-label={reminderLabel}
               title={reminderLabel}

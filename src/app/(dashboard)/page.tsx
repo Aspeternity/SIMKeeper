@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { eq } from "drizzle-orm";
-import { AlertTriangle, BellRing, CheckCircle2, Clock3, ShieldCheck, Smartphone, Waypoints } from "lucide-react";
+import { AlertTriangle, BellRing, CheckCircle2, ChevronRight, Clock3, ShieldCheck, Smartphone, Waypoints } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { db } from "@/db";
 import { carriers, simBoundServices, simCards, simKeepAliveRules } from "@/db/schema";
@@ -154,12 +154,18 @@ export default function DashboardPage() {
             <Link href="/reminders" className="shrink-0 text-xs font-medium text-slate-500 underline underline-offset-4">查看全部</Link>
           </div>
           {actionable.length ? (
-            <div className="divide-y">
+            <div className="divide-y divide-slate-100">
               {actionable.map((item) => (
-                <div key={item.key} className="flex flex-col gap-3 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <Link
+                  key={item.key}
+                  href={item.href}
+                  data-dashboard-task-row={item.key}
+                  aria-label={`处理 ${item.label} · ${item.title}`}
+                  className="group flex flex-col gap-3 px-6 py-4 transition hover:bg-slate-50 focus:outline-none focus-visible:bg-slate-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-200 sm:flex-row sm:items-center sm:justify-between"
+                >
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium text-slate-800">{item.label}</span>
+                      <span className="font-medium text-slate-800 transition group-hover:text-slate-950">{item.label}</span>
                       <span className={`rounded-md px-2 py-0.5 text-[11px] font-medium ${item.severity === "overdue" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}>
                         {item.severity === "overdue" ? "已需处理" : "即将处理"}
                       </span>
@@ -167,11 +173,14 @@ export default function DashboardPage() {
                     </div>
                     <div className="mt-1 text-sm text-slate-500">{item.phoneNumber || "未填写手机号"} · {item.carrierName} · {item.country}</div>
                   </div>
-                  <div className="shrink-0 text-left sm:text-right">
-                    <div className={`text-sm font-medium ${item.severity === "overdue" ? "text-rose-700" : "text-amber-700"}`}>{item.date}</div>
-                    <Link href={item.href} className="mt-1 inline-block text-xs text-slate-400 underline underline-offset-4">前往处理</Link>
+                  <div className="flex shrink-0 items-center gap-3 self-stretch sm:self-auto">
+                    <div className="min-w-0 flex-1 text-left sm:flex-none sm:text-right">
+                      <div className={`text-sm font-medium ${item.severity === "overdue" ? "text-rose-700" : "text-amber-700"}`}>{item.date}</div>
+                      <div className="mt-0.5 text-xs text-slate-400">点击整行进入处理</div>
+                    </div>
+                    <ChevronRight className="h-4 w-4 shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-slate-500" />
                   </div>
-                </div>
+                </Link>
               ))}
             </div>
           ) : (
