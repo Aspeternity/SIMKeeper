@@ -1,4 +1,4 @@
-import { daysBetweenDates, getKeepAliveRuleStatus } from "@/lib/keep-alive";
+import { daysBetweenDates, getKeepAliveRechargeRequirementLabel, getKeepAliveRuleStatus } from "@/lib/keep-alive";
 
 export type ReminderKind = "sim_validity" | "keep_alive";
 export type ReminderStatus = "overdue" | "grace" | "today" | "upcoming" | "unscheduled";
@@ -17,6 +17,7 @@ export type ReminderItem = {
   days: number | null;
   href: string;
   detail: string;
+  requirement: string | null;
 };
 
 type ReminderSim = {
@@ -38,6 +39,8 @@ type ReminderRule = {
   warningDays: number;
   gracePeriodDays: number;
   enabled: boolean;
+  minimumRechargeAmount?: number | null;
+  rechargeCurrencyCode?: string | null;
 };
 
 const statusRank: Record<ReminderStatus, number> = {
@@ -54,6 +57,10 @@ function reminderStatusFromRuleState(state: { status: string; days: number | nul
   if (state.status === "grace") return "grace";
   if (state.status === "unscheduled") return "unscheduled";
   return state.days === 0 ? "today" : "upcoming";
+}
+
+function ruleRequirement(rule: ReminderRule) {
+  return getKeepAliveRechargeRequirementLabel(rule.minimumRechargeAmount, rule.rechargeCurrencyCode);
 }
 
 export function buildReminderItems({
@@ -92,6 +99,7 @@ export function buildReminderItems({
       });
       const status = reminderStatusFromRuleState(state);
       if (status) {
+        const requirement = ruleRequirement(linkedValidityRule);
         reminders.push({
           key: `validity-${sim.id}`,
           simId: sim.id,
@@ -106,8 +114,9 @@ export function buildReminderItems({
           days: state.days,
           href: "/sims",
           detail: sim.validUntil
-            ? `号码有效期将在 ${sim.validUntil} 到期 · 跟随保号规则“${linkedValidityRule.name}” · 提前 ${linkedValidityRule.warningDays} 天提醒`
-            : `跟随号码有效期的保号规则“${linkedValidityRule.name}”已启用，但号码尚未设置有效期`,
+            ? `号码有效期将在 ${sim.validUntil} 到期 · 跟随保号规则“${linkedValidityRule.name}” · 提前 ${linkedValidityRule.warningDays} 天提醒${requirement ? ` · 操作要求：${requirement}` : ""}`
+            : `跟随号码有效期的保号规则“${linkedValidityRule.name}”已启用，但号码尚未设置有效期${requirement ? ` · 操作要求：${requirement}` : ""}`,
+          requirement,
         });
       }
     } else if (sim.validUntil) {
@@ -127,6 +136,7 @@ export function buildReminderItems({
           days,
           href: "/sims",
           detail: `号码有效期将在 ${sim.validUntil} 到期`,
+          requirement: null,
         });
       }
     }
@@ -142,6 +152,7 @@ export function buildReminderItems({
       });
       const status = reminderStatusFromRuleState(state);
       if (!status) continue;
+      const requirement = ruleRequirement(rule);
 
       reminders.push({
         key: `keep-alive-${rule.id}`,
@@ -157,8 +168,9 @@ export function buildReminderItems({
         days: state.days,
         href: "/history",
         detail: rule.nextDueDate
-          ? `下一次保号操作日期 ${rule.nextDueDate} · 提前 ${rule.warningDays} 天提醒`
-          : "该保号规则尚未设置下一次操作日期",
+          ? `下一次保号操作日期 ${rule.nextDueDate} · 提前 ${rule.warningDays} 天提醒${requirement ? ` · 操作要求：${requirement}` : ""}`
+          : `该保号规则尚未设置下一次操作日期${requirement ? ` · 操作要求：${requirement}` : ""}`,
+        requirement,
       });
     }
   }
