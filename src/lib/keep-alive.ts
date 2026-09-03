@@ -25,6 +25,7 @@ export type KeepAliveActivityType = (typeof KEEP_ALIVE_ACTIVITY_TYPES)[number]["
 export type KeepAliveDueDateSource = (typeof KEEP_ALIVE_DUE_DATE_SOURCES)[number]["value"];
 
 export type KeepAliveRuleStatus = "disabled" | "unscheduled" | "ok" | "due_soon" | "grace" | "overdue";
+export type KeepAliveActivityQualificationReason = "action_not_allowed" | "missing_amount" | "currency_mismatch" | "below_minimum" | null;
 
 export function getKeepAliveActivityLabel(value: string) {
   return KEEP_ALIVE_ACTIVITY_TYPES.find((item) => item.value === value)?.label ?? value;
@@ -37,6 +38,49 @@ export function getKeepAliveIntervalLabel(value: number, unit: string) {
 
 export function getKeepAliveDueDateSourceLabel(value: string) {
   return KEEP_ALIVE_DUE_DATE_SOURCES.find((item) => item.value === value)?.label ?? value;
+}
+
+export function getKeepAliveRechargeRequirementLabel(amount: number | null | undefined, currencyCode: string | null | undefined) {
+  if (amount === null || amount === undefined) return null;
+  const currency = currencyCode?.trim().toUpperCase() || "";
+  return `充值至少 ${currency ? `${currency} ` : ""}${Number(amount).toLocaleString("zh-CN", { maximumFractionDigits: 6 })}`;
+}
+
+export function evaluateKeepAliveActivityRequirement({
+  qualifyingActions,
+  minimumRechargeAmount,
+  rechargeCurrencyCode,
+  activityType,
+  amount,
+  currencyCode,
+}: {
+  qualifyingActions: readonly string[];
+  minimumRechargeAmount?: number | null;
+  rechargeCurrencyCode?: string | null;
+  activityType: string;
+  amount?: number | null;
+  currencyCode?: string | null;
+}): { qualifies: boolean; reason: KeepAliveActivityQualificationReason } {
+  if (!qualifyingActions.includes(activityType)) return { qualifies: false, reason: "action_not_allowed" };
+  if (activityType !== "recharge" || minimumRechargeAmount === null || minimumRechargeAmount === undefined) {
+    return { qualifies: true, reason: null };
+  }
+
+  if (amount === null || amount === undefined || !Number.isFinite(amount)) {
+    return { qualifies: false, reason: "missing_amount" };
+  }
+
+  const expectedCurrency = rechargeCurrencyCode?.trim().toUpperCase() || null;
+  const actualCurrency = currencyCode?.trim().toUpperCase() || null;
+  if (expectedCurrency && expectedCurrency !== actualCurrency) {
+    return { qualifies: false, reason: "currency_mismatch" };
+  }
+
+  if (amount + Number.EPSILON < minimumRechargeAmount) {
+    return { qualifies: false, reason: "below_minimum" };
+  }
+
+  return { qualifies: true, reason: null };
 }
 
 export function resolveKeepAliveRuleDueDate({
