@@ -235,6 +235,10 @@ export async function PATCH(request: NextRequest) {
           dailyTime: z.string().trim().regex(/^\d{2}:\d{2}$/).optional(),
           dailyHour: z.coerce.number().int().min(0).max(23).optional(),
           milestoneDays: z.array(z.coerce.number().int().min(0).max(365)).min(1).optional(),
+          catchUpEnabled: z.boolean().optional(),
+          titleTemplate: z.string().max(300).optional(),
+          bodyTemplate: z.string().max(4000).optional(),
+          itemTemplate: z.string().max(2000).optional(),
         })
         .parse(body?.settings);
       const current = getNotificationSettings();
@@ -244,6 +248,10 @@ export async function PATCH(request: NextRequest) {
         enabled: parsed.enabled,
         dailyTime,
         milestoneDays: parsed.milestoneDays ?? current.milestoneDays,
+        catchUpEnabled: parsed.catchUpEnabled ?? current.catchUpEnabled,
+        titleTemplate: parsed.titleTemplate ?? current.titleTemplate,
+        bodyTemplate: parsed.bodyTemplate ?? current.bodyTemplate,
+        itemTemplate: parsed.itemTemplate ?? current.itemTemplate,
       });
       return NextResponse.json(responseData());
     }
