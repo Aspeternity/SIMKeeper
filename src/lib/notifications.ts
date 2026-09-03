@@ -681,11 +681,23 @@ function automaticReminderIsDue(channel: NotificationChannel, reminder: Reminder
   return false;
 }
 
-function reminderTemplateValues(item: ReminderItem, index: number) {
+function digestSharedVariables(channel: NotificationChannel, heading: string, count: number, date: string) {
   return {
+    app: "SIMKeeper",
+    heading,
+    count,
+    date,
+    channelName: channel.name,
+  };
+}
+
+function renderReminderItem(settings: NotificationSettings, channel: NotificationChannel, item: ReminderItem, index: number, heading: string, date: string, count: number) {
+  const shared = digestSharedVariables(channel, heading, count, date);
+  return renderNotificationTemplate(settings.itemTemplate, {
+    ...shared,
     index: index + 1,
     simLabel: item.simLabel,
-    phoneNumber: item.phoneNumber,
+    phoneNumber: item.phoneNumber || "",
     carrierName: item.carrierName,
     country: item.country,
     title: item.title,
@@ -695,62 +707,45 @@ function reminderTemplateValues(item: ReminderItem, index: number) {
     dueDate: item.dueDate || "",
     dueSuffix: item.dueDate ? ` · ${item.dueDate}` : "",
     detail: item.detail,
-  };
+  });
 }
 
-function buildNotificationMessage(
-  settings: NotificationSettings,
-  channel: NotificationChannel,
-  items: ReminderItem[],
-  heading: string,
-) {
-  const shared = {
-    app: "SIMKeeper",
-    heading,
-    count: items.length,
-    date: datePartsInTimeZone().date,
-    channelName: channel.name,
-  };
-  const renderedItems = items.map((item, index) => renderNotificationTemplate(settings.itemTemplate, {
-    ...shared,
-    ...reminderTemplateValues(item, index),
-  }));
-  return {
-    title: renderNotificationTemplate(settings.titleTemplate, shared),
-    message: renderNotificationTemplate(settings.bodyTemplate, { ...shared, items: renderedItems.join("\n\n") }),
-  };
+function renderReminderDigest(settings: NotificationSettings, channel: NotificationChannel, items: ReminderItem[], heading: string, date: string) {
+  const shared = digestSharedVariables(channel, heading, items.length, date);
+  const renderedItems = items.map((item, index) => renderReminderItem(settings, channel, item, index, heading, date, items.length)).join("\n\n");
+  const title = renderNotificationTemplate(settings.titleTemplate, shared);
+  const message = renderNotificationTemplate(settings.bodyTemplate, { ...shared, items: renderedItems });
+  return { title, message };
 }
 
-function buildTestReminder(): ReminderItem {
-  const today = datePartsInTimeZone().date;
+function sampleReminder(date: string): ReminderItem {
+  const dueDate = addDaysToDate(date, 7);
   return {
-    key: "test:notification-template",
-    kind: "sim_validity",
+    key: "test-preview",
     simId: 0,
-    simLabel: "测试号码",
-    phoneNumber: "+86 138 0000 0000",
+    simLabel: "示例号码",
+    phoneNumber: "+852 5123 4567",
     carrierName: "示例运营商",
-    country: "中国",
+    country: "香港",
+    kind: "sim_validity",
     title: "号码有效期",
-    detail: "这是一条模板测试提醒，不代表真实号码存在待处理事项。",
-    dueDate: today,
-    days: 0,
-    warningDays: 0,
-    gracePeriodDays: 0,
-    status: "today",
-    actionHref: "/notifications",
+    dueDate,
+    status: "upcoming",
+    days: 7,
+    href: "/sims",
+    detail: `号码有效期将在 ${dueDate} 到期`,
   };
 }
 
 export async function testNotificationChannel(id: number) {
   const channel = getNotificationChannel(id);
   if (!channel) throw new Error("通知渠道不存在");
-  const deliveredOn = datePartsInTimeZone().date;
-  const reminder = buildTestReminder();
   const settings = getNotificationSettings();
-  const rendered = buildNotificationMessage(settings, channel, [reminder], "测试通知");
+  const deliveredOn = datePartsInTimeZone().date;
+  const sample = sampleReminder(deliveredOn);
+  const rendered = renderReminderDigest(settings, channel, [sample], "测试通知", deliveredOn);
   try {
-    await sendChannelMessage(channel, rendered.title, rendered.message, [reminder]);
+    await sendChannelMessage(channel, rendered.title, rendered.message);
     insertDelivery({ channel, kind: "test", deliveredOn, status: "success" });
     return { ok: true };
   } catch (error) {
@@ -760,7 +755,7 @@ export async function testNotificationChannel(id: number) {
   }
 }
 
-export async function dispatchNotifications(options: { force?: boolean; respectSchedule?: boolean } = {}) {
+export async function dispatchNotifications(options: { force?: boolean; respectSchedule?: boolean; scheduledDate?: string } = {}) {
   ensureNotificationTables();
   const settings = getNotificationSettings();
   const force = Boolean(options.force);
@@ -774,15 +769,24 @@ export async function dispatchNotifications(options: { force?: boolean; respectS
 
   if (!force && respectSchedule) {
     const scheduledInstant = localDateTimeToInstant(nowParts.date, settings.dailyTime);
-    const delta = now.getTime() - scheduledInstant.getTime();
-    if (delta < 0) {
-      return { sent: 0, failed: 0, skipped: 0, suppressed: 0, reminders: 0, deliveredReminders: 0, channels: 0, reason: "before_schedule" as const };
-    }
     if (settings.lastScheduledDate === nowParts.date) {
       return { sent: 0, failed: 0, skipped: 0, suppressed: 0, reminders: 0, deliveredReminders: 0, channels: 0, reason: "already_scheduled" as const };
     }
-    if (delta > SCHEDULE_START_TOLERANCE_MS && !settings.catchUpEnabled) {
-      return { sent: 0, failed: 0, skipped: 0, suppressed: 0, reminders: 0, deliveredReminders: 0, channels: 0, reason: "catch_up_disabled" as const };
+
+    if (options.scheduledDate) {
+      if (options.scheduledDate > nowParts.date || now.getTime() < scheduledInstant.getTime()) {
+        return { sent: 0, failed: 0, skipped: 0, suppressed: 0, reminders: 0, deliveredReminders: 0, channels: 0, reason: "before_schedule" as const };
+      }
+      if (options.scheduledDate < nowParts.date && !settings.catchUpEnabled) {
+        return { sent: 0, failed: 0, skipped: 0, suppressed: 0, reminders: 0, deliveredReminders: 0, channels: 0, reason: "catch_up_disabled" as const };
+      }
+    } else {
+      if (now.getTime() < scheduledInstant.getTime()) {
+        return { sent: 0, failed: 0, skipped: 0, suppressed: 0, reminders: 0, deliveredReminders: 0, channels: 0, reason: "before_schedule" as const };
+      }
+      if (!settings.catchUpEnabled && now.getTime() - scheduledInstant.getTime() > SCHEDULE_START_TOLERANCE_MS) {
+        return { sent: 0, failed: 0, skipped: 0, suppressed: 0, reminders: 0, deliveredReminders: 0, channels: 0, reason: "catch_up_disabled" as const };
+      }
     }
   }
 
@@ -814,7 +818,7 @@ export async function dispatchNotifications(options: { force?: boolean; respectS
 
     if (!eligible.length) continue;
 
-    const rendered = buildNotificationMessage(settings, channel, eligible, force ? "当前提醒" : "今日提醒");
+    const rendered = renderReminderDigest(settings, channel, eligible, force ? "当前提醒" : "今日提醒", nowParts.date);
     try {
       await sendChannelMessage(channel, rendered.title, rendered.message, eligible);
       for (const reminder of eligible) {
@@ -863,7 +867,7 @@ function armNotificationScheduler() {
 
   const delay = Math.max(1000, plan.instant.getTime() - Date.now());
   schedulerTimer = setTimeout(() => {
-    void dispatchNotifications({ force: false, respectSchedule: true })
+    void dispatchNotifications({ force: false, respectSchedule: true, scheduledDate: plan.scheduledDate })
       .catch((error) => {
         console.error("[SIMKeeper] notification scheduler failed", error);
       })
