@@ -3,17 +3,31 @@ import "server-only";
 import { eq } from "drizzle-orm";
 import { db, sqlite } from "@/db";
 import { carriers, simCards, simKeepAliveRules } from "@/db/schema";
+import { daysBetweenDates } from "@/lib/keep-alive";
 import type { NotificationChannelType } from "@/lib/notification-options";
 import {
   buildReminderItems,
   getReminderRelativeLabel,
   getReminderStatusLabel,
   type ReminderItem,
+  type ReminderKind,
+  type ReminderStatus,
 } from "@/lib/reminders";
 
 export const NOTIFICATION_TIME_ZONE = "Asia/Shanghai";
-export const DEFAULT_NOTIFICATION_HOUR = 9;
-export const NOTIFICATION_CHECK_INTERVAL_MS = 15 * 60 * 1000;
+export const DEFAULT_NOTIFICATION_TIME = "09:00";
+export const DEFAULT_NOTIFICATION_MILESTONES = [30, 14, 7, 3, 1, 0] as const;
+export const OVERDUE_INITIAL_MILESTONES = [1, 3] as const;
+export const OVERDUE_REPEAT_INTERVAL_DAYS = 7;
+
+const ALL_NOTIFICATION_KINDS: ReminderKind[] = ["sim_validity", "keep_alive"];
+const ALL_NOTIFICATION_STATUSES: ReminderStatus[] = ["upcoming", "today", "grace", "overdue", "unscheduled"];
+const MAX_TIMER_DELAY_MS = 2_147_000_000;
+
+export type NotificationChannelFilter = {
+  kinds: ReminderKind[];
+  statuses: ReminderStatus[];
+};
 
 export type NotificationChannelConfig = Record<string, unknown>;
 
@@ -43,10 +57,15 @@ export type NotificationDelivery = {
 
 export type NotificationSettings = {
   enabled: boolean;
+  dailyTime: string;
   dailyHour: number;
+  milestoneDays: number[];
   lastDispatchAt: string | null;
+  lastScheduledDate: string | null;
+  nextDispatchAt: string | null;
   timeZone: string;
-  checkIntervalMinutes: number;
+  scheduleMode: "daily_exact";
+  catchUpEnabled: true;
 };
 
 export function ensureNotificationTables() {
@@ -100,24 +119,137 @@ function writeSetting(key: string, value: string) {
     .run(key, value, now);
 }
 
-export function getNotificationSettings(): NotificationSettings {
-  ensureNotificationTables();
-  const rawHour = Number(readSetting("notification_daily_hour"));
-  return {
-    enabled: readSetting("notification_enabled") === "1",
-    dailyHour: Number.isInteger(rawHour) && rawHour >= 0 && rawHour <= 23 ? rawHour : DEFAULT_NOTIFICATION_HOUR,
-    lastDispatchAt: readSetting("notification_last_dispatch_at") || null,
+function normalizeDailyTime(value: string) {
+  const match = /^(\d{2}):(\d{2})$/.exec(value.trim());
+  if (!match) throw new Error("每日通知时间格式不正确");
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    throw new Error("每日通知时间格式不正确");
+  }
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function normalizeMilestoneDays(values: readonly number[]) {
+  const normalized = [...new Set(values.map((value) => Math.trunc(Number(value))).filter((value) => Number.isInteger(value) && value >= 0 && value <= 365))]
+    .sort((a, b) => b - a);
+  if (!normalized.length) throw new Error("至少需要保留一个通知里程碑");
+  return normalized;
+}
+
+function readMilestoneDays() {
+  const raw = readSetting("notification_milestone_days");
+  if (!raw) return [...DEFAULT_NOTIFICATION_MILESTONES];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [...DEFAULT_NOTIFICATION_MILESTONES];
+    return normalizeMilestoneDays(parsed.map(Number));
+  } catch {
+    return [...DEFAULT_NOTIFICATION_MILESTONES];
+  }
+}
+
+type ZonedDateTimeParts = {
+  date: string;
+  hour: number;
+  minute: number;
+  second: number;
+};
+
+function datePartsInTimeZone(date = new Date()): ZonedDateTimeParts {
+  const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: NOTIFICATION_TIME_ZONE,
-    checkIntervalMinutes: NOTIFICATION_CHECK_INTERVAL_MS / 60000,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return {
+    date: `${map.year}-${map.month}-${map.day}`,
+    hour: Number(map.hour),
+    minute: Number(map.minute),
+    second: Number(map.second),
   };
 }
 
-export function setNotificationSettings(input: { enabled: boolean; dailyHour: number }) {
-  if (!Number.isInteger(input.dailyHour) || input.dailyHour < 0 || input.dailyHour > 23) {
-    throw new Error("每日通知时间需要在 0-23 点之间");
+function addDaysToDate(date: string, days: number) {
+  const [year, month, day] = date.split("-").map(Number);
+  const next = new Date(Date.UTC(year, month - 1, day + days));
+  return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}-${String(next.getUTCDate()).padStart(2, "0")}`;
+}
+
+function localDateTimeToInstant(date: string, time: string) {
+  const [year, month, day] = date.split("-").map(Number);
+  const [hour, minute] = normalizeDailyTime(time).split(":").map(Number);
+  const desiredUtcLike = Date.UTC(year, month - 1, day, hour, minute, 0);
+  let guess = new Date(desiredUtcLike);
+
+  for (let index = 0; index < 3; index += 1) {
+    const actual = datePartsInTimeZone(guess);
+    const [actualYear, actualMonth, actualDay] = actual.date.split("-").map(Number);
+    const actualUtcLike = Date.UTC(actualYear, actualMonth - 1, actualDay, actual.hour, actual.minute, actual.second);
+    const delta = desiredUtcLike - actualUtcLike;
+    if (Math.abs(delta) < 1000) break;
+    guess = new Date(guess.getTime() + delta);
   }
+
+  return guess;
+}
+
+function getNextDispatchInstant(settings: Pick<NotificationSettings, "enabled" | "dailyTime" | "lastScheduledDate">, now = new Date()) {
+  if (!settings.enabled) return null;
+  const parts = datePartsInTimeZone(now);
+  const todayTarget = localDateTimeToInstant(parts.date, settings.dailyTime);
+
+  if (now.getTime() < todayTarget.getTime()) return todayTarget;
+  if (settings.lastScheduledDate !== parts.date) return new Date(now.getTime() + 1000);
+  return localDateTimeToInstant(addDaysToDate(parts.date, 1), settings.dailyTime);
+}
+
+export function getNotificationSettings(): NotificationSettings {
+  ensureNotificationTables();
+  const legacyHour = Number(readSetting("notification_daily_hour"));
+  const rawDailyTime = readSetting("notification_daily_time");
+  const fallbackTime = Number.isInteger(legacyHour) && legacyHour >= 0 && legacyHour <= 23
+    ? `${String(legacyHour).padStart(2, "0")}:00`
+    : DEFAULT_NOTIFICATION_TIME;
+  let dailyTime = fallbackTime;
+  try {
+    dailyTime = normalizeDailyTime(rawDailyTime || fallbackTime);
+  } catch {
+    dailyTime = DEFAULT_NOTIFICATION_TIME;
+  }
+
+  const base = {
+    enabled: readSetting("notification_enabled") === "1",
+    dailyTime,
+    dailyHour: Number(dailyTime.slice(0, 2)),
+    milestoneDays: readMilestoneDays(),
+    lastDispatchAt: readSetting("notification_last_dispatch_at") || null,
+    lastScheduledDate: readSetting("notification_last_scheduled_date") || null,
+    timeZone: NOTIFICATION_TIME_ZONE,
+    scheduleMode: "daily_exact" as const,
+    catchUpEnabled: true as const,
+  };
+
+  return {
+    ...base,
+    nextDispatchAt: getNextDispatchInstant(base)?.toISOString() ?? null,
+  };
+}
+
+export function setNotificationSettings(input: { enabled: boolean; dailyTime: string; milestoneDays: number[] }) {
+  const dailyTime = normalizeDailyTime(input.dailyTime);
+  const milestoneDays = normalizeMilestoneDays(input.milestoneDays);
   writeSetting("notification_enabled", input.enabled ? "1" : "0");
-  writeSetting("notification_daily_hour", String(input.dailyHour));
+  writeSetting("notification_daily_time", dailyTime);
+  writeSetting("notification_daily_hour", String(Number(dailyTime.slice(0, 2))));
+  writeSetting("notification_milestone_days", JSON.stringify(milestoneDays));
+  rescheduleNotificationScheduler();
   return getNotificationSettings();
 }
 
@@ -243,22 +375,6 @@ export function listNotificationDeliveries(limit = 50) {
   return rows.map(mapDelivery);
 }
 
-function datePartsInTimeZone(date = new Date()) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: NOTIFICATION_TIME_ZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(date);
-  const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return {
-    date: `${map.year}-${map.month}-${map.day}`,
-    hour: Number(map.hour),
-  };
-}
-
 export function getCurrentReminderItems() {
   const sims = db
     .select({
@@ -301,6 +417,29 @@ function numberConfig(config: NotificationChannelConfig, key: string, fallback: 
   return Number.isFinite(value) ? value : fallback;
 }
 
+function channelFilter(config: NotificationChannelConfig): NotificationChannelFilter {
+  const raw = config.filters;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { kinds: [...ALL_NOTIFICATION_KINDS], statuses: [...ALL_NOTIFICATION_STATUSES] };
+  }
+  const record = raw as Record<string, unknown>;
+  const kinds = Array.isArray(record.kinds)
+    ? record.kinds.filter((value): value is ReminderKind => typeof value === "string" && ALL_NOTIFICATION_KINDS.includes(value as ReminderKind))
+    : [];
+  const statuses = Array.isArray(record.statuses)
+    ? record.statuses.filter((value): value is ReminderStatus => typeof value === "string" && ALL_NOTIFICATION_STATUSES.includes(value as ReminderStatus))
+    : [];
+  return {
+    kinds: kinds.length ? [...new Set(kinds)] : [...ALL_NOTIFICATION_KINDS],
+    statuses: statuses.length ? [...new Set(statuses)] : [...ALL_NOTIFICATION_STATUSES],
+  };
+}
+
+function channelAcceptsReminder(channel: NotificationChannel, reminder: ReminderItem) {
+  const filter = channelFilter(channel.config);
+  return filter.kinds.includes(reminder.kind) && filter.statuses.includes(reminder.status);
+}
+
 function validateHttpUrl(value: string, label: string) {
   let url: URL;
   try {
@@ -326,7 +465,7 @@ async function request(url: string | URL, init?: RequestInit) {
   }
 }
 
-async function sendChannelMessage(channel: NotificationChannel, title: string, message: string, reminder?: ReminderItem) {
+async function sendChannelMessage(channel: NotificationChannel, title: string, message: string, reminders: ReminderItem[] = []) {
   const config = channel.config;
 
   if (channel.type === "webhook") {
@@ -336,17 +475,15 @@ async function sendChannelMessage(channel: NotificationChannel, title: string, m
     if (method === "GET") {
       url.searchParams.set("title", title);
       url.searchParams.set("message", message);
-      if (reminder) {
-        url.searchParams.set("reminderKey", reminder.key);
-        url.searchParams.set("status", reminder.status);
-      }
+      url.searchParams.set("count", String(reminders.length));
+      if (reminders.length) url.searchParams.set("reminderKeys", reminders.map((item) => item.key).join(","));
       await request(url, { method: "GET", headers: bearerToken ? { Authorization: `Bearer ${bearerToken}` } : undefined });
       return;
     }
     await request(url, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(bearerToken ? { Authorization: `Bearer ${bearerToken}` } : {}) },
-      body: JSON.stringify({ source: "SIMKeeper", event: reminder ? "reminder" : "test", title, message, reminder: reminder ?? null }),
+      body: JSON.stringify({ source: "SIMKeeper", event: reminders.length ? "reminder_digest" : "test", title, message, reminders }),
     });
     return;
   }
@@ -434,14 +571,46 @@ function alreadyAttemptedToday(channelId: number, reminder: ReminderItem, delive
   return Boolean(row);
 }
 
-function reminderMessage(item: ReminderItem) {
-  const lines = [
-    `${item.simLabel}${item.phoneNumber ? ` · ${item.phoneNumber}` : ""}`,
-    `${item.carrierName} · ${item.country}`,
-    `${item.title} · ${getReminderStatusLabel(item.status)} · ${getReminderRelativeLabel(item)}`,
-    item.detail,
-  ];
-  return lines.join("\n");
+function lastReminderDeliveryDate(channelId: number, reminderKey: string) {
+  const row = sqlite
+    .prepare(
+      `SELECT delivered_on FROM notification_deliveries
+       WHERE channel_id = ? AND kind = 'reminder' AND reminder_key = ?
+       ORDER BY delivered_on DESC, id DESC LIMIT 1`,
+    )
+    .get(channelId, reminderKey) as { delivered_on?: string } | undefined;
+  return row?.delivered_on || null;
+}
+
+function automaticReminderIsDue(channel: NotificationChannel, reminder: ReminderItem, settings: NotificationSettings, today: string) {
+  if (!channelAcceptsReminder(channel, reminder)) return false;
+
+  if (reminder.status === "upcoming" || reminder.status === "today") {
+    return reminder.days !== null && settings.milestoneDays.includes(reminder.days);
+  }
+
+  if (reminder.status === "grace" || reminder.status === "overdue") {
+    if (reminder.days === null) return false;
+    const overdueDays = Math.abs(reminder.days);
+    return OVERDUE_INITIAL_MILESTONES.includes(overdueDays as 1 | 3)
+      || (overdueDays >= OVERDUE_REPEAT_INTERVAL_DAYS && overdueDays % OVERDUE_REPEAT_INTERVAL_DAYS === 0);
+  }
+
+  if (reminder.status === "unscheduled") {
+    const lastDate = lastReminderDeliveryDate(channel.id, reminder.key);
+    return !lastDate || daysBetweenDates(lastDate, today) >= OVERDUE_REPEAT_INTERVAL_DAYS;
+  }
+
+  return false;
+}
+
+function reminderDigestLine(item: ReminderItem, index: number) {
+  const due = item.dueDate ? ` · ${item.dueDate}` : "";
+  return `${index + 1}. ${item.simLabel} · ${item.title}\n   ${getReminderStatusLabel(item.status)} · ${getReminderRelativeLabel(item)}${due}`;
+}
+
+function reminderDigestMessage(items: ReminderItem[]) {
+  return items.map(reminderDigestLine).join("\n\n");
 }
 
 export async function testNotificationChannel(id: number) {
@@ -464,13 +633,21 @@ export async function dispatchNotifications(options: { force?: boolean; respectS
   const settings = getNotificationSettings();
   const force = Boolean(options.force);
   const respectSchedule = options.respectSchedule !== false;
-  const nowParts = datePartsInTimeZone();
+  const now = new Date();
+  const nowParts = datePartsInTimeZone(now);
 
   if (!force && !settings.enabled) {
-    return { sent: 0, failed: 0, skipped: 0, reminders: 0, channels: 0, reason: "disabled" as const };
+    return { sent: 0, failed: 0, skipped: 0, suppressed: 0, reminders: 0, deliveredReminders: 0, channels: 0, reason: "disabled" as const };
   }
-  if (!force && respectSchedule && nowParts.hour < settings.dailyHour) {
-    return { sent: 0, failed: 0, skipped: 0, reminders: 0, channels: 0, reason: "before_schedule" as const };
+
+  if (!force && respectSchedule) {
+    const scheduledInstant = localDateTimeToInstant(nowParts.date, settings.dailyTime);
+    if (now.getTime() < scheduledInstant.getTime()) {
+      return { sent: 0, failed: 0, skipped: 0, suppressed: 0, reminders: 0, deliveredReminders: 0, channels: 0, reason: "before_schedule" as const };
+    }
+    if (settings.lastScheduledDate === nowParts.date) {
+      return { sent: 0, failed: 0, skipped: 0, suppressed: 0, reminders: 0, deliveredReminders: 0, channels: 0, reason: "already_scheduled" as const };
+    }
   }
 
   const channels = listNotificationChannels().filter((channel) => channel.enabled);
@@ -478,40 +655,96 @@ export async function dispatchNotifications(options: { force?: boolean; respectS
   let sent = 0;
   let failed = 0;
   let skipped = 0;
+  let suppressed = 0;
+  let deliveredReminders = 0;
 
   for (const channel of channels) {
+    const eligible: ReminderItem[] = [];
     for (const reminder of reminders) {
+      if (!channelAcceptsReminder(channel, reminder)) {
+        suppressed += 1;
+        continue;
+      }
+      if (!force && !automaticReminderIsDue(channel, reminder, settings, nowParts.date)) {
+        suppressed += 1;
+        continue;
+      }
       if (!force && alreadyAttemptedToday(channel.id, reminder, nowParts.date)) {
         skipped += 1;
         continue;
       }
+      eligible.push(reminder);
+    }
 
-      const title = `[SIMKeeper] ${reminder.simLabel} · ${getReminderStatusLabel(reminder.status)}`;
-      try {
-        await sendChannelMessage(channel, title, reminderMessage(reminder), reminder);
+    if (!eligible.length) continue;
+
+    const title = force ? `SIMKeeper 当前提醒 · ${eligible.length} 项` : `SIMKeeper 今日提醒 · ${eligible.length} 项`;
+    const message = reminderDigestMessage(eligible);
+    try {
+      await sendChannelMessage(channel, title, message, eligible);
+      for (const reminder of eligible) {
         insertDelivery({ channel, kind: "reminder", reminder, deliveredOn: nowParts.date, status: "success" });
-        sent += 1;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "发送失败";
-        insertDelivery({ channel, kind: "reminder", reminder, deliveredOn: nowParts.date, status: "failed", error: message });
-        failed += 1;
       }
+      sent += 1;
+      deliveredReminders += eligible.length;
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : "发送失败";
+      for (const reminder of eligible) {
+        insertDelivery({ channel, kind: "reminder", reminder, deliveredOn: nowParts.date, status: "failed", error: messageText });
+      }
+      failed += 1;
+      deliveredReminders += eligible.length;
     }
   }
 
   writeSetting("notification_last_dispatch_at", new Date().toISOString());
-  return { sent, failed, skipped, reminders: reminders.length, channels: channels.length, reason: "completed" as const };
+  if (!force) writeSetting("notification_last_scheduled_date", nowParts.date);
+
+  return {
+    sent,
+    failed,
+    skipped,
+    suppressed,
+    reminders: reminders.length,
+    deliveredReminders,
+    channels: channels.length,
+    reason: "completed" as const,
+  };
+}
+
+let schedulerStarted = false;
+let schedulerTimer: ReturnType<typeof setTimeout> | null = null;
+
+function armNotificationScheduler() {
+  if (!schedulerStarted) return;
+  if (schedulerTimer) {
+    clearTimeout(schedulerTimer);
+    schedulerTimer = null;
+  }
+
+  const settings = getNotificationSettings();
+  const next = getNextDispatchInstant(settings);
+  if (!next) return;
+
+  const delay = Math.max(1000, next.getTime() - Date.now());
+  schedulerTimer = setTimeout(() => {
+    void dispatchNotifications({ force: false, respectSchedule: true })
+      .catch((error) => {
+        console.error("[SIMKeeper] notification scheduler failed", error);
+      })
+      .finally(() => {
+        armNotificationScheduler();
+      });
+  }, Math.min(delay, MAX_TIMER_DELAY_MS));
+  schedulerTimer.unref?.();
+}
+
+export function rescheduleNotificationScheduler() {
+  armNotificationScheduler();
 }
 
 export function startNotificationScheduler() {
-  const run = () => {
-    void dispatchNotifications({ force: false, respectSchedule: true }).catch((error) => {
-      console.error("[SIMKeeper] notification scheduler failed", error);
-    });
-  };
-
-  const firstTimer = setTimeout(run, 30_000);
-  const interval = setInterval(run, NOTIFICATION_CHECK_INTERVAL_MS);
-  firstTimer.unref?.();
-  interval.unref?.();
+  if (schedulerStarted) return;
+  schedulerStarted = true;
+  armNotificationScheduler();
 }
