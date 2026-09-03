@@ -477,6 +477,8 @@ export function getCurrentReminderItems() {
       warningDays: simKeepAliveRules.warningDays,
       gracePeriodDays: simKeepAliveRules.gracePeriodDays,
       enabled: simKeepAliveRules.enabled,
+      minimumRechargeAmount: simKeepAliveRules.minimumRechargeAmount,
+      rechargeCurrencyCode: simKeepAliveRules.rechargeCurrencyCode,
     })
     .from(simKeepAliveRules)
     .all();
@@ -707,6 +709,7 @@ function renderReminderItem(settings: NotificationSettings, channel: Notificatio
     dueDate: item.dueDate || "",
     dueSuffix: item.dueDate ? ` · ${item.dueDate}` : "",
     detail: item.detail,
+    requirement: item.requirement || "",
   });
 }
 
