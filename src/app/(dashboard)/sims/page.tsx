@@ -82,12 +82,19 @@ function planFeeLabel(sim: SimRecord) {
   return `${currency} ${sim.tariffRecurringFee}${period ? ` / ${period}` : ""}`.trim();
 }
 
+function countryFlag(countryCode: string) {
+  const code = countryCode.trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(code)) return "🌐";
+  return String.fromCodePoint(...Array.from(code).map((char) => 127397 + char.charCodeAt(0)));
+}
+
 export default function SimsPage() {
   const [sims, setSims] = useState<SimRecord[]>([]);
   const [carriers, setCarriers] = useState<CarrierRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
+  const [countryFilter, setCountryFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [carrierFilter, setCarrierFilter] = useState("all");
   const [editorOpen, setEditorOpen] = useState(false);
@@ -119,6 +126,29 @@ export default function SimsPage() {
     void loadData();
   }, [loadData]);
 
+  const countryOptions = useMemo(() => {
+    const countries = new Map<string, { code: string; name: string; count: number }>();
+
+    sims.forEach((sim) => {
+      const code = sim.countryCode.trim().toUpperCase();
+      if (!code) return;
+      const current = countries.get(code);
+      if (current) {
+        current.count += 1;
+        return;
+      }
+      countries.set(code, { code, name: sim.country, count: 1 });
+    });
+
+    return Array.from(countries.values()).sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
+  }, [sims]);
+
+  useEffect(() => {
+    if (countryFilter !== "all" && !countryOptions.some((country) => country.code === countryFilter)) {
+      setCountryFilter("all");
+    }
+  }, [countryFilter, countryOptions]);
+
   const filtered = useMemo(() => {
     const value = query.trim().toLowerCase();
     return sims.filter((sim) => {
@@ -135,11 +165,12 @@ export default function SimsPage() {
           sim.tariffPlanName || "",
           sim.tariffUsageSummary || "",
         ].some((field) => field.toLowerCase().includes(value));
+      const matchesCountry = countryFilter === "all" || sim.countryCode.toUpperCase() === countryFilter;
       const matchesStatus = statusFilter === "all" || sim.status === statusFilter;
       const matchesCarrier = carrierFilter === "all" || sim.carrierId === Number(carrierFilter);
-      return matchesQuery && matchesStatus && matchesCarrier;
+      return matchesQuery && matchesCountry && matchesStatus && matchesCarrier;
     });
-  }, [carrierFilter, query, sims, statusFilter]);
+  }, [carrierFilter, countryFilter, query, sims, statusFilter]);
 
   const tariffCount = useMemo(() => sims.filter((sim) => Boolean(sim.tariffId)).length, [sims]);
 
@@ -217,6 +248,19 @@ export default function SimsPage() {
             </div>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
+            <select
+              value={countryFilter}
+              onChange={(event) => setCountryFilter(event.target.value)}
+              aria-label="按国家或地区筛选号码"
+              className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-slate-400"
+            >
+              <option value="all">全部国家/地区 · {sims.length}</option>
+              {countryOptions.map((country) => (
+                <option key={country.code} value={country.code}>
+                  {countryFlag(country.code)} {country.name} · {country.count}
+                </option>
+              ))}
+            </select>
             <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-slate-400">
               <option value="all">全部状态</option>
               {SIM_STATUSES.map((status) => <option key={status.value} value={status.value}>{status.label}</option>)}
