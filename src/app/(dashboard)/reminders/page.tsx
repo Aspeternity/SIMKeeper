@@ -43,6 +43,8 @@ export default function RemindersPage() {
       warningDays: simKeepAliveRules.warningDays,
       gracePeriodDays: simKeepAliveRules.gracePeriodDays,
       enabled: simKeepAliveRules.enabled,
+      minimumRechargeAmount: simKeepAliveRules.minimumRechargeAmount,
+      rechargeCurrencyCode: simKeepAliveRules.rechargeCurrencyCode,
     })
     .from(simKeepAliveRules)
     .all();
