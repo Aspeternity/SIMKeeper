@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
+  Activity,
   AlertTriangle,
   BellRing,
   CalendarClock,
@@ -19,11 +20,13 @@ import {
   Smartphone,
   TimerReset,
   Trash2,
+  X,
   XCircle,
 } from "lucide-react";
 import { KeepAliveEventModal } from "@/components/keep-alive/keep-alive-event-modal";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { ModalPortal } from "@/components/ui/modal-portal";
 import {
   getReminderActionRecordLabel,
   type ReminderActionRecord,
@@ -108,6 +111,10 @@ export function ReminderCenter({
   const [completionLoadingKey, setCompletionLoadingKey] = useState("");
   const [deletingActionId, setDeletingActionId] = useState<number | null>(null);
   const [completionTarget, setCompletionTarget] = useState<CompletionTarget | null>(null);
+  const [activityPickerOpen, setActivityPickerOpen] = useState(false);
+  const [activityPickerLoading, setActivityPickerLoading] = useState(false);
+  const [activitySims, setActivitySims] = useState<KeepAliveSimSummary[]>([]);
+  const [activityTarget, setActivityTarget] = useState<KeepAliveSimSummary | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => setItems(reminders), [reminders]);
@@ -243,6 +250,24 @@ export function ReminderCenter({
     }
   }
 
+  async function openActivityPicker() {
+    setActivityPickerOpen(true);
+    setActivityPickerLoading(true);
+    setError("");
+    try {
+      const response = await fetch("/api/keep-alive", { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "号码生命周期数据加载失败");
+      const sims = Array.isArray(data.sims) ? data.sims as KeepAliveSimSummary[] : [];
+      setActivitySims(sims);
+    } catch (err) {
+      setActivityPickerOpen(false);
+      setError(err instanceof Error ? err.message : "号码生命周期数据加载失败");
+    } finally {
+      setActivityPickerLoading(false);
+    }
+  }
+
   async function deleteHistoryItem(item: ReminderActionRecord) {
     const message = item.action === "completed" && item.verified
       ? `确定删除“${item.simLabel} · ${item.title}”这条处理中心记录吗？\n\n只会删除这里的核验记录，不会回滚已经记录的充值/活动、余额、号码有效期或保号日期。`
@@ -286,26 +311,37 @@ export function ReminderCenter({
       <Card className="overflow-hidden">
         <div className="space-y-4 border-b p-4 sm:p-5">
           <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-            <div className="inline-flex w-fit rounded-xl bg-slate-100 p-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="inline-flex w-fit rounded-xl bg-slate-100 p-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setView("active");
+                    setQuery("");
+                  }}
+                  className={`h-8 rounded-lg px-3 text-xs font-medium transition ${view === "active" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
+                >
+                  待处理 · {items.length}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setView("history");
+                    setQuery("");
+                  }}
+                  className={`h-8 rounded-lg px-3 text-xs font-medium transition ${view === "history" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
+                >
+                  处理历史 · {actionHistory.length}
+                </button>
+              </div>
               <button
                 type="button"
-                onClick={() => {
-                  setView("active");
-                  setQuery("");
-                }}
-                className={`h-8 rounded-lg px-3 text-xs font-medium transition ${view === "active" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
+                onClick={() => void openActivityPicker()}
+                disabled={activityPickerLoading}
+                className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl bg-slate-950 px-3.5 text-xs font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                待处理 · {items.length}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setView("history");
-                  setQuery("");
-                }}
-                className={`h-8 rounded-lg px-3 text-xs font-medium transition ${view === "history" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
-              >
-                处理历史 · {actionHistory.length}
+                {activityPickerLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Activity className="h-3.5 w-3.5" />}
+                记录活动
               </button>
             </div>
             <div className="relative w-full xl:w-96">
@@ -497,12 +533,70 @@ export function ReminderCenter({
         )}
       </Card>
 
+      {activityPickerOpen ? (
+        <ModalPortal onBackdropClick={activityPickerLoading ? undefined : () => setActivityPickerOpen(false)}>
+          <Card className="w-full max-w-lg overflow-hidden shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b bg-white px-6 py-5">
+              <div>
+                <div className="flex items-center gap-2 text-sm font-medium text-slate-500"><Activity className="h-4 w-4" />主动记录生命周期活动</div>
+                <h3 className="mt-1 text-lg font-semibold text-slate-900">选择要记录的号码</h3>
+                <p className="mt-1 text-xs leading-5 text-slate-400">即使还没进入提醒窗口，也可以提前记录充值、短信、通话或续期；符合规则时会立即刷新真实生命周期状态。</p>
+              </div>
+              <button type="button" onClick={() => setActivityPickerOpen(false)} disabled={activityPickerLoading} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"><X className="h-4 w-4" /></button>
+            </div>
+            <div className="max-h-[28rem] overflow-y-auto bg-white p-3">
+              {activityPickerLoading ? (
+                <div className="flex min-h-40 items-center justify-center text-sm text-slate-400"><Loader2 className="mr-2 h-4 w-4 animate-spin" />正在加载号码…</div>
+              ) : activitySims.length ? (
+                <div className="space-y-1">
+                  {activitySims.map((sim) => (
+                    <button
+                      key={sim.id}
+                      type="button"
+                      onClick={() => {
+                        setActivityPickerOpen(false);
+                        setActivityTarget(sim);
+                      }}
+                      className="flex w-full items-center justify-between gap-4 rounded-xl px-3 py-3 text-left transition hover:bg-slate-50"
+                    >
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium text-slate-900">{sim.label}</div>
+                        <div className="mt-0.5 truncate text-xs text-slate-400">{sim.phoneNumber || "未填写号码"} · {sim.carrierName} · {sim.country}</div>
+                      </div>
+                      <Activity className="h-4 w-4 shrink-0 text-slate-300" />
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex min-h-40 flex-col items-center justify-center px-6 text-center">
+                  <Smartphone className="h-5 w-5 text-slate-300" />
+                  <div className="mt-3 text-sm font-medium text-slate-600">还没有可记录的号码</div>
+                  <div className="mt-1 text-xs text-slate-400">请先在号码管理中添加 SIM / eSIM。</div>
+                </div>
+              )}
+            </div>
+          </Card>
+        </ModalPortal>
+      ) : null}
+
       {completionTarget ? (
         <KeepAliveEventModal
           sim={completionTarget.sim}
           rules={completionTarget.rules}
           completionReminder={completionTarget.reminder}
           onClose={() => setCompletionTarget(null)}
+          onSaved={async () => {
+            await reloadReminderState();
+            router.refresh();
+          }}
+        />
+      ) : null}
+
+      {activityTarget ? (
+        <KeepAliveEventModal
+          sim={activityTarget}
+          rules={activityTarget.rules}
+          onClose={() => setActivityTarget(null)}
           onSaved={async () => {
             await reloadReminderState();
             router.refresh();

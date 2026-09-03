@@ -327,6 +327,7 @@ jobs:
           [ "$status" = "200" ] || fail "Processing center returned HTTP $status"
           grep -q '处理中心' "$tmp/reminders.html" || fail "Processing center heading was not rendered"
           grep -q 'Usage activity' "$tmp/reminders.html" || fail "Due keep-alive task was not rendered in processing center"
+          grep -q '记录活动' "$tmp/reminders.html" || fail "Processing center did not expose proactive activity recording"
           grep -q 'data-page-title="处理中心"' "$tmp/reminders.html" || fail "Processing center top bar title was not synchronized with the route"
           grep -Eq 'data-reminder-count="[1-9][0-9]*"' "$tmp/reminders.html" || fail "Pending reminder count was not rendered in the top bar"
           grep -q 'id="task-' "$tmp/reminders.html" || fail "Processing center did not render stable task anchors"
