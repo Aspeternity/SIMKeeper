@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.1.0-alpha.8.4
+
+### Changed
+
+- Notification templates no longer occupy a large section on the notification-channel home page; they now open from a dedicated `通知模板` action into a focused modal editor
+- The template editor keeps variable guidance, live preview and restore-default controls inside the modal so the main notification page stays focused on scheduling, channels and delivery history
+- Daily notification scheduling now has its own `保存通知计划` action directly inside the schedule card
+- Notification templates now have their own `保存通知模板` action inside the template editor
+- Frontend schedule state is maintained as an independent draft so opening or saving templates cannot overwrite unsaved schedule edits
+- Backend persistence is split into independent `schedule` and `templates` actions; saving either side leaves the other side untouched
+- The legacy combined notification-settings action remains available for backward compatibility while the current UI uses the separated save boundaries
+- The alpha.8.3 exact scheduler, catch-up behavior, digest rendering, test notification behavior and notification-secret masking are preserved unchanged
+- Post-publish notification smoke coverage now verifies schedule/template isolation in both directions and confirms the expanded template form is absent from the notification home page
+- Sidebar and package version updated to `v0.1.0-alpha.8.4`
+
 ## v0.1.0-alpha.8.3
 
 ### Added
