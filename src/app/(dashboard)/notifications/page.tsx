@@ -12,6 +12,7 @@ import {
   Radio,
   Save,
   Send,
+  ShieldCheck,
   Trash2,
   Webhook,
   X,
@@ -22,12 +23,21 @@ import { Input } from "@/components/ui/input";
 import { ModalPortal } from "@/components/ui/modal-portal";
 import { NOTIFICATION_CHANNEL_TYPES, getNotificationChannelTypeLabel, type NotificationChannelType } from "@/lib/notification-options";
 
+type ReminderKind = "sim_validity" | "keep_alive";
+type ReminderStatus = "upcoming" | "today" | "grace" | "overdue" | "unscheduled";
+
+type ChannelFilter = {
+  kinds: ReminderKind[];
+  statuses: ReminderStatus[];
+};
+
 type Channel = {
   id: number;
   name: string;
   type: NotificationChannelType;
   enabled: boolean;
   config: Record<string, unknown>;
+  secrets: Record<string, boolean>;
   createdAt: string;
   updatedAt: string;
 };
@@ -48,10 +58,15 @@ type Delivery = {
 
 type NotificationSettings = {
   enabled: boolean;
+  dailyTime: string;
   dailyHour: number;
+  milestoneDays: number[];
   lastDispatchAt: string | null;
+  lastScheduledDate: string | null;
+  nextDispatchAt: string | null;
   timeZone: string;
-  checkIntervalMinutes: number;
+  scheduleMode: "daily_exact";
+  catchUpEnabled: true;
 };
 
 type FormState = {
@@ -59,14 +74,36 @@ type FormState = {
   name: string;
   type: NotificationChannelType;
   enabled: boolean;
-  config: Record<string, string | number>;
+  config: Record<string, unknown>;
+  secrets?: Record<string, boolean>;
 };
 
-function initialConfig(type: NotificationChannelType): Record<string, string | number> {
-  if (type === "webhook") return { url: "", method: "POST", bearerToken: "" };
-  if (type === "bark") return { serverUrl: "https://api.day.app", deviceKey: "", group: "SIMKeeper" };
-  if (type === "gotify") return { serverUrl: "", token: "", priority: 5 };
-  return { apiBaseUrl: "https://api.telegram.org", botToken: "", chatId: "" };
+const MILESTONE_OPTIONS = [30, 14, 7, 3, 1, 0];
+const KIND_OPTIONS: Array<{ value: ReminderKind; label: string }> = [
+  { value: "sim_validity", label: "号码有效期" },
+  { value: "keep_alive", label: "保号规则" },
+];
+const STATUS_OPTIONS: Array<{ value: ReminderStatus; label: string }> = [
+  { value: "upcoming", label: "即将到期" },
+  { value: "today", label: "今天到期" },
+  { value: "grace", label: "宽限期" },
+  { value: "overdue", label: "已逾期" },
+  { value: "unscheduled", label: "待设置日期" },
+];
+
+function defaultFilters(): ChannelFilter {
+  return {
+    kinds: KIND_OPTIONS.map((item) => item.value),
+    statuses: STATUS_OPTIONS.map((item) => item.value),
+  };
+}
+
+function initialConfig(type: NotificationChannelType): Record<string, unknown> {
+  const filters = defaultFilters();
+  if (type === "webhook") return { url: "", method: "POST", bearerToken: "", filters };
+  if (type === "bark") return { serverUrl: "https://api.day.app", deviceKey: "", group: "SIMKeeper", filters };
+  if (type === "gotify") return { serverUrl: "", token: "", priority: 5, filters };
+  return { apiBaseUrl: "https://api.telegram.org", botToken: "", chatId: "", filters };
 }
 
 function emptyForm(): FormState {
@@ -102,21 +139,48 @@ function configString(channel: Channel, key: string) {
   return typeof value === "string" ? value : "";
 }
 
+function channelFilters(channel: Channel): ChannelFilter {
+  const raw = channel.config.filters;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return defaultFilters();
+  const record = raw as Record<string, unknown>;
+  const kinds = Array.isArray(record.kinds) ? record.kinds.filter((value): value is ReminderKind => KIND_OPTIONS.some((item) => item.value === value)) : [];
+  const statuses = Array.isArray(record.statuses) ? record.statuses.filter((value): value is ReminderStatus => STATUS_OPTIONS.some((item) => item.value === value)) : [];
+  return {
+    kinds: kinds.length ? kinds : defaultFilters().kinds,
+    statuses: statuses.length ? statuses : defaultFilters().statuses,
+  };
+}
+
+function formFilters(form: FormState): ChannelFilter {
+  const raw = form.config.filters;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return defaultFilters();
+  const record = raw as Record<string, unknown>;
+  const kinds = Array.isArray(record.kinds) ? record.kinds.filter((value): value is ReminderKind => KIND_OPTIONS.some((item) => item.value === value)) : [];
+  const statuses = Array.isArray(record.statuses) ? record.statuses.filter((value): value is ReminderStatus => STATUS_OPTIONS.some((item) => item.value === value)) : [];
+  return { kinds, statuses };
+}
+
 function channelSummary(channel: Channel) {
-  if (channel.type === "webhook") {
-    const value = configString(channel, "url");
-    return value || "未填写 Webhook URL";
-  }
+  if (channel.type === "webhook") return configString(channel, "url") || "未填写 Webhook URL";
   if (channel.type === "bark") {
     const server = configString(channel, "serverUrl") || "https://api.day.app";
-    return `${server} · Device Key 已配置`;
+    return `${server} · Device Key ${channel.secrets.deviceKey ? "已保存" : "未配置"}`;
   }
   if (channel.type === "gotify") return configString(channel, "serverUrl") || "未填写 Gotify 地址";
   return `Chat ID ${configString(channel, "chatId") || "未填写"}`;
 }
 
+function channelFilterSummary(channel: Channel) {
+  const filters = channelFilters(channel);
+  return `${filters.kinds.length === 2 ? "全部来源" : filters.kinds.map((kind) => KIND_OPTIONS.find((item) => item.value === kind)?.label).join("、")} · ${filters.statuses.length} 种状态`;
+}
+
+function secretPlaceholder(form: FormState, key: string, fallback: string) {
+  return form.id && form.secrets?.[key] ? "已保存；留空保持不变" : fallback;
+}
+
 function ChannelFields({ form, setForm }: { form: FormState; setForm: (value: FormState) => void }) {
-  function setConfig(key: string, value: string | number) {
+  function setConfig(key: string, value: unknown) {
     setForm({ ...form, config: { ...form.config, [key]: value } });
   }
 
@@ -137,7 +201,7 @@ function ChannelFields({ form, setForm }: { form: FormState; setForm: (value: Fo
           </label>
           <label className="grid gap-2 text-sm text-slate-600">
             Bearer Token（可选）
-            <Input type="password" value={String(form.config.bearerToken ?? "")} onChange={(event) => setConfig("bearerToken", event.target.value)} placeholder="可选鉴权令牌" autoComplete="off" />
+            <Input type="password" value={String(form.config.bearerToken ?? "")} onChange={(event) => setConfig("bearerToken", event.target.value)} placeholder={secretPlaceholder(form, "bearerToken", "可选鉴权令牌")} autoComplete="new-password" />
           </label>
         </div>
       </div>
@@ -154,7 +218,7 @@ function ChannelFields({ form, setForm }: { form: FormState; setForm: (value: Fo
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="grid gap-2 text-sm text-slate-600">
             Device Key
-            <Input type="password" value={String(form.config.deviceKey ?? "")} onChange={(event) => setConfig("deviceKey", event.target.value)} placeholder="Bark Device Key" autoComplete="off" />
+            <Input type="password" value={String(form.config.deviceKey ?? "")} onChange={(event) => setConfig("deviceKey", event.target.value)} placeholder={secretPlaceholder(form, "deviceKey", "Bark Device Key")} autoComplete="new-password" />
           </label>
           <label className="grid gap-2 text-sm text-slate-600">
             分组（可选）
@@ -175,7 +239,7 @@ function ChannelFields({ form, setForm }: { form: FormState; setForm: (value: Fo
         <div className="grid gap-4 sm:grid-cols-[1fr_140px]">
           <label className="grid gap-2 text-sm text-slate-600">
             Application Token
-            <Input type="password" value={String(form.config.token ?? "")} onChange={(event) => setConfig("token", event.target.value)} placeholder="Gotify Application Token" autoComplete="off" />
+            <Input type="password" value={String(form.config.token ?? "")} onChange={(event) => setConfig("token", event.target.value)} placeholder={secretPlaceholder(form, "token", "Gotify Application Token")} autoComplete="new-password" />
           </label>
           <label className="grid gap-2 text-sm text-slate-600">
             优先级
@@ -195,12 +259,57 @@ function ChannelFields({ form, setForm }: { form: FormState; setForm: (value: Fo
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="grid gap-2 text-sm text-slate-600">
           Bot Token
-          <Input type="password" value={String(form.config.botToken ?? "")} onChange={(event) => setConfig("botToken", event.target.value)} placeholder="123456:ABC..." autoComplete="off" />
+          <Input type="password" value={String(form.config.botToken ?? "")} onChange={(event) => setConfig("botToken", event.target.value)} placeholder={secretPlaceholder(form, "botToken", "123456:ABC...")} autoComplete="new-password" />
         </label>
         <label className="grid gap-2 text-sm text-slate-600">
           Chat ID
           <Input value={String(form.config.chatId ?? "")} onChange={(event) => setConfig("chatId", event.target.value)} placeholder="例如 123456789 或 -100..." />
         </label>
+      </div>
+    </div>
+  );
+}
+
+function ChannelFilterFields({ form, setForm }: { form: FormState; setForm: (value: FormState) => void }) {
+  const filters = formFilters(form);
+
+  function toggleKind(value: ReminderKind) {
+    const next = filters.kinds.includes(value) ? filters.kinds.filter((item) => item !== value) : [...filters.kinds, value];
+    setForm({ ...form, config: { ...form.config, filters: { ...filters, kinds: next } } });
+  }
+
+  function toggleStatus(value: ReminderStatus) {
+    const next = filters.statuses.includes(value) ? filters.statuses.filter((item) => item !== value) : [...filters.statuses, value];
+    setForm({ ...form, config: { ...form.config, filters: { ...filters, statuses: next } } });
+  }
+
+  return (
+    <div className="rounded-xl border border-slate-200 p-4">
+      <div className="text-sm font-medium text-slate-700">发送范围</div>
+      <p className="mt-1 text-xs leading-5 text-slate-400">只把选中的提醒来源和状态发送到这个渠道；测试通知不受这里限制。</p>
+      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+        <div>
+          <div className="mb-2 text-xs font-medium text-slate-500">提醒来源</div>
+          <div className="space-y-2">
+            {KIND_OPTIONS.map((item) => (
+              <label key={item.value} className="flex items-center gap-2 text-sm text-slate-600">
+                <input type="checkbox" checked={filters.kinds.includes(item.value)} onChange={() => toggleKind(item.value)} className="h-4 w-4 rounded border-slate-300" />
+                {item.label}
+              </label>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div className="mb-2 text-xs font-medium text-slate-500">提醒状态</div>
+          <div className="grid grid-cols-2 gap-2">
+            {STATUS_OPTIONS.map((item) => (
+              <label key={item.value} className="flex items-center gap-2 text-sm text-slate-600">
+                <input type="checkbox" checked={filters.statuses.includes(item.value)} onChange={() => toggleStatus(item.value)} className="h-4 w-4 rounded border-slate-300" />
+                {item.label}
+              </label>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -246,6 +355,14 @@ export default function NotificationsPage() {
     if (data.deliveries) setDeliveries(data.deliveries);
   }
 
+  function toggleMilestone(day: number) {
+    if (!settings) return;
+    const exists = settings.milestoneDays.includes(day);
+    const next = exists ? settings.milestoneDays.filter((value) => value !== day) : [...settings.milestoneDays, day].sort((a, b) => b - a);
+    if (!next.length) return;
+    setSettings({ ...settings, milestoneDays: next });
+  }
+
   async function saveSettings() {
     if (!settings) return;
     setBusy("settings");
@@ -255,12 +372,12 @@ export default function NotificationsPage() {
       const response = await fetch("/api/notifications", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "settings", settings: { enabled: settings.enabled, dailyHour: settings.dailyHour } }),
+        body: JSON.stringify({ action: "settings", settings: { enabled: settings.enabled, dailyTime: settings.dailyTime, milestoneDays: settings.milestoneDays } }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "通知设置保存失败");
       applyData(data);
-      setNotice("通知计划已保存。");
+      setNotice("通知计划已保存，后台定时器已经按新时间重新预约。");
     } catch (err) {
       setError(err instanceof Error ? err.message : "通知设置保存失败");
     } finally {
@@ -270,6 +387,16 @@ export default function NotificationsPage() {
 
   async function saveChannel() {
     if (!form) return;
+    const filters = formFilters(form);
+    if (!filters.kinds.length) {
+      setError("至少选择一种提醒来源");
+      return;
+    }
+    if (!filters.statuses.length) {
+      setError("至少选择一种提醒状态");
+      return;
+    }
+
     setBusy("channel");
     setError("");
     setNotice("");
@@ -314,7 +441,7 @@ export default function NotificationsPage() {
   }
 
   async function dispatchNow() {
-    if (!window.confirm("立即把提醒中心当前的所有提醒发送到全部已启用渠道吗？手动发送会忽略今日自动去重。")) return;
+    if (!window.confirm("立即把提醒中心当前提醒按各渠道的发送范围合并发送吗？手动发送会忽略里程碑和今日自动调度状态。")) return;
     setBusy("dispatch");
     setError("");
     setNotice("");
@@ -323,7 +450,7 @@ export default function NotificationsPage() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "发送当前提醒失败");
       applyData(data);
-      setNotice(`发送完成：成功 ${data.result.sent}，失败 ${data.result.failed}。当前提醒 ${data.result.reminders} 条，启用渠道 ${data.result.channels} 个。`);
+      setNotice(`发送完成：发出 ${data.result.sent} 条渠道摘要，失败 ${data.result.failed} 条，共包含 ${data.result.deliveredReminders} 个提醒。`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "发送当前提醒失败");
     } finally {
@@ -353,7 +480,7 @@ export default function NotificationsPage() {
         <div>
           <div className="flex items-center gap-2 text-sm font-medium text-slate-500"><BellRing className="h-4 w-4" />主动通知</div>
           <h2 className="mt-2 text-2xl font-semibold tracking-tight">通知渠道</h2>
-          <p className="mt-1 text-sm text-slate-500">把提醒中心的号码有效期和保号提醒主动发送到你的设备或自托管服务。</p>
+          <p className="mt-1 text-sm text-slate-500">在固定时间把真正值得处理的生命周期提醒合并发送到你的设备或自托管服务。</p>
         </div>
         <button type="button" onClick={() => setForm(emptyForm())} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800"><Plus className="h-4 w-4" />添加渠道</button>
       </div>
@@ -365,28 +492,43 @@ export default function NotificationsPage() {
         <Card className="p-5">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <div className="font-medium text-slate-900">自动通知计划</div>
-              <p className="mt-1 text-xs leading-5 text-slate-400">容器内每 15 分钟检查一次；每天到达设定时间后，只对同一提醒/渠道自动尝试一次。</p>
+              <div className="font-medium text-slate-900">每日自动通知</div>
+              <p className="mt-1 text-xs leading-5 text-slate-400">每天在设定时间执行一次；如果当时容器离线，当天恢复后会补发一次，然后直接预约下一天。</p>
             </div>
             <div className={`rounded-lg px-2.5 py-1 text-xs font-medium ${settings?.enabled ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{settings?.enabled ? "自动通知已启用" : "自动通知已关闭"}</div>
           </div>
-          <div className="mt-5 grid gap-4 sm:grid-cols-[1fr_180px_auto] sm:items-end">
+          <div className="mt-5 grid gap-4 sm:grid-cols-[1fr_170px_auto] sm:items-end">
             <label className="flex h-10 items-center gap-3 rounded-xl border border-slate-200 px-3 text-sm text-slate-600">
               <input type="checkbox" checked={settings?.enabled ?? false} onChange={(event) => settings && setSettings({ ...settings, enabled: event.target.checked })} className="h-4 w-4 rounded border-slate-300" />
               启用自动通知总开关
             </label>
             <label className="grid gap-1.5 text-xs text-slate-500">
-              每日开始发送时间
-              <select value={settings?.dailyHour ?? 9} onChange={(event) => settings && setSettings({ ...settings, dailyHour: Number(event.target.value) })} className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400">
-                {Array.from({ length: 24 }, (_, hour) => <option key={hour} value={hour}>{String(hour).padStart(2, "0")}:00</option>)}
-              </select>
+              每日通知时间
+              <Input type="time" step="60" value={settings?.dailyTime ?? "09:00"} onChange={(event) => settings && setSettings({ ...settings, dailyTime: event.target.value })} />
             </label>
             <button type="button" onClick={() => void saveSettings()} disabled={!settings || Boolean(busy)} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border px-4 text-sm font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-50">{busy === "settings" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}保存计划</button>
           </div>
+
+          <div className="mt-5 border-t pt-4">
+            <div className="text-xs font-medium text-slate-500">到期前提醒里程碑</div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {MILESTONE_OPTIONS.map((day) => {
+                const active = settings?.milestoneDays.includes(day) ?? false;
+                return (
+                  <button key={day} type="button" onClick={() => toggleMilestone(day)} disabled={!settings} className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${active ? "border-slate-900 bg-slate-950 text-white" : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"}`}>
+                    {day === 0 ? "当天" : `${day} 天`}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-2 text-xs leading-5 text-slate-400">自动通知只在这些剩余天数发送。逾期后固定在第 1、3、7 天提醒，此后每 7 天一次；“待设置日期”每 7 天提醒一次。</p>
+          </div>
+
           <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 border-t pt-4 text-xs text-slate-400">
             <span>时区：{settings?.timeZone ?? "Asia/Shanghai"}</span>
-            <span>检查间隔：{settings?.checkIntervalMinutes ?? 15} 分钟</span>
-            <span>最近调度：{formatDateTime(settings?.lastDispatchAt ?? null)}</span>
+            <span>错过后补发：开启</span>
+            <span>最近自动调度日期：{settings?.lastScheduledDate ?? "尚未运行"}</span>
+            <span>下次自动发送：{settings?.enabled ? formatDateTime(settings?.nextDispatchAt ?? null) : "已关闭"}</span>
           </div>
         </Card>
 
@@ -398,13 +540,14 @@ export default function NotificationsPage() {
             <div className="rounded-xl bg-slate-50 p-3"><div className="text-xl font-semibold text-slate-900">{recentFailures}</div><div className="mt-1 text-[11px] text-slate-400">近期失败</div></div>
           </div>
           <button type="button" onClick={() => void dispatchNow()} disabled={Boolean(busy) || enabledChannels === 0} className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-40">{busy === "dispatch" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}立即发送当前提醒</button>
+          <p className="mt-2 text-center text-[11px] leading-5 text-slate-400">手动发送会忽略里程碑，但仍遵守每个渠道自己的发送范围，并把多个提醒合成一条摘要。</p>
         </Card>
       </div>
 
       <Card className="overflow-hidden">
         <div className="border-b p-5">
           <div className="font-medium text-slate-900">通知渠道</div>
-          <p className="mt-1 text-xs text-slate-400">渠道凭据会保存在 SIMKeeper 数据库和完整备份中，请把备份文件按敏感数据管理。</p>
+          <p className="mt-1 text-xs text-slate-400">敏感凭据只保存在服务端数据库中，读取这个页面时不会把完整 Token / Key 返回到浏览器。</p>
         </div>
         {loading ? (
           <div className="flex min-h-48 items-center justify-center text-sm text-slate-500"><Loader2 className="mr-2 h-4 w-4 animate-spin" />正在加载通知渠道…</div>
@@ -421,10 +564,11 @@ export default function NotificationsPage() {
                     <span className={`rounded-md px-2 py-0.5 text-[10px] font-medium ${channel.enabled ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{channel.enabled ? "已启用" : "已停用"}</span>
                   </div>
                   <div className="mt-1 truncate text-xs text-slate-400">{channelSummary(channel)}</div>
+                  <div className="mt-1 text-[11px] text-slate-400">{channelFilterSummary(channel)}</div>
                 </div>
                 <div className="flex shrink-0 flex-wrap gap-2">
                   <button type="button" onClick={() => void testChannel(channel)} disabled={Boolean(busy)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-50">{busy === `test:${channel.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Radio className="h-3.5 w-3.5" />}测试</button>
-                  <button type="button" onClick={() => setForm({ id: channel.id, name: channel.name, type: channel.type, enabled: channel.enabled, config: { ...initialConfig(channel.type), ...channel.config } as Record<string, string | number> })} className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-600 transition hover:bg-slate-50"><Edit3 className="h-3.5 w-3.5" />编辑</button>
+                  <button type="button" onClick={() => setForm({ id: channel.id, name: channel.name, type: channel.type, enabled: channel.enabled, config: { ...initialConfig(channel.type), ...channel.config }, secrets: channel.secrets })} className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-600 transition hover:bg-slate-50"><Edit3 className="h-3.5 w-3.5" />编辑</button>
                   <button type="button" onClick={() => void removeChannel(channel)} disabled={Boolean(busy)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-rose-200 px-3 text-xs font-medium text-rose-600 transition hover:bg-rose-50 disabled:opacity-50"><Trash2 className="h-3.5 w-3.5" />删除</button>
                 </div>
               </div>
@@ -434,7 +578,7 @@ export default function NotificationsPage() {
       </Card>
 
       <Card className="overflow-hidden">
-        <div className="border-b p-5"><div className="font-medium text-slate-900">最近发送记录</div><p className="mt-1 text-xs text-slate-400">记录测试通知和提醒发送结果；自动通知失败后当天不会反复重试，次日会再次尝试。</p></div>
+        <div className="border-b p-5"><div className="font-medium text-slate-900">最近发送记录</div><p className="mt-1 text-xs text-slate-400">一条渠道摘要可能包含多个提醒，因此同一次摘要会留下多条对应的提醒记录，便于追踪和去重。</p></div>
         {deliveries.length === 0 ? (
           <div className="flex min-h-40 items-center justify-center text-sm text-slate-400">还没有发送记录。</div>
         ) : (
@@ -463,19 +607,21 @@ export default function NotificationsPage() {
               <div><div className="text-xs font-medium text-slate-400">通知渠道</div><h3 className="mt-1 text-xl font-semibold text-slate-950">{form.id ? "编辑通知渠道" : "新增通知渠道"}</h3></div>
               <button type="button" onClick={() => !busy && setForm(null)} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"><X className="h-4 w-4" /></button>
             </div>
-            <div className="max-h-[70vh] space-y-5 overflow-y-auto px-6 py-5">
+            <div className="max-h-[72vh] space-y-5 overflow-y-auto px-6 py-5">
               <div className="grid gap-4 sm:grid-cols-2">
-                <label className="grid gap-2 text-sm text-slate-600">渠道名称<Input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="例如 iPhone Bark" /></label>
+                <label className="grid gap-2 text-sm text-slate-600">渠道名称<Input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="例如 Telegram" /></label>
                 <label className="grid gap-2 text-sm text-slate-600">
                   渠道类型
-                  <select value={form.type} onChange={(event) => { const type = event.target.value as NotificationChannelType; setForm({ ...form, type, config: initialConfig(type) }); }} className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-400">
+                  <select value={form.type} onChange={(event) => { const type = event.target.value as NotificationChannelType; setForm({ ...form, type, config: initialConfig(type), secrets: undefined }); }} className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-400">
                     {NOTIFICATION_CHANNEL_TYPES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
                   </select>
                 </label>
               </div>
               <label className="flex items-center gap-3 rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-600"><input type="checkbox" checked={form.enabled} onChange={(event) => setForm({ ...form, enabled: event.target.checked })} className="h-4 w-4 rounded border-slate-300" />启用这个渠道</label>
               <ChannelFields form={form} setForm={setForm} />
-              <div className="rounded-xl bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-700">Bot Token、Device Key、Application Token 和 Bearer Token 都属于敏感凭据，会进入完整备份。请不要把导出的备份上传到公开位置。</div>
+              <ChannelFilterFields form={form} setForm={setForm} />
+              <div className="rounded-xl bg-emerald-50 px-4 py-3 text-xs leading-5 text-emerald-700"><ShieldCheck className="mr-1 inline h-3.5 w-3.5" />已有敏感凭据不会回传到浏览器。编辑渠道时密码框留空会继续保留原 Token / Key；只有输入新值才会替换。</div>
+              <div className="rounded-xl bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-700">完整备份仍包含通知凭据，因此导出的备份文件必须按敏感数据管理，不要上传公开仓库或公开网盘。</div>
             </div>
             <div className="flex justify-end gap-2 border-t px-6 py-4">
               <button type="button" onClick={() => !busy && setForm(null)} className="h-10 rounded-xl border px-4 text-sm text-slate-500 transition hover:bg-slate-50">取消</button>
@@ -485,7 +631,7 @@ export default function NotificationsPage() {
         </ModalPortal>
       ) : null}
 
-      <div className="rounded-xl border border-slate-100 bg-white px-4 py-3 text-xs leading-5 text-slate-400"><Clock3 className="mr-1 inline h-3.5 w-3.5" />自动通知只发送提醒中心当前存在的生命周期提醒。完成充值、更新有效期或调整保号规则后，提醒从中心消失，也就不会继续发送。</div>
+      <div className="rounded-xl border border-slate-100 bg-white px-4 py-3 text-xs leading-5 text-slate-400"><Clock3 className="mr-1 inline h-3.5 w-3.5" />自动通知只在里程碑日的设定时间运行一次。完成充值、更新有效期或调整保号规则后，提醒从中心消失，也就不会继续发送。</div>
     </div>
   );
 }
