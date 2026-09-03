@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -12,7 +11,6 @@ import {
   CheckCircle2,
   CircleHelp,
   Clock3,
-  ExternalLink,
   History,
   Loader2,
   Search,
@@ -24,6 +22,9 @@ import {
   XCircle,
 } from "lucide-react";
 import { KeepAliveEventModal } from "@/components/keep-alive/keep-alive-event-modal";
+import { SimEditorModal } from "@/components/sims/sim-editor-modal";
+import { SimOverviewModal } from "@/components/sims/sim-overview-modal";
+import { TariffModal } from "@/components/sims/tariff-modal";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ModalPortal } from "@/components/ui/modal-portal";
@@ -43,6 +44,7 @@ import {
   type ReminderItem,
   type ReminderStatus,
 } from "@/lib/reminders";
+import type { CarrierRecord, SimRecord } from "@/lib/sim-types";
 
 function statusClass(status: ReminderStatus) {
   if (status === "overdue") return "bg-rose-50 text-rose-700 ring-rose-100";
@@ -115,6 +117,12 @@ export function ReminderCenter({
   const [activityPickerLoading, setActivityPickerLoading] = useState(false);
   const [activitySims, setActivitySims] = useState<KeepAliveSimSummary[]>([]);
   const [activityTarget, setActivityTarget] = useState<KeepAliveSimSummary | null>(null);
+  const [overviewLoadingSimId, setOverviewLoadingSimId] = useState<number | null>(null);
+  const [overviewSim, setOverviewSim] = useState<SimRecord | null>(null);
+  const [carriers, setCarriers] = useState<CarrierRecord[]>([]);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editing, setEditing] = useState<SimRecord | null>(null);
+  const [tariffSim, setTariffSim] = useState<SimRecord | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => setItems(reminders), [reminders]);
@@ -250,6 +258,30 @@ export function ReminderCenter({
     }
   }
 
+  async function openSimOverview(simId: number) {
+    if (overviewLoadingSimId !== null) return;
+    setOverviewLoadingSimId(simId);
+    setError("");
+    try {
+      const [simsResponse, carriersResponse] = await Promise.all([
+        fetch("/api/sims", { cache: "no-store" }),
+        fetch("/api/carriers", { cache: "no-store" }),
+      ]);
+      const [simsData, carriersData] = await Promise.all([simsResponse.json(), carriersResponse.json()]);
+      if (!simsResponse.ok) throw new Error(simsData.error || "号码详情加载失败");
+      if (!carriersResponse.ok) throw new Error(carriersData.error || "运营商数据加载失败");
+      const sims = Array.isArray(simsData.sims) ? simsData.sims as SimRecord[] : [];
+      const sim = sims.find((candidate) => candidate.id === simId);
+      if (!sim) throw new Error("号码不存在或已被删除");
+      setCarriers(Array.isArray(carriersData.carriers) ? carriersData.carriers as CarrierRecord[] : []);
+      setOverviewSim(sim);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "号码详情加载失败");
+    } finally {
+      setOverviewLoadingSimId(null);
+    }
+  }
+
   async function openActivityPicker() {
     setActivityPickerOpen(true);
     setActivityPickerLoading(true);
@@ -289,6 +321,11 @@ export function ReminderCenter({
     }
   }
 
+  async function refreshAfterSimChange() {
+    await reloadReminderState();
+    router.refresh();
+  }
+
   return (
     <div className="space-y-6">
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -309,42 +346,66 @@ export function ReminderCenter({
       {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
 
       <Card className="overflow-hidden">
-        <div className="space-y-4 border-b p-4 sm:p-5">
-          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="inline-flex w-fit rounded-xl bg-slate-100 p-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setView("active");
-                    setQuery("");
-                  }}
-                  className={`h-8 rounded-lg px-3 text-xs font-medium transition ${view === "active" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
-                >
-                  待处理 · {items.length}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setView("history");
-                    setQuery("");
-                  }}
-                  className={`h-8 rounded-lg px-3 text-xs font-medium transition ${view === "history" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
-                >
-                  处理历史 · {actionHistory.length}
-                </button>
-              </div>
+        <div className="space-y-3 border-b p-4 sm:p-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="inline-flex w-fit rounded-xl bg-slate-100 p-1">
               <button
                 type="button"
-                onClick={() => void openActivityPicker()}
-                disabled={activityPickerLoading}
-                className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl bg-slate-950 px-3.5 text-xs font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={() => {
+                  setView("active");
+                  setQuery("");
+                }}
+                className={`h-8 rounded-lg px-3 text-xs font-medium transition ${view === "active" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
               >
-                {activityPickerLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Activity className="h-3.5 w-3.5" />}
-                记录活动
+                待处理 · {items.length}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setView("history");
+                  setQuery("");
+                }}
+                className={`h-8 rounded-lg px-3 text-xs font-medium transition ${view === "history" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
+              >
+                处理历史 · {actionHistory.length}
               </button>
             </div>
-            <div className="relative w-full xl:w-96">
+            <button
+              type="button"
+              onClick={() => void openActivityPicker()}
+              disabled={activityPickerLoading}
+              className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl bg-slate-950 px-3.5 text-xs font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {activityPickerLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Activity className="h-3.5 w-3.5" />}
+              记录活动
+            </button>
+          </div>
+
+          <div className="flex flex-col gap-2 xl:flex-row xl:items-center">
+            {view === "active" ? (
+              <>
+                <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-slate-400">
+                  <option value="all">全部状态</option>
+                  <option value="urgent">需要优先处理</option>
+                  <option value="overdue">已逾期</option>
+                  <option value="grace">宽限期</option>
+                  <option value="today">今天到期</option>
+                  <option value="upcoming">即将到期</option>
+                  <option value="unscheduled">待设置日期</option>
+                </select>
+                <select value={kindFilter} onChange={(event) => setKindFilter(event.target.value)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-slate-400">
+                  <option value="all">全部类型</option>
+                  <option value="sim_validity">号码有效期</option>
+                  <option value="keep_alive">保号规则</option>
+                </select>
+                <div className="text-xs text-slate-400 xl:ml-auto">
+                  显示 {filtered.length} / {items.length} 项任务{summary.unscheduled ? ` · 待设置日期 ${summary.unscheduled} 项` : ""}
+                </div>
+              </>
+            ) : (
+              <div className="text-xs leading-5 text-slate-400 xl:flex-1">处理历史可以手动删除。删除“稍后提醒 / 忽略本轮”会取消对应提醒控制；删除已完成核验记录不会回滚真实生命周期数据。</div>
+            )}
+            <div className={`relative w-full xl:w-96 ${view === "history" ? "xl:ml-auto" : ""}`}>
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <Input
                 value={query}
@@ -354,30 +415,6 @@ export function ReminderCenter({
               />
             </div>
           </div>
-
-          {view === "active" ? (
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-slate-400">
-                <option value="all">全部状态</option>
-                <option value="urgent">需要优先处理</option>
-                <option value="overdue">已逾期</option>
-                <option value="grace">宽限期</option>
-                <option value="today">今天到期</option>
-                <option value="upcoming">即将到期</option>
-                <option value="unscheduled">待设置日期</option>
-              </select>
-              <select value={kindFilter} onChange={(event) => setKindFilter(event.target.value)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-slate-400">
-                <option value="all">全部类型</option>
-                <option value="sim_validity">号码有效期</option>
-                <option value="keep_alive">保号规则</option>
-              </select>
-              <div className="flex items-center text-xs text-slate-400 sm:ml-auto">
-                显示 {filtered.length} / {items.length} 项任务{summary.unscheduled ? ` · 待设置日期 ${summary.unscheduled} 项` : ""}
-              </div>
-            </div>
-          ) : (
-            <div className="text-xs text-slate-400">处理历史可以手动删除。删除“稍后提醒 / 忽略本轮”会取消对应提醒控制；删除已完成核验记录不会回滚真实生命周期数据。</div>
-          )}
         </div>
 
         {view === "active" ? (
@@ -387,16 +424,25 @@ export function ReminderCenter({
                 const Icon = item.kind === "sim_validity" ? Smartphone : ShieldCheck;
                 const occurrence = `${item.key}:${item.dueDate ?? "none"}`;
                 const busy = actingKey === occurrence || completionLoadingKey === occurrence;
+                const overviewLoading = overviewLoadingSimId === item.simId;
                 return (
                   <div
                     id={getReminderTaskAnchor(item)}
                     key={`${item.key}-${item.dueDate ?? "none"}`}
-                    className="scroll-mt-28 p-4 transition hover:bg-slate-50/70 target:bg-sky-50/50 target:ring-2 target:ring-inset target:ring-sky-200 sm:p-5"
+                    className="scroll-mt-28 p-3 target:bg-sky-50/50 target:ring-2 target:ring-inset target:ring-sky-200 sm:p-4"
                   >
-                    <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                      <div className="flex min-w-0 items-start gap-3">
-                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600"><Icon className="h-4 w-4" /></div>
-                        <div className="min-w-0">
+                    <div className="flex flex-col gap-3 xl:flex-row xl:items-stretch xl:justify-between">
+                      <button
+                        type="button"
+                        onClick={() => void openSimOverview(item.simId)}
+                        disabled={overviewLoading}
+                        aria-label={`查看 ${item.simLabel} 号码详情`}
+                        className="group flex min-w-0 flex-1 items-start gap-3 rounded-xl p-2 text-left outline-none transition hover:bg-slate-50 focus-visible:bg-slate-50 focus-visible:ring-2 focus-visible:ring-slate-200 disabled:cursor-wait"
+                      >
+                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600 transition group-hover:bg-white">
+                          {overviewLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Icon className="h-4 w-4" />}
+                        </div>
+                        <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="font-medium text-slate-900">{item.simLabel}</span>
                             <span className={`rounded-md px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset ${statusClass(item.status)}`}>{getReminderStatusLabel(item.status)}</span>
@@ -410,24 +456,25 @@ export function ReminderCenter({
                           </div>
                           <div className="mt-2 text-xs leading-5 text-slate-400">{item.detail}</div>
                         </div>
-                      </div>
+                        <div className="ml-auto hidden shrink-0 pl-4 text-right xl:block">
+                          <div className={`text-sm font-medium ${relativeClass(item.status)}`}>{getReminderRelativeLabel(item)}</div>
+                          <div className="mt-0.5 text-xs text-slate-400">{item.dueDate || "未设置日期"}</div>
+                        </div>
+                      </button>
 
-                      <div className="flex shrink-0 flex-col items-start gap-3 xl:items-end">
-                        <div className="text-left xl:text-right">
+                      <div className="flex shrink-0 flex-col items-start justify-center gap-2 px-2 pb-2 xl:items-end xl:py-2">
+                        <div className="text-left xl:hidden">
                           <div className={`text-sm font-medium ${relativeClass(item.status)}`}>{getReminderRelativeLabel(item)}</div>
                           <div className="mt-0.5 text-xs text-slate-400">{item.dueDate || "未设置日期"}</div>
                         </div>
                         <div className="flex flex-wrap items-center gap-2 xl:justify-end">
-                          <Link href={item.href} className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-600 transition hover:bg-white hover:text-slate-950">
-                            查看号码详情 <ExternalLink className="h-3 w-3" />
-                          </Link>
                           <button
                             type="button"
                             disabled={busy}
                             onClick={() => void openCompletion(item)}
                             className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3 text-xs font-medium text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
                           >
-                            {completionLoadingKey === occurrence ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}完成处理
+                            {completionLoadingKey === occurrence ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}立即处理
                           </button>
                           <select
                             defaultValue=""
@@ -486,11 +533,20 @@ export function ReminderCenter({
             {filteredHistory.map((item) => {
               const ActionIcon = actionIcon(item.action);
               const deleting = deletingActionId === item.id;
+              const overviewLoading = overviewLoadingSimId === item.simId;
               return (
-                <div key={item.id} className="p-4 sm:p-5">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="flex min-w-0 items-start gap-3">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-500"><History className="h-4 w-4" /></div>
+                <div key={item.id} className="p-3 sm:p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-stretch sm:justify-between">
+                    <button
+                      type="button"
+                      onClick={() => void openSimOverview(item.simId)}
+                      disabled={overviewLoading}
+                      aria-label={`查看 ${item.simLabel} 号码详情`}
+                      className="group flex min-w-0 flex-1 items-start gap-3 rounded-xl p-2 text-left outline-none transition hover:bg-slate-50 focus-visible:bg-slate-50 focus-visible:ring-2 focus-visible:ring-slate-200 disabled:cursor-wait"
+                    >
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-500 transition group-hover:bg-white">
+                        {overviewLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <History className="h-4 w-4" />}
+                      </div>
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-medium text-slate-900">{item.simLabel}</span>
@@ -505,8 +561,8 @@ export function ReminderCenter({
                           {item.action === "completed" && !item.verified ? <span className="font-medium text-amber-600">该记录来自旧版一键标记，不再用于压制提醒</span> : null}
                         </div>
                       </div>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
+                    </button>
+                    <div className="flex shrink-0 items-center gap-2 px-2 pb-2 sm:py-2">
                       <span className="text-xs text-slate-400">{formatActionTime(item.actedAt)}</span>
                       <button
                         type="button"
@@ -599,6 +655,46 @@ export function ReminderCenter({
           onClose={() => setActivityTarget(null)}
           onSaved={async () => {
             await reloadReminderState();
+            router.refresh();
+          }}
+        />
+      ) : null}
+
+      {overviewSim ? (
+        <SimOverviewModal
+          sim={overviewSim}
+          onClose={() => setOverviewSim(null)}
+          onEdit={() => {
+            const sim = overviewSim;
+            setOverviewSim(null);
+            setEditing(sim);
+            setEditorOpen(true);
+          }}
+          onEditTariff={() => {
+            const sim = overviewSim;
+            setOverviewSim(null);
+            setTariffSim(sim);
+          }}
+        />
+      ) : null}
+
+      {editorOpen ? (
+        <SimEditorModal
+          carriers={carriers}
+          editing={editing}
+          onClose={() => {
+            setEditorOpen(false);
+            setEditing(null);
+          }}
+          onSaved={refreshAfterSimChange}
+        />
+      ) : null}
+
+      {tariffSim ? (
+        <TariffModal
+          sim={tariffSim}
+          onClose={() => setTariffSim(null)}
+          onSaved={async () => {
             router.refresh();
           }}
         />
