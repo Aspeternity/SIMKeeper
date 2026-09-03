@@ -30,17 +30,18 @@ function buildPreview(templates: NotificationTemplates) {
   const item = renderNotificationTemplate(templates.itemTemplate, {
     ...shared,
     index: 1,
-    simLabel: "CSL香港",
-    phoneNumber: "+852 5123 4567",
-    carrierName: "csl.",
-    country: "香港",
-    title: "号码有效期",
+    simLabel: "Globe菲律宾",
+    phoneNumber: "+63 912 345 6789",
+    carrierName: "Globe",
+    country: "菲律宾",
+    title: "号码有效期 · 充值至少 PHP 20",
     kind: "号码有效期",
     status: "即将到期",
     relative: "还有 7 天",
-    dueDate: "2026-09-10",
-    dueSuffix: " · 2026-09-10",
-    detail: "号码有效期将在 2026-09-10 到期",
+    dueDate: "2027-08-30",
+    dueSuffix: " · 2027-08-30",
+    requirement: "充值至少 PHP 20",
+    detail: "号码有效期将在 2027-08-30 到期 · 操作要求：充值至少 PHP 20",
   });
 
   return {
@@ -129,7 +130,7 @@ export function NotificationTemplateModal({ templates, onClose, onSaved }: Notif
                     <span key={item.key} title={item.label} className="rounded-md bg-slate-50 px-2 py-1 font-mono text-[11px] text-slate-500 ring-1 ring-inset ring-slate-100">{`{{${item.key}}}`}</span>
                   ))}
                 </div>
-                <p className="mt-2 text-xs leading-5 text-slate-400">标题 / 正文常用 heading、count、date、channelName；单条提醒可使用号码、运营商、状态、到期日和 detail 等变量。</p>
+                <p className="mt-2 text-xs leading-5 text-slate-400">标题 / 正文常用 heading、count、date、channelName；单条提醒可使用号码、运营商、状态、到期日、requirement 和 detail 等变量。</p>
               </div>
             </div>
 
