@@ -17,7 +17,7 @@ export type ReminderItem = {
   days: number | null;
   href: string;
   detail: string;
-  requirement: string | null;
+  requirement?: string | null;
 };
 
 type ReminderSim = {
@@ -108,7 +108,7 @@ export function buildReminderItems({
           carrierName: sim.carrierName,
           country: sim.country,
           kind: "sim_validity",
-          title: "号码有效期",
+          title: requirement ? `号码有效期 · ${requirement}` : "号码有效期",
           dueDate: sim.validUntil,
           status,
           days: state.days,
@@ -162,7 +162,7 @@ export function buildReminderItems({
         carrierName: sim.carrierName,
         country: sim.country,
         kind: "keep_alive",
-        title: `保号 · ${rule.name}`,
+        title: `保号 · ${rule.name}${requirement ? ` · ${requirement}` : ""}`,
         dueDate: rule.nextDueDate,
         status,
         days: state.days,
