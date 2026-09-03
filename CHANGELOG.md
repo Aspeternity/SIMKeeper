@@ -1,5 +1,43 @@
 # Changelog
 
+## v0.1.0-alpha.8.3
+
+### Added
+
+- User-controlled `错过计划时间后补发` switch for the exact daily notification scheduler
+- Global customizable notification title, digest-body and per-reminder templates shared by Telegram, Bark, Gotify and Webhook
+- Template variables for app name, heading, reminder count, date, channel name, SIM label, phone number, carrier, country/region, reminder source, status, relative time, due date and detailed reminder text
+- Live template preview using sample lifecycle data before saving
+- One-click restore of the default notification templates
+- Channel test notifications now render a sample reminder through the currently saved templates so the final notification appearance can be verified directly
+- Post-publish notification smoke coverage for disabled catch-up behavior, template persistence, real rendered Webhook payloads, digest aggregation, secret masking and backup coverage
+
+### Changed
+
+- Catch-up remains enabled by default for existing installations, but can now be disabled independently from the notification master switch
+- When catch-up is disabled and SIMKeeper starts after the daily notification time, that day's automatic run is skipped and the scheduler waits for the next planned day
+- Notification schedule and template settings are persisted in the existing `settings` table and therefore automatically included in complete backups and restores
+- Sidebar and package version updated to `v0.1.0-alpha.8.3`
+
+## v0.1.0-alpha.8.2
+
+### Added
+
+- Exact `HH:MM` daily notification scheduling in `Asia/Shanghai` instead of a start-hour window
+- Configurable lifecycle notification milestones with defaults at 30, 14, 7, 3, 1 and 0 days before the due date
+- Overdue reminder cadence at day 1, day 3, day 7 and then every 7 days; unscheduled lifecycle items repeat every 7 days
+- Per-channel filters for reminder source and lifecycle status
+- One digest per enabled channel containing all reminders due for that run instead of one message per reminder
+- Server-side notification-secret masking for Telegram Bot Token, Bark Device Key, Gotify Application Token and Webhook Bearer Token
+- Secret-preserving channel edits where an empty credential field keeps the existing server-side value
+
+### Changed
+
+- Removed the 15-minute polling model; the runtime now arms a timer for the next exact daily notification time
+- A container that starts after the configured time catches up once for that day, then schedules the next daily run
+- Manual `立即发送当前提醒` ignores milestone timing but continues to respect each channel's reminder filters and digest formatting
+- Automatic notification delivery records remain per underlying reminder so history and deduplication stay traceable even when several reminders are delivered in one digest
+
 ## v0.1.0-alpha.8.1
 
 ### Fixed
