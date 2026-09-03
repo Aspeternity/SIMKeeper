@@ -10,6 +10,7 @@ import {
   getKeepAliveActivityLabel,
   getKeepAliveDueDateSourceLabel,
   getKeepAliveIntervalLabel,
+  getKeepAliveRechargeRequirementLabel,
   getKeepAliveRuleStatusLabel,
   type KeepAliveRuleStatus,
 } from "@/lib/keep-alive";
@@ -122,7 +123,7 @@ export default function KeepAlivePage() {
       <div>
         <div className="flex items-center gap-2 text-sm font-medium text-slate-500"><ShieldCheck className="h-4 w-4" />生命周期</div>
         <h2 className="mt-2 text-2xl font-semibold tracking-tight">保号管理</h2>
-        <p className="mt-1 text-sm text-slate-500">号码有效期类规则直接跟随号码资料；独立活跃规则单独计算自己的下一次操作日期。</p>
+        <p className="mt-1 text-sm text-slate-500">号码有效期类规则直接跟随号码资料；独立活跃规则单独计算自己的下一次操作日期，充值类规则还可以设置最低有效充值金额。</p>
       </div>
 
       {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
@@ -194,6 +195,9 @@ export default function KeepAlivePage() {
                                 <span className="rounded-md bg-slate-50 px-2 py-0.5 text-[10px] text-slate-500 ring-1 ring-inset ring-slate-100">{getKeepAliveDueDateSourceLabel(rule.dueDateSource)}</span>
                               </div>
                               <div className="mt-1 text-xs text-slate-400">每 {getKeepAliveIntervalLabel(rule.intervalValue, rule.intervalUnit)} · {rule.qualifyingActions.map(getKeepAliveActivityLabel).join(" / ")}</div>
+                              {getKeepAliveRechargeRequirementLabel(rule.minimumRechargeAmount, rule.rechargeCurrencyCode) ? (
+                                <div className="mt-1 text-xs font-medium text-slate-500">充值要求：{getKeepAliveRechargeRequirementLabel(rule.minimumRechargeAmount, rule.rechargeCurrencyCode)}</div>
+                              ) : null}
                             </div>
                             <div className="flex shrink-0 gap-1">
                               <button type="button" onClick={() => setRuleTarget({ sim, rule })} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700" title="编辑规则"><Pencil className="h-3.5 w-3.5" /></button>
@@ -226,6 +230,7 @@ export default function KeepAlivePage() {
           simId={ruleTarget.sim.id}
           simLabel={ruleTarget.sim.label}
           simValidUntil={ruleTarget.sim.validUntil}
+          simCurrencyCode={ruleTarget.sim.currencyCode}
           rule={ruleTarget.rule}
           onClose={() => setRuleTarget(null)}
           onSaved={loadData}
