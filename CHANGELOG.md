@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.1.0-alpha.8.5
+
+### Added
+
+- Per-rule minimum recharge amount and currency for keep-alive rules that use `充值` as a qualifying activity
+- Dedicated recharge-requirement controls in the keep-alive rule editor instead of storing minimum amounts in freeform notes
+- Live qualification preview while recording an activity, including clear reasons for missing amount, wrong currency or an amount below the configured threshold
+- Recharge requirements shown directly in Keep-alive Management, Number Details, Reminder Center and Dashboard lifecycle actions
+- Recharge requirements propagated to Telegram, Bark, Gotify and Webhook reminder digests through the shared reminder engine
+- `{{requirement}}` notification-template variable for custom message formats, with a Globe-style `充值至少 PHP 20` live preview example
+- Post-publish keep-alive recharge smoke coverage for below-minimum, missing-amount, wrong-currency and qualifying recharge events
+
+### Changed
+
+- Recharge events are always retained in activity history, but a rule with a minimum recharge requirement advances only when the recorded amount and currency satisfy that rule
+- An event below the minimum, without an amount, or using a different currency no longer refreshes the keep-alive rule; SIMKeeper deliberately does not guess foreign-exchange equivalence
+- Independent rules that initialize their next-action date from activity history now ignore historical recharge records that do not satisfy the configured amount/currency requirement
+- Validity-linked rules continue to treat the carrier-reported SIM validity date as authoritative; the recharge threshold controls whether an activity qualifies, while `活动后有效期` remains the explicit source for a newly observed carrier expiry date
+- Existing keep-alive rules upgrade in place with no amount requirement by default, preserving their previous behavior
+- The new rule fields use the existing compatible-column backup/restore path and are therefore included automatically in complete backups
+- Sidebar and package version updated to `v0.1.0-alpha.8.5`
+
 ## v0.1.0-alpha.8.4
 
 ### Changed
