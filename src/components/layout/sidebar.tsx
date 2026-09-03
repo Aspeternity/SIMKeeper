@@ -25,7 +25,7 @@ export function Sidebar() {
         </div>
         <div>
           <div className="font-semibold tracking-tight">SIMKeeper</div>
-          <div className="text-xs text-slate-400">v0.1.0-alpha.8.5</div>
+          <div className="text-xs text-slate-400">v0.1.0-alpha.8.6</div>
         </div>
       </div>
 
