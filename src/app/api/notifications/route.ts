@@ -11,7 +11,9 @@ import {
   getNotificationSettings,
   listNotificationChannels,
   listNotificationDeliveries,
+  setNotificationSchedule,
   setNotificationSettings,
+  setNotificationTemplates,
   testNotificationChannel,
   updateNotificationChannel,
   type NotificationChannel,
@@ -50,6 +52,20 @@ const channelBaseSchema = z.object({
 const filterSchema = z.object({
   kinds: z.array(z.enum(reminderKindValues)).min(1, "至少选择一种提醒来源"),
   statuses: z.array(z.enum(reminderStatusValues)).min(1, "至少选择一种提醒状态"),
+});
+
+const scheduleSchema = z.object({
+  enabled: z.boolean(),
+  dailyTime: z.string().trim().regex(/^\d{2}:\d{2}$/).optional(),
+  dailyHour: z.coerce.number().int().min(0).max(23).optional(),
+  milestoneDays: z.array(z.coerce.number().int().min(0).max(365)).min(1).optional(),
+  catchUpEnabled: z.boolean().optional(),
+});
+
+const templateSchema = z.object({
+  titleTemplate: z.string().max(300),
+  bodyTemplate: z.string().max(4000),
+  itemTemplate: z.string().max(2000),
 });
 
 const defaultFilters = {
@@ -171,6 +187,19 @@ function responseData() {
   };
 }
 
+function resolveSchedule(raw: unknown) {
+  const parsed = scheduleSchema.parse(raw);
+  const current = getNotificationSettings();
+  const dailyTime = parsed.dailyTime
+    ?? (parsed.dailyHour !== undefined ? `${String(parsed.dailyHour).padStart(2, "0")}:00` : current.dailyTime);
+  return {
+    enabled: parsed.enabled,
+    dailyTime,
+    milestoneDays: parsed.milestoneDays ?? current.milestoneDays,
+    catchUpEnabled: parsed.catchUpEnabled ?? current.catchUpEnabled,
+  };
+}
+
 export async function GET() {
   const unauthorized = await requireUser();
   if (unauthorized) return unauthorized;
@@ -228,19 +257,24 @@ export async function PATCH(request: NextRequest) {
   const action = typeof body?.action === "string" ? body.action : "";
 
   try {
+    if (action === "schedule") {
+      setNotificationSchedule(resolveSchedule(body?.schedule));
+      return NextResponse.json(responseData());
+    }
+
+    if (action === "templates") {
+      const templates = templateSchema.parse(body?.templates);
+      setNotificationTemplates(templates);
+      return NextResponse.json(responseData());
+    }
+
+    // Backward compatibility for clients created before alpha.8.4.
     if (action === "settings") {
-      const parsed = z
-        .object({
-          enabled: z.boolean(),
-          dailyTime: z.string().trim().regex(/^\d{2}:\d{2}$/).optional(),
-          dailyHour: z.coerce.number().int().min(0).max(23).optional(),
-          milestoneDays: z.array(z.coerce.number().int().min(0).max(365)).min(1).optional(),
-          catchUpEnabled: z.boolean().optional(),
-          titleTemplate: z.string().max(300).optional(),
-          bodyTemplate: z.string().max(4000).optional(),
-          itemTemplate: z.string().max(2000).optional(),
-        })
-        .parse(body?.settings);
+      const parsed = scheduleSchema.extend({
+        titleTemplate: z.string().max(300).optional(),
+        bodyTemplate: z.string().max(4000).optional(),
+        itemTemplate: z.string().max(2000).optional(),
+      }).parse(body?.settings);
       const current = getNotificationSettings();
       const dailyTime = parsed.dailyTime
         ?? (parsed.dailyHour !== undefined ? `${String(parsed.dailyHour).padStart(2, "0")}:00` : current.dailyTime);
