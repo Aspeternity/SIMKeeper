@@ -6,8 +6,22 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ModalPortal } from "@/components/ui/modal-portal";
 import { CURRENCIES } from "@/lib/sim-options";
-import { KEEP_ALIVE_ACTIVITY_TYPES, getKeepAliveActivityLabel, localDateString } from "@/lib/keep-alive";
+import {
+  KEEP_ALIVE_ACTIVITY_TYPES,
+  evaluateKeepAliveActivityRequirement,
+  getKeepAliveActivityLabel,
+  getKeepAliveRechargeRequirementLabel,
+  localDateString,
+} from "@/lib/keep-alive";
 import type { KeepAliveRuleRecord, KeepAliveSimSummary } from "@/lib/keep-alive-types";
+
+function qualificationReason(rule: KeepAliveRuleRecord, reason: string | null) {
+  const requirement = getKeepAliveRechargeRequirementLabel(rule.minimumRechargeAmount, rule.rechargeCurrencyCode);
+  if (reason === "missing_amount") return `${requirement || "该规则有充值金额要求"}，请填写本次实际充值金额`;
+  if (reason === "currency_mismatch") return `${requirement || "充值币种不一致"}，本次币种与规则不一致`;
+  if (reason === "below_minimum") return `本次充值未达到${requirement ? `“${requirement}”` : "最低充值金额"}`;
+  return "本次活动未满足规则条件";
+}
 
 export function KeepAliveEventModal({
   sim,
@@ -30,17 +44,39 @@ export function KeepAliveEventModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const matchingRules = useMemo(
+  const actionMatchedRules = useMemo(
     () => rules.filter((rule) => rule.enabled && rule.qualifyingActions.includes(activityType)),
     [activityType, rules],
   );
+  const ruleEvaluations = useMemo(() => {
+    const parsedAmount = amount.trim() === "" ? null : Number(amount);
+    return actionMatchedRules.map((rule) => ({
+      rule,
+      qualification: evaluateKeepAliveActivityRequirement({
+        qualifyingActions: rule.qualifyingActions,
+        minimumRechargeAmount: rule.minimumRechargeAmount,
+        rechargeCurrencyCode: rule.rechargeCurrencyCode,
+        activityType,
+        amount: Number.isFinite(parsedAmount) ? parsedAmount : null,
+        currencyCode,
+      }),
+    }));
+  }, [actionMatchedRules, activityType, amount, currencyCode]);
+  const qualifiedRules = useMemo(
+    () => ruleEvaluations.filter((item) => item.qualification.qualifies).map((item) => item.rule),
+    [ruleEvaluations],
+  );
+  const blockedRules = useMemo(
+    () => ruleEvaluations.filter((item) => !item.qualification.qualifies),
+    [ruleEvaluations],
+  );
   const linkedValidityRules = useMemo(
-    () => matchingRules.filter((rule) => rule.dueDateSource === "sim_validity"),
-    [matchingRules],
+    () => qualifiedRules.filter((rule) => rule.dueDateSource === "sim_validity"),
+    [qualifiedRules],
   );
   const independentRules = useMemo(
-    () => matchingRules.filter((rule) => rule.dueDateSource !== "sim_validity"),
-    [matchingRules],
+    () => qualifiedRules.filter((rule) => rule.dueDateSource !== "sim_validity"),
+    [qualifiedRules],
   );
 
   async function submit(event: FormEvent) {
@@ -73,6 +109,12 @@ export function KeepAliveEventModal({
     }
   }
 
+  const statusTone = !actionMatchedRules.length
+    ? "border-slate-200 bg-slate-50 text-slate-500"
+    : blockedRules.length
+      ? "border-amber-200 bg-amber-50 text-amber-800"
+      : "border-emerald-200 bg-emerald-50 text-emerald-700";
+
   return (
     <ModalPortal onBackdropClick={saving ? undefined : onClose}>
       <Card className="w-full max-w-2xl overflow-hidden shadow-2xl">
@@ -99,22 +141,26 @@ export function KeepAliveEventModal({
             </label>
           </div>
 
-          <div className={`rounded-xl border px-4 py-3 text-sm ${matchingRules.length ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-slate-50 text-slate-500"}`}>
-            {matchingRules.length ? (
-              <div className="space-y-1">
-                <div>这次“{getKeepAliveActivityLabel(activityType)}”命中 <strong>{matchingRules.length}</strong> 条规则：{matchingRules.map((rule) => rule.name).join("、")}。</div>
-                {independentRules.length ? <div className="text-xs">其中 {independentRules.length} 条独立规则会按各自周期自动推进。</div> : null}
-                {linkedValidityRules.length ? <div className="text-xs">其中 {linkedValidityRules.length} 条规则跟随号码有效期；请以下方“活动后有效期”为准，不会仅凭周期猜测新的到期日。</div> : null}
-              </div>
+          <div className={`rounded-xl border px-4 py-3 text-sm ${statusTone}`}>
+            {!actionMatchedRules.length ? (
+              <>当前没有规则把“{getKeepAliveActivityLabel(activityType)}”设为有效保号动作；记录会保留，但不会自动改变保号日期。</>
             ) : (
-              <>当前没有规则把“{getKeepAliveActivityLabel(activityType)}”设为有效保号动作；记录会保留，但不会自动改变独立保号日期。</>
+              <div className="space-y-1.5">
+                <div>“{getKeepAliveActivityLabel(activityType)}”关联 <strong>{actionMatchedRules.length}</strong> 条规则；按当前填写内容，<strong>{qualifiedRules.length}</strong> 条满足刷新条件。</div>
+                {blockedRules.map(({ rule, qualification }) => (
+                  <div key={rule.id} className="text-xs">• {rule.name}：{qualificationReason(rule, qualification.reason)}</div>
+                ))}
+                {independentRules.length ? <div className="text-xs">满足条件的 {independentRules.length} 条独立规则会按各自周期自动推进。</div> : null}
+                {linkedValidityRules.length ? <div className="text-xs">满足条件的 {linkedValidityRules.length} 条规则跟随号码有效期；请以下方“活动后有效期”为准，不会仅凭周期猜测新的到期日。</div> : null}
+              </div>
             )}
           </div>
 
           <div className="grid gap-4 sm:grid-cols-[1fr_150px]">
             <label className="space-y-1.5 text-sm">
-              <span className="font-medium text-slate-700">本次金额</span>
-              <Input value={amount} onChange={(event) => setAmount(event.target.value)} type="number" min="0" step="any" inputMode="decimal" placeholder="可选，例如充值金额" />
+              <span className="font-medium text-slate-700">{activityType === "recharge" ? "充值金额" : "本次金额"}</span>
+              <Input value={amount} onChange={(event) => setAmount(event.target.value)} type="number" min="0" step="any" inputMode="decimal" placeholder={activityType === "recharge" ? "填写本次实际充值金额" : "可选"} />
+              {activityType === "recharge" && actionMatchedRules.some((rule) => rule.minimumRechargeAmount !== null) ? <div className="text-xs text-slate-400">存在最低充值金额要求；金额不足或留空时，相关规则不会被刷新。</div> : null}
             </label>
             <label className="space-y-1.5 text-sm">
               <span className="font-medium text-slate-700">币种</span>
@@ -134,7 +180,7 @@ export function KeepAliveEventModal({
               <Input value={validUntilAfter} onChange={(event) => setValidUntilAfter(event.target.value)} type="date" />
               <div className={`text-xs ${linkedValidityRules.length ? "font-medium text-amber-600" : "text-slate-400"}`}>
                 {linkedValidityRules.length
-                  ? "这张卡存在跟随号码有效期的规则；运营商显示新有效期后建议填写，保存后号码管理与保号管理会同时更新。"
+                  ? "这次活动已满足跟随号码有效期规则的条件；运营商显示新有效期后建议填写，保存后号码管理与保号管理会同时更新。"
                   : "填写后会同步更新号码资料中的“有效期至”。"}
               </div>
             </label>
@@ -142,7 +188,7 @@ export function KeepAliveEventModal({
 
           <label className="block space-y-1.5 text-sm">
             <span className="font-medium text-slate-700">活动备注</span>
-            <textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} placeholder="例如：充值 HK$20，活动期延长 365 天；通过官方 App 完成" className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100" />
+            <textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} placeholder="例如：充值 PHP 20，有效期延长至运营商显示的新日期；通过官方 App 完成" className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100" />
           </label>
 
           {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
