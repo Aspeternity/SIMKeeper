@@ -13,6 +13,7 @@ import {
   type KeepAliveRuleStatus,
 } from "@/lib/keep-alive";
 import type { KeepAliveEventRecord, KeepAliveRuleRecord } from "@/lib/keep-alive-types";
+import { getReminderActionRecordLabel, type ReminderActionRecord } from "@/lib/reminder-action-types";
 
 function statusClass(status: KeepAliveRuleStatus) {
   if (status === "overdue") return "bg-rose-50 text-rose-700 ring-rose-100";
@@ -20,6 +21,14 @@ function statusClass(status: KeepAliveRuleStatus) {
   if (status === "due_soon") return "bg-amber-50 text-amber-700 ring-amber-100";
   if (status === "ok") return "bg-emerald-50 text-emerald-700 ring-emerald-100";
   return "bg-slate-100 text-slate-500 ring-slate-200";
+}
+
+function reminderActionClass(action: ReminderActionRecord) {
+  if (action.action === "snoozed") return "bg-sky-50 text-sky-700 ring-sky-100";
+  if (action.action === "ignored") return "bg-slate-100 text-slate-600 ring-slate-200";
+  return action.verified
+    ? "bg-emerald-50 text-emerald-700 ring-emerald-100"
+    : "bg-amber-50 text-amber-700 ring-amber-100";
 }
 
 function eventSummary(event: KeepAliveEventRecord) {
@@ -94,7 +103,7 @@ export function KeepAliveOverviewSection({
             <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
             <span className="min-w-0">
               <span className="block font-medium text-slate-900">保号状态</span>
-              <span className="mt-1 block text-xs font-normal leading-5 text-slate-400">查看当前保号规则、活动要求、日期来源、下一次操作日期和最近活动记录。</span>
+              <span className="mt-1 block text-xs font-normal leading-5 text-slate-400">真实状态按号码有效期和保号规则计算；暂缓或忽略提醒只改变通知节奏。</span>
             </span>
           </button>
           <Link href="/history" className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50">
@@ -125,6 +134,11 @@ export function KeepAliveOverviewSection({
                             {focused ? <span className="rounded-md bg-sky-100 px-2 py-0.5 text-[10px] font-medium text-sky-700">提醒对应规则</span> : null}
                             <span className={`rounded-md px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset ${statusClass(rule.status)}`}>{getKeepAliveRuleStatusLabel(rule.status)}</span>
                             <span className="rounded-md bg-slate-50 px-2 py-0.5 text-[10px] text-slate-500 ring-1 ring-inset ring-slate-100">{getKeepAliveDueDateSourceLabel(rule.dueDateSource)}</span>
+                            {rule.reminderAction ? (
+                              <span className={`rounded-md px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset ${reminderActionClass(rule.reminderAction)}`}>
+                                {getReminderActionRecordLabel(rule.reminderAction)}
+                              </span>
+                            ) : null}
                           </div>
                           <div className="mt-1 text-xs text-slate-400">每 {getKeepAliveIntervalLabel(rule.intervalValue, rule.intervalUnit)} · {rule.qualifyingActions.map(getKeepAliveActivityLabel).join(" / ")}</div>
                           {getKeepAliveRechargeRequirementLabel(rule.minimumRechargeAmount, rule.rechargeCurrencyCode) ? (
@@ -137,6 +151,17 @@ export function KeepAliveOverviewSection({
                         <div className="text-[10px] text-slate-400">{rule.dueDateSource === "sim_validity" ? "下一次操作日期 · 跟随号码有效期" : "下一次操作日期"}</div>
                         <div className="mt-0.5 text-sm font-medium text-slate-700">{rule.nextDueDate || "待设置"}</div>
                       </div>
+                      {rule.reminderAction ? (
+                        <div className="mt-2 text-[11px] leading-5 text-slate-400">
+                          {rule.reminderAction.action === "snoozed"
+                            ? "本轮真实状态没有改变，仅暂停提醒与外部通知，到暂缓日期后会自动恢复。"
+                            : rule.reminderAction.action === "ignored"
+                              ? "本轮真实状态没有改变，仅停止当前轮次的提醒与外部通知。"
+                              : rule.reminderAction.verified
+                                ? "已经记录实际处理；如果真实状态仍未更新，请检查新的有效期或保号日期。"
+                                : "这是旧版一键“已处理”记录，未经过真实操作核验，因此不再用于隐藏提醒。"}
+                        </div>
+                      ) : null}
                       {rule.notes ? <div className="mt-2 text-xs leading-5 text-slate-400">{rule.notes}</div> : null}
                     </div>
                   );

@@ -1,0 +1,174 @@
+name: Verify Reminder Resolution Workflow
+
+on:
+  workflow_run:
+    workflows:
+      - Build and Publish Docker Image
+    types:
+      - completed
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  reminder-resolution-smoke:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull verified SIMKeeper image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="${{ github.event.workflow_run.head_sha }}"
+          short="${sha:0:7}"
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          image="ghcr.io/${owner}/simkeeper:sha-${short}"
+          docker pull "$image"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Verify real reminder completion semantics
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          container="simkeeper-reminder-resolution-smoke"
+          tmp="$(mktemp -d)"
+          base="http://127.0.0.1:18085"
+          cookies="$tmp/cookies.txt"
+          initial_due="$(TZ=Asia/Shanghai date -d '+7 days' +%F)"
+          new_due="$(TZ=Asia/Shanghai date -d '+365 days' +%F)"
+          today="$(TZ=Asia/Shanghai date +%F)"
+
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            rm -rf "$tmp"
+          }
+          trap cleanup EXIT
+
+          fail() {
+            echo "::error::$1"
+            docker logs "$container" 2>&1 || true
+            for file in "$tmp"/*.json; do
+              [ -f "$file" ] || continue
+              echo "----- $file -----"
+              cat "$file" || true
+              echo
+            done
+            exit 1
+          }
+
+          mkdir -p "$tmp/data"
+          docker run -d \
+            --name "$container" \
+            -p 18085:3000 \
+            -e SIMKEEPER_COOKIE_SECURE=false \
+            -e PUID="$(id -u)" \
+            -e PGID="$(id -g)" \
+            -v "$tmp/data:/app/data" \
+            "$IMAGE" >/dev/null || fail "Unable to start reminder resolution smoke container"
+
+          ready=0
+          for _ in $(seq 1 40); do
+            if curl -fsS --max-time 2 "$base/api/health" >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          [ "$ready" -eq 1 ] || fail "SIMKeeper did not become healthy"
+
+          curl -fsS --max-time 10 -c "$cookies" -o /dev/null \
+            -X POST \
+            --data-urlencode 'username=smokeadmin' \
+            --data-urlencode 'password=smoke-test-123' \
+            --data-urlencode 'confirmPassword=smoke-test-123' \
+            "$base/api/auth/setup" || fail "Unable to create smoke administrator"
+
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/carrier.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' \
+            --data '{"name":"Smoke PH Carrier","countryCode":"PH","website":"","notes":""}' \
+            "$base/api/carriers")" || fail "Carrier creation failed"
+          [ "$status" = "201" ] || fail "Carrier creation returned HTTP $status"
+          carrier_id="$(jq -r '.carrier.id // empty' "$tmp/carrier.json")"
+          [ -n "$carrier_id" ] || fail "Carrier id missing"
+
+          jq -n --argjson carrierId "$carrier_id" --arg due "$initial_due" '{
+            label:"Reminder Smoke SIM",phoneNumber:"9171234567",carrierId:$carrierId,simType:"esim",iccid:"",balance:100,currencyCode:"PHP",status:"active",activationDate:"",validUntil:$due,
+            identityStatus:"unknown",identityName:"",identityDocumentType:"",identityDocumentTypeCustom:"",identityDocumentNumber:"",identityCountryCode:"",identityNotes:"",notes:""
+          }' > "$tmp/sim-payload.json"
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/sim.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' --data-binary @"$tmp/sim-payload.json" "$base/api/sims")" || fail "SIM creation failed"
+          [ "$status" = "201" ] || fail "SIM creation returned HTTP $status"
+          sim_id="$(jq -r '.sim.id // empty' "$tmp/sim.json")"
+          [ -n "$sim_id" ] || fail "SIM id missing"
+
+          jq -n --argjson simId "$sim_id" '{
+            simId:$simId,name:"Recharge validity",intervalValue:365,intervalUnit:"day",qualifyingActions:["recharge"],minimumRechargeAmount:20,rechargeCurrencyCode:"PHP",dueDateSource:"sim_validity",nextDueDate:"",warningDays:30,gracePeriodDays:0,enabled:true,notes:""
+          }' > "$tmp/rule-payload.json"
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/rule.json" -w '%{http_code}' \
+            -X PUT -H 'Content-Type: application/json' --data-binary @"$tmp/rule-payload.json" "$base/api/keep-alive")" || fail "Rule creation failed"
+          [ "$status" = "200" ] || fail "Rule creation returned HTTP $status"
+
+          curl -fsS --max-time 10 -b "$cookies" "$base/api/reminders" > "$tmp/reminders-initial.json" || fail "Initial reminder query failed"
+          [ "$(jq -r '.reminders | length' "$tmp/reminders-initial.json")" = "1" ] || fail "Expected one initial reminder"
+          reminder_key="$(jq -r '.reminders[0].key' "$tmp/reminders-initial.json")"
+          reminder_due="$(jq -r '.reminders[0].dueDate' "$tmp/reminders-initial.json")"
+          [ "$reminder_due" = "$initial_due" ] || fail "Initial reminder due date mismatch"
+
+          jq -n --arg key "$reminder_key" --arg due "$reminder_due" '{reminderKey:$key,dueDate:$due,action:"completed"}' > "$tmp/legacy-complete.json"
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/legacy-complete-response.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' --data-binary @"$tmp/legacy-complete.json" "$base/api/reminders")" || fail "Legacy completion guard request failed"
+          [ "$status" = "400" ] || fail "Direct reminder completion should be rejected, got HTTP $status"
+
+          curl -fsS --max-time 10 -b "$cookies" "$base/api/reminders" > "$tmp/reminders-after-guard.json" || fail "Reminder query after guard failed"
+          [ "$(jq -r '.reminders | length' "$tmp/reminders-after-guard.json")" = "1" ] || fail "Rejected completion unexpectedly hid the reminder"
+
+          jq -n --arg key "$reminder_key" --arg due "$reminder_due" '{reminderKey:$key,dueDate:$due,action:"snoozed",snoozeDays:3}' > "$tmp/snooze.json"
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/snooze-response.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' --data-binary @"$tmp/snooze.json" "$base/api/reminders")" || fail "Snooze request failed"
+          [ "$status" = "201" ] || fail "Snooze returned HTTP $status"
+          [ "$(jq -r '.reminders | length' "$tmp/snooze-response.json")" = "0" ] || fail "Snoozed reminder remained active"
+
+          curl -fsS --max-time 10 -b "$cookies" "$base/api/keep-alive?simId=$sim_id" > "$tmp/keepalive-snoozed.json" || fail "Keep-alive query after snooze failed"
+          [ "$(jq -r '.rules[0].status' "$tmp/keepalive-snoozed.json")" = "due_soon" ] || fail "Snooze changed the real lifecycle status"
+          [ "$(jq -r '.rules[0].reminderAction.action' "$tmp/keepalive-snoozed.json")" = "snoozed" ] || fail "Keep-alive payload did not expose snooze state"
+
+          jq -n --argjson simId "$sim_id" --arg date "$today" --arg newDue "$new_due" --arg key "$reminder_key" --arg due "$reminder_due" '{
+            simId:$simId,activityType:"recharge",activityDate:$date,amount:10,currencyCode:"PHP",balanceAfter:"",validUntilAfter:$newDue,notes:"below threshold",reminderCompletion:{reminderKey:$key,dueDate:$due}
+          }' > "$tmp/bad-completion.json"
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/bad-completion-response.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' --data-binary @"$tmp/bad-completion.json" "$base/api/keep-alive")" || fail "Below-threshold completion request failed"
+          [ "$status" = "400" ] || fail "Below-threshold completion should be rejected, got HTTP $status"
+
+          curl -fsS --max-time 10 -b "$cookies" "$base/api/keep-alive?simId=$sim_id" > "$tmp/keepalive-after-bad.json" || fail "Keep-alive query after rejected completion failed"
+          [ "$(jq -r '.events | length' "$tmp/keepalive-after-bad.json")" = "0" ] || fail "Rejected completion still created an activity event"
+          [ "$(jq -r '.sim.validUntil' "$tmp/keepalive-after-bad.json")" = "$initial_due" ] || fail "Rejected completion changed SIM validity"
+
+          jq -n --argjson simId "$sim_id" --arg date "$today" --arg newDue "$new_due" --arg key "$reminder_key" --arg due "$reminder_due" '{
+            simId:$simId,activityType:"recharge",activityDate:$date,amount:20,currencyCode:"PHP",balanceAfter:80,validUntilAfter:$newDue,notes:"verified completion",reminderCompletion:{reminderKey:$key,dueDate:$due}
+          }' > "$tmp/good-completion.json"
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/good-completion-response.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' --data-binary @"$tmp/good-completion.json" "$base/api/keep-alive")" || fail "Verified completion request failed"
+          [ "$status" = "201" ] || fail "Verified completion returned HTTP $status"
+          [ "$(jq -r '.completionAction.action' "$tmp/good-completion-response.json")" = "completed" ] || fail "Verified completion history action missing"
+          [ "$(jq -r '.completionAction.verified' "$tmp/good-completion-response.json")" = "true" ] || fail "Completion history was not marked verified"
+
+          curl -fsS --max-time 10 -b "$cookies" "$base/api/keep-alive?simId=$sim_id" > "$tmp/keepalive-final.json" || fail "Final keep-alive query failed"
+          [ "$(jq -r '.sim.validUntil' "$tmp/keepalive-final.json")" = "$new_due" ] || fail "Verified completion did not update SIM validity"
+          [ "$(jq -r '.rules[0].status' "$tmp/keepalive-final.json")" = "ok" ] || fail "Verified completion did not resolve the real lifecycle status"
+          [ "$(jq -r '.rules[0].reminderAction == null' "$tmp/keepalive-final.json")" = "true" ] || fail "Old reminder action leaked into the new lifecycle occurrence"
+
+          curl -fsS --max-time 10 -b "$cookies" "$base/api/reminders" > "$tmp/reminders-final.json" || fail "Final reminder query failed"
+          [ "$(jq -r '.reminders | length' "$tmp/reminders-final.json")" = "0" ] || fail "Resolved lifecycle reminder remained active"
+          [ "$(jq -r '.history[0].action' "$tmp/reminders-final.json")" = "completed" ] || fail "Verified completion was not first in reminder history"
+          [ "$(jq -r '.history[0].verified' "$tmp/reminders-final.json")" = "true" ] || fail "Reminder history did not retain verified completion metadata"

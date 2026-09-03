@@ -6,6 +6,8 @@ import { KeepAliveOverviewSection } from "@/components/keep-alive/keep-alive-ove
 import { Card } from "@/components/ui/card";
 import { db } from "@/db";
 import { carriers, simCards } from "@/db/schema";
+import { getReminderOccurrenceAction } from "@/lib/reminder-actions";
+import { getReminderActionRecordLabel, type ReminderActionRecord } from "@/lib/reminder-action-types";
 import { getIdentityStatusLabel, getSimStatusLabel, getSimTypeLabel } from "@/lib/sim-options";
 
 export const runtime = "nodejs";
@@ -17,6 +19,14 @@ function statusClass(status: string) {
   if (status === "paused") return "bg-amber-50 text-amber-700 ring-amber-100";
   if (status === "expired") return "bg-rose-50 text-rose-700 ring-rose-100";
   return "bg-slate-100 text-slate-500 ring-slate-200";
+}
+
+function reminderActionClass(action: ReminderActionRecord) {
+  if (action.action === "snoozed") return "bg-sky-50 text-sky-700 ring-sky-100";
+  if (action.action === "ignored") return "bg-slate-100 text-slate-600 ring-slate-200";
+  return action.verified
+    ? "bg-emerald-50 text-emerald-700 ring-emerald-100"
+    : "bg-amber-50 text-amber-700 ring-amber-100";
 }
 
 function DetailItem({ label, value, highlight = false }: { label: string; value: string; highlight?: boolean }) {
@@ -67,6 +77,7 @@ export default async function SimDetailPage({
   const section = query.section === "keep-alive" ? "keep-alive" : query.section === "validity" ? "validity" : "overview";
   const ruleId = Number(query.rule);
   const focusRuleId = Number.isInteger(ruleId) && ruleId > 0 ? ruleId : null;
+  const validityReminderAction = getReminderOccurrenceAction(`validity-${sim.id}`, sim.validUntil);
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
@@ -81,6 +92,11 @@ export default async function SimDetailPage({
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <h2 className="text-2xl font-semibold tracking-tight text-slate-950">{sim.label}</h2>
             <span className={`rounded-md px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ${statusClass(sim.status)}`}>{getSimStatusLabel(sim.status)}</span>
+            {validityReminderAction ? (
+              <span className={`rounded-md px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ${reminderActionClass(validityReminderAction)}`}>
+                {getReminderActionRecordLabel(validityReminderAction)}
+              </span>
+            ) : null}
           </div>
           <p className="mt-1 text-sm text-slate-500">{sim.phoneNumber || "未填写手机号"} · {sim.carrierName} · {sim.country}</p>
         </div>
@@ -94,9 +110,18 @@ export default async function SimDetailPage({
           <div className="flex items-start gap-3">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-amber-600 ring-1 ring-amber-100"><CalendarClock className="h-4 w-4" /></div>
             <div>
-              <div className="text-sm font-semibold text-amber-900">当前提醒定位：号码有效期</div>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="text-sm font-semibold text-amber-900">当前提醒定位：号码有效期</div>
+                {validityReminderAction ? (
+                  <span className={`rounded-md px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset ${reminderActionClass(validityReminderAction)}`}>
+                    {getReminderActionRecordLabel(validityReminderAction)}
+                  </span>
+                ) : null}
+              </div>
               <div className="mt-1 text-sm text-amber-800">有效期至 {sim.validUntil || "尚未设置"}</div>
-              <div className="mt-1 text-xs leading-5 text-amber-700/80">本页已直接定位到这张卡的生命周期资料；处理完成后可返回提醒中心标记当前这一轮提醒。</div>
+              <div className="mt-1 text-xs leading-5 text-amber-700/80">
+                “稍后提醒 / 忽略本轮”不会改变这里的真实有效期；从提醒中心执行“完成处理”时，只有记录了实际活动并填写新的运营商有效期，当前轮次才会真正结束。
+              </div>
             </div>
           </div>
         </Card>
@@ -106,7 +131,7 @@ export default async function SimDetailPage({
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-sky-600 ring-1 ring-sky-100"><ShieldCheck className="h-4 w-4" /></div>
             <div>
               <div className="text-sm font-semibold text-sky-900">当前提醒定位：保号规则</div>
-              <div className="mt-1 text-xs leading-5 text-sky-700/80">下方“保号状态”已自动展开；若提醒来自具体规则，对应规则会高亮显示。</div>
+              <div className="mt-1 text-xs leading-5 text-sky-700/80">下方“保号状态”已自动展开；真实规则状态与提醒暂缓/忽略状态会同时显示，不再互相覆盖。</div>
             </div>
           </div>
         </Card>
@@ -124,6 +149,11 @@ export default async function SimDetailPage({
           <DetailItem label="有效期至" value={sim.validUntil || "未设置"} highlight={section === "validity"} />
           <DetailItem label="实名状态" value={getIdentityStatusLabel(sim.identityStatus)} />
         </div>
+        {validityReminderAction ? (
+          <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-500">
+            提醒状态：{getReminderActionRecordLabel(validityReminderAction)}。真实有效期仍以“{sim.validUntil || "未设置"}”为准。
+          </div>
+        ) : null}
         {sim.notes ? <div className="mt-3 rounded-xl bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-500">{sim.notes}</div> : null}
       </Card>
 

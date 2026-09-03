@@ -1,4 +1,5 @@
 import type { KeepAliveDueDateSource, KeepAliveRuleStatus } from "@/lib/keep-alive";
+import type { ReminderActionRecord } from "@/lib/reminder-action-types";
 
 export type KeepAliveRuleRecord = {
   id: number;
@@ -19,6 +20,7 @@ export type KeepAliveRuleRecord = {
   updatedAt: string;
   status: KeepAliveRuleStatus;
   days: number | null;
+  reminderAction: ReminderActionRecord | null;
 };
 
 export type KeepAliveEventRecord = {

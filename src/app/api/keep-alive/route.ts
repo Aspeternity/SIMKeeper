@@ -13,8 +13,17 @@ import {
   KEEP_ALIVE_INTERVAL_UNITS,
   parseQualifyingActions,
   resolveKeepAliveRuleDueDate,
+  type KeepAliveActivityQualificationReason,
   type KeepAliveDueDateSource,
 } from "@/lib/keep-alive";
+import {
+  createReminderAction,
+  getCurrentReminderActionMap,
+  getReminderOccurrenceKey,
+  getReminderToday,
+} from "@/lib/reminder-actions";
+import { getRawCurrentReminderItems } from "@/lib/notifications";
+import type { ReminderItem } from "@/lib/reminders";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -52,6 +61,11 @@ const ruleSchema = z.object({
   notes: z.string().trim().max(500, "规则备注不能超过 500 个字符").optional().default(""),
 });
 
+const completionSchema = z.object({
+  reminderKey: z.string().trim().min(1).max(200),
+  dueDate: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+});
+
 const eventSchema = z.object({
   simId: z.coerce.number().int().positive("请选择号码"),
   activityType: z.enum(activityValues),
@@ -67,6 +81,7 @@ const eventSchema = z.object({
   ),
   validUntilAfter: dateField,
   notes: z.string().trim().max(500, "记录备注不能超过 500 个字符").optional().default(""),
+  reminderCompletion: completionSchema.optional(),
 });
 
 async function requireUser() {
@@ -83,7 +98,11 @@ function getSim(id: number) {
     .get();
 }
 
-function serializeRule(rule: typeof simKeepAliveRules.$inferSelect, simValidUntil: string | null | undefined) {
+function serializeRule(
+  rule: typeof simKeepAliveRules.$inferSelect,
+  simValidUntil: string | null | undefined,
+  actionMap = getCurrentReminderActionMap(),
+) {
   const qualifyingActions = parseQualifyingActions(rule.qualifyingActions);
   const dueDateSource = (rule.dueDateSource === "sim_validity" ? "sim_validity" : "independent") as KeepAliveDueDateSource;
   const nextDueDate = resolveKeepAliveRuleDueDate({
@@ -97,7 +116,9 @@ function serializeRule(rule: typeof simKeepAliveRules.$inferSelect, simValidUnti
     warningDays: rule.warningDays,
     gracePeriodDays: rule.gracePeriodDays,
   });
-  return { ...rule, dueDateSource, nextDueDate, qualifyingActions, ...state };
+  const reminderKey = dueDateSource === "sim_validity" ? `validity-${rule.simId}` : `keep-alive-${rule.id}`;
+  const reminderAction = actionMap.get(getReminderOccurrenceKey(reminderKey, nextDueDate)) ?? null;
+  return { ...rule, dueDateSource, nextDueDate, qualifyingActions, reminderAction, ...state };
 }
 
 function getRules(simId?: number) {
@@ -109,9 +130,10 @@ function getRules(simId?: number) {
     ? db.select({ id: simCards.id, validUntil: simCards.validUntil }).from(simCards).where(eq(simCards.id, simId)).all()
     : db.select({ id: simCards.id, validUntil: simCards.validUntil }).from(simCards).all();
   const validityBySim = new Map(validityRows.map((sim) => [sim.id, sim.validUntil]));
+  const actionMap = getCurrentReminderActionMap();
 
   return rows
-    .map((rule) => serializeRule(rule, validityBySim.get(rule.simId)))
+    .map((rule) => serializeRule(rule, validityBySim.get(rule.simId), actionMap))
     .sort((a, b) => (a.nextDueDate || "9999-12-31").localeCompare(b.nextDueDate || "9999-12-31") || a.id - b.id);
 }
 
@@ -139,6 +161,7 @@ function buildPayload(simId?: number) {
         id: simCards.id,
         label: simCards.label,
         phoneNumber: simCards.phoneNumber,
+        status: simCards.status,
         balance: simCards.balance,
         currencyCode: simCards.currencyCode,
         validUntil: simCards.validUntil,
@@ -208,6 +231,85 @@ function latestMatchingEvent(
     amount: event.amount,
     currencyCode: event.currencyCode,
   }).qualifies) ?? null;
+}
+
+function completionQualificationMessage(reason: KeepAliveActivityQualificationReason, ruleName: string) {
+  if (reason === "action_not_allowed") return `本次活动不是规则“${ruleName}”允许的保号动作`;
+  if (reason === "missing_amount") return `规则“${ruleName}”要求填写实际充值金额`;
+  if (reason === "currency_mismatch") return `本次充值币种不符合规则“${ruleName}”的要求`;
+  if (reason === "below_minimum") return `本次充值金额未达到规则“${ruleName}”的最低要求`;
+  return `本次活动未满足规则“${ruleName}”的刷新条件`;
+}
+
+function validateReminderCompletion(input: z.infer<typeof eventSchema>, currencyCode: string | null) {
+  if (!input.reminderCompletion) return null;
+
+  const reminder = getRawCurrentReminderItems().find(
+    (item) => item.key === input.reminderCompletion?.reminderKey && item.dueDate === input.reminderCompletion?.dueDate,
+  );
+  if (!reminder || reminder.simId !== input.simId) {
+    throw new Error("这条提醒的生命周期状态已经变化，请刷新后重新处理");
+  }
+
+  if (reminder.kind === "sim_validity") {
+    const newValidity = input.validUntilAfter || null;
+    if (!newValidity) {
+      throw new Error("完成号码有效期提醒时，必须填写运营商当前确认的“活动后有效期”");
+    }
+    if (reminder.dueDate && newValidity <= reminder.dueDate) {
+      throw new Error(`新的号码有效期必须晚于本轮截止日 ${reminder.dueDate}`);
+    }
+
+    const linkedRule = db
+      .select()
+      .from(simKeepAliveRules)
+      .where(eq(simKeepAliveRules.simId, input.simId))
+      .all()
+      .find((rule) => rule.enabled && rule.dueDateSource === "sim_validity");
+    if (linkedRule) {
+      const qualification = evaluateKeepAliveActivityRequirement({
+        qualifyingActions: parseQualifyingActions(linkedRule.qualifyingActions),
+        minimumRechargeAmount: linkedRule.minimumRechargeAmount,
+        rechargeCurrencyCode: linkedRule.rechargeCurrencyCode,
+        activityType: input.activityType,
+        amount: input.amount,
+        currencyCode,
+      });
+      if (!qualification.qualifies) {
+        throw new Error(completionQualificationMessage(qualification.reason, linkedRule.name));
+      }
+    }
+
+    return reminder;
+  }
+
+  const match = /^keep-alive-(\d+)$/.exec(reminder.key);
+  const ruleId = match ? Number(match[1]) : 0;
+  const rule = ruleId
+    ? db.select().from(simKeepAliveRules).where(eq(simKeepAliveRules.id, ruleId)).get()
+    : null;
+  if (!rule || rule.simId !== input.simId || !rule.enabled || rule.dueDateSource === "sim_validity") {
+    throw new Error("对应的保号规则已经变化，请刷新后重新处理");
+  }
+
+  const qualification = evaluateKeepAliveActivityRequirement({
+    qualifyingActions: parseQualifyingActions(rule.qualifyingActions),
+    minimumRechargeAmount: rule.minimumRechargeAmount,
+    rechargeCurrencyCode: rule.rechargeCurrencyCode,
+    activityType: input.activityType,
+    amount: input.amount,
+    currencyCode,
+  });
+  if (!qualification.qualifies) {
+    throw new Error(completionQualificationMessage(qualification.reason, rule.name));
+  }
+
+  const calculated = addKeepAliveInterval(input.activityDate, rule.intervalValue, rule.intervalUnit);
+  if (reminder.dueDate && calculated <= reminder.dueDate) {
+    throw new Error(`按本次活动日期计算出的下一次保号日 ${calculated} 没有晚于本轮截止日 ${reminder.dueDate}，请检查活动日期`);
+  }
+
+  return reminder;
 }
 
 export async function GET(request: NextRequest) {
@@ -316,6 +418,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "币种代码不正确" }, { status: 400 });
   }
 
+  let completionReminder: ReminderItem | null = null;
+  try {
+    completionReminder = validateReminderCompletion(parsed.data, currencyCode || null);
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "本次活动不能完成当前提醒" }, { status: 400 });
+  }
+
   const inserted = db
     .insert(simKeepAliveEvents)
     .values({
@@ -378,7 +487,19 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({ event: inserted, advancedRuleIds, notQualifiedRules, ...buildPayload(parsed.data.simId) }, { status: 201 });
+  const completionAction = completionReminder
+    ? createReminderAction({
+        reminder: completionReminder,
+        action: "completed",
+        today: getReminderToday(),
+        verified: true,
+      })
+    : null;
+
+  return NextResponse.json(
+    { event: inserted, advancedRuleIds, notQualifiedRules, completionAction, ...buildPayload(parsed.data.simId) },
+    { status: 201 },
+  );
 }
 
 export async function DELETE(request: NextRequest) {

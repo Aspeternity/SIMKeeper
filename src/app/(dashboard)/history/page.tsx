@@ -15,6 +15,7 @@ import {
   type KeepAliveRuleStatus,
 } from "@/lib/keep-alive";
 import type { KeepAliveRuleRecord, KeepAliveSimSummary } from "@/lib/keep-alive-types";
+import { getReminderActionRecordLabel, type ReminderActionRecord } from "@/lib/reminder-action-types";
 
 function ruleStatusClass(status: KeepAliveRuleStatus) {
   switch (status) {
@@ -31,6 +32,14 @@ function ruleStatusClass(status: KeepAliveRuleStatus) {
     default:
       return "bg-sky-50 text-sky-700 ring-sky-100";
   }
+}
+
+function reminderActionClass(action: ReminderActionRecord) {
+  if (action.action === "snoozed") return "bg-sky-50 text-sky-700 ring-sky-100";
+  if (action.action === "ignored") return "bg-slate-100 text-slate-600 ring-slate-200";
+  return action.verified
+    ? "bg-emerald-50 text-emerald-700 ring-emerald-100"
+    : "bg-amber-50 text-amber-700 ring-amber-100";
 }
 
 function simKeepAliveState(sim: KeepAliveSimSummary) {
@@ -114,7 +123,7 @@ export default function KeepAlivePage() {
       if (!response.ok) throw new Error(data.error || "删除规则失败");
       await loadData();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "删除规则失败");
+      setError(err instanceof Error ? err.message : "删除失败");
     }
   }
 
@@ -123,7 +132,7 @@ export default function KeepAlivePage() {
       <div>
         <div className="flex items-center gap-2 text-sm font-medium text-slate-500"><ShieldCheck className="h-4 w-4" />生命周期</div>
         <h2 className="mt-2 text-2xl font-semibold tracking-tight">保号管理</h2>
-        <p className="mt-1 text-sm text-slate-500">号码有效期类规则直接跟随号码资料；独立活跃规则单独计算自己的下一次操作日期，充值类规则还可以设置最低有效充值金额。</p>
+        <p className="mt-1 text-sm text-slate-500">真实生命周期状态始终按号码有效期和保号规则计算；“稍后提醒 / 忽略本轮”只改变提醒节奏，不会把未完成的保号事项伪装成正常。</p>
       </div>
 
       {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
@@ -193,6 +202,11 @@ export default function KeepAlivePage() {
                                 <span className="text-sm font-medium text-slate-800">{rule.name}</span>
                                 <span className={`rounded-md px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset ${ruleStatusClass(rule.status)}`}>{getKeepAliveRuleStatusLabel(rule.status)}</span>
                                 <span className="rounded-md bg-slate-50 px-2 py-0.5 text-[10px] text-slate-500 ring-1 ring-inset ring-slate-100">{getKeepAliveDueDateSourceLabel(rule.dueDateSource)}</span>
+                                {rule.reminderAction ? (
+                                  <span className={`rounded-md px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset ${reminderActionClass(rule.reminderAction)}`}>
+                                    {getReminderActionRecordLabel(rule.reminderAction)}
+                                  </span>
+                                ) : null}
                               </div>
                               <div className="mt-1 text-xs text-slate-400">每 {getKeepAliveIntervalLabel(rule.intervalValue, rule.intervalUnit)} · {rule.qualifyingActions.map(getKeepAliveActivityLabel).join(" / ")}</div>
                               {getKeepAliveRechargeRequirementLabel(rule.minimumRechargeAmount, rule.rechargeCurrencyCode) ? (
@@ -211,6 +225,11 @@ export default function KeepAlivePage() {
                             </div>
                             <CalendarClock className="h-4 w-4 text-slate-300" />
                           </div>
+                          {rule.reminderAction ? (
+                            <div className="mt-2 text-[11px] leading-5 text-slate-400">
+                              真实状态仍为“{getKeepAliveRuleStatusLabel(rule.status)}”；{rule.reminderAction.action === "snoozed" ? "仅暂缓提醒与外部通知。" : rule.reminderAction.action === "ignored" ? "仅忽略当前轮次的提醒与外部通知。" : rule.reminderAction.verified ? "已记录实际处理；若仍显示需处理，请检查新的日期是否已刷新。" : "旧版一键“已处理”未经过实际操作核验，因此不会再压制提醒。"}
+                            </div>
+                          ) : null}
                           {rule.notes ? <div className="mt-2 line-clamp-2 text-xs leading-5 text-slate-400">{rule.notes}</div> : null}
                         </div>
                       ))}

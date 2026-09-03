@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
 const actionSchema = z.object({
   reminderKey: z.string().trim().min(1, "提醒标识不能为空").max(200, "提醒标识过长"),
   dueDate: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, "提醒日期格式不正确").nullable(),
-  action: z.enum(["completed", "snoozed", "ignored"]),
+  action: z.enum(["snoozed", "ignored"]),
   snoozeDays: z.coerce.number().int().optional(),
 });
 
@@ -34,7 +34,15 @@ export async function POST(request: NextRequest) {
   const unauthorized = await requireUser();
   if (unauthorized) return unauthorized;
 
-  const parsed = actionSchema.safeParse(await request.json().catch(() => null));
+  const body = await request.json().catch(() => null);
+  if (body?.action === "completed") {
+    return NextResponse.json(
+      { error: "“完成处理”必须先记录真实的充值、短信、续期或其他生命周期操作，不能直接隐藏提醒" },
+      { status: 400 },
+    );
+  }
+
+  const parsed = actionSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "提醒处理数据不正确" }, { status: 400 });
   }
