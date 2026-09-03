@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   Smartphone,
   TimerReset,
+  Trash2,
   XCircle,
 } from "lucide-react";
 import { KeepAliveEventModal } from "@/components/keep-alive/keep-alive-event-modal";
@@ -33,6 +34,9 @@ import {
   getReminderKindLabel,
   getReminderRelativeLabel,
   getReminderStatusLabel,
+  getReminderTaskAnchor,
+  REMINDER_STATE_CHANGED_EVENT,
+  REMINDER_TASK_FOCUS_EVENT,
   type ReminderItem,
   type ReminderStatus,
 } from "@/lib/reminders";
@@ -102,11 +106,37 @@ export function ReminderCenter({
   const [kindFilter, setKindFilter] = useState("all");
   const [actingKey, setActingKey] = useState("");
   const [completionLoadingKey, setCompletionLoadingKey] = useState("");
+  const [deletingActionId, setDeletingActionId] = useState<number | null>(null);
   const [completionTarget, setCompletionTarget] = useState<CompletionTarget | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => setItems(reminders), [reminders]);
   useEffect(() => setActionHistory(history), [history]);
+
+  useEffect(() => {
+    function focusTask(anchor?: string) {
+      const target = anchor || decodeURIComponent(window.location.hash.replace(/^#/, ""));
+      if (!target.startsWith("task-")) return;
+
+      setView("active");
+      setQuery("");
+      setStatusFilter("all");
+      setKindFilter("all");
+      window.setTimeout(() => {
+        document.getElementById(target)?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 60);
+    }
+
+    const onHashChange = () => focusTask();
+    const onTaskFocus = (event: Event) => focusTask((event as CustomEvent<string>).detail);
+    focusTask();
+    window.addEventListener("hashchange", onHashChange);
+    window.addEventListener(REMINDER_TASK_FOCUS_EVENT, onTaskFocus);
+    return () => {
+      window.removeEventListener("hashchange", onHashChange);
+      window.removeEventListener(REMINDER_TASK_FOCUS_EVENT, onTaskFocus);
+    };
+  }, []);
 
   const summary = useMemo(() => ({
     total: items.length,
@@ -145,18 +175,27 @@ export function ReminderCenter({
   }, [actionHistory, query]);
 
   const stats = [
-    { label: "当前提醒", value: summary.total, icon: BellRing },
+    { label: "当前待处理", value: summary.total, icon: BellRing },
     { label: "已逾期 / 宽限", value: summary.overdue, icon: AlertTriangle },
     { label: "今天到期", value: summary.today, icon: Clock3 },
     { label: "即将到期", value: summary.upcoming, icon: CalendarClock },
   ];
 
+  function announceReminderStateChanged() {
+    window.dispatchEvent(new Event(REMINDER_STATE_CHANGED_EVENT));
+  }
+
+  function applyReminderState(data: { reminders?: unknown; history?: unknown }) {
+    if (Array.isArray(data.reminders)) setItems(data.reminders as ReminderItem[]);
+    if (Array.isArray(data.history)) setActionHistory(data.history as ReminderActionRecord[]);
+    announceReminderStateChanged();
+  }
+
   async function reloadReminderState() {
     const response = await fetch("/api/reminders", { cache: "no-store" });
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error || "提醒数据刷新失败");
-    setItems(Array.isArray(data.reminders) ? data.reminders : []);
-    setActionHistory(Array.isArray(data.history) ? data.history : []);
+    if (!response.ok) throw new Error(data.error || "处理中心数据刷新失败");
+    applyReminderState(data);
   }
 
   async function performReminderAction(item: ReminderItem, action: "snoozed" | "ignored", snoozeDays?: number) {
@@ -170,12 +209,11 @@ export function ReminderCenter({
         body: JSON.stringify({ reminderKey: item.key, dueDate: item.dueDate, action, snoozeDays }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "提醒处理失败");
-      setItems(Array.isArray(data.reminders) ? data.reminders : items.filter((current) => current.key !== item.key || current.dueDate !== item.dueDate));
-      if (data.action) setActionHistory((current) => [data.action, ...current]);
+      if (!response.ok) throw new Error(data.error || "任务处理失败");
+      applyReminderState(data);
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "提醒处理失败");
+      setError(err instanceof Error ? err.message : "任务处理失败");
     } finally {
       setActingKey("");
     }
@@ -202,6 +240,27 @@ export function ReminderCenter({
       setError(err instanceof Error ? err.message : "号码生命周期数据加载失败");
     } finally {
       setCompletionLoadingKey("");
+    }
+  }
+
+  async function deleteHistoryItem(item: ReminderActionRecord) {
+    const message = item.action === "completed" && item.verified
+      ? `确定删除“${item.simLabel} · ${item.title}”这条处理中心记录吗？\n\n只会删除这里的核验记录，不会回滚已经记录的充值/活动、余额、号码有效期或保号日期。`
+      : `确定删除“${item.simLabel} · ${item.title}”这条处理记录吗？\n\n删除后会按本轮剩余处理记录重新计算提醒控制；没有其他控制记录且真实生命周期仍处于提醒窗口时，任务会重新出现。`;
+    if (!window.confirm(message)) return;
+
+    setDeletingActionId(item.id);
+    setError("");
+    try {
+      const response = await fetch(`/api/reminders?actionId=${item.id}`, { method: "DELETE" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "删除处理记录失败");
+      applyReminderState(data);
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "删除处理记录失败");
+    } finally {
+      setDeletingActionId(null);
     }
   }
 
@@ -254,7 +313,7 @@ export function ReminderCenter({
               <Input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder={view === "active" ? "搜索号码、运营商或提醒内容" : "搜索号码、提醒或处理方式"}
+                placeholder={view === "active" ? "搜索号码、运营商或处理任务" : "搜索号码、任务或处理方式"}
                 className="pl-9"
               />
             </div>
@@ -277,11 +336,11 @@ export function ReminderCenter({
                 <option value="keep_alive">保号规则</option>
               </select>
               <div className="flex items-center text-xs text-slate-400 sm:ml-auto">
-                显示 {filtered.length} / {items.length} 条提醒{summary.unscheduled ? ` · 待设置日期 ${summary.unscheduled} 条` : ""}
+                显示 {filtered.length} / {items.length} 项任务{summary.unscheduled ? ` · 待设置日期 ${summary.unscheduled} 项` : ""}
               </div>
             </div>
           ) : (
-            <div className="text-xs text-slate-400">实际完成处理会留下核验记录；稍后提醒和忽略本轮只改变提醒状态，不改变真实生命周期。</div>
+            <div className="text-xs text-slate-400">处理历史可以手动删除。删除“稍后提醒 / 忽略本轮”会取消对应提醒控制；删除已完成核验记录不会回滚真实生命周期数据。</div>
           )}
         </div>
 
@@ -293,7 +352,11 @@ export function ReminderCenter({
                 const occurrence = `${item.key}:${item.dueDate ?? "none"}`;
                 const busy = actingKey === occurrence || completionLoadingKey === occurrence;
                 return (
-                  <div key={`${item.key}-${item.dueDate ?? "none"}`} className="p-4 transition hover:bg-slate-50/70 sm:p-5">
+                  <div
+                    id={getReminderTaskAnchor(item)}
+                    key={`${item.key}-${item.dueDate ?? "none"}`}
+                    className="scroll-mt-28 p-4 transition hover:bg-slate-50/70 target:bg-sky-50/50 target:ring-2 target:ring-inset target:ring-sky-200 sm:p-5"
+                  >
                     <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                       <div className="flex min-w-0 items-start gap-3">
                         <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600"><Icon className="h-4 w-4" /></div>
@@ -320,7 +383,7 @@ export function ReminderCenter({
                         </div>
                         <div className="flex flex-wrap items-center gap-2 xl:justify-end">
                           <Link href={item.href} className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-600 transition hover:bg-white hover:text-slate-950">
-                            查看详情 <ExternalLink className="h-3 w-3" />
+                            查看号码详情 <ExternalLink className="h-3 w-3" />
                           </Link>
                           <button
                             type="button"
@@ -370,13 +433,13 @@ export function ReminderCenter({
               {items.length ? (
                 <>
                   <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-500"><CircleHelp className="h-5 w-5" /></div>
-                  <p className="mt-4 text-sm font-medium">没有匹配的提醒</p>
+                  <p className="mt-4 text-sm font-medium">没有匹配的处理任务</p>
                   <p className="mt-1 max-w-md text-xs leading-5 text-slate-400">当前筛选条件下没有需要处理的号码。</p>
                 </>
               ) : (
                 <>
                   <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600"><CheckCircle2 className="h-5 w-5" /></div>
-                  <p className="mt-4 text-sm font-medium text-slate-800">当前没有需要处理的提醒</p>
+                  <p className="mt-4 text-sm font-medium text-slate-800">当前没有需要处理的任务</p>
                   <p className="mt-1 max-w-md text-xs leading-5 text-slate-400">已忽略或仍在暂缓期限内的事项不会出现在这里；真正完成的事项由新的有效期或下一次保号日期自然结束当前轮次。</p>
                 </>
               )}
@@ -386,6 +449,7 @@ export function ReminderCenter({
           <div className="divide-y divide-slate-100">
             {filteredHistory.map((item) => {
               const ActionIcon = actionIcon(item.action);
+              const deleting = deletingActionId === item.id;
               return (
                 <div key={item.id} className="p-4 sm:p-5">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -406,7 +470,19 @@ export function ReminderCenter({
                         </div>
                       </div>
                     </div>
-                    <div className="shrink-0 text-xs text-slate-400">{formatActionTime(item.actedAt)}</div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span className="text-xs text-slate-400">{formatActionTime(item.actedAt)}</span>
+                      <button
+                        type="button"
+                        disabled={deleting}
+                        onClick={() => void deleteHistoryItem(item)}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-50"
+                        title="删除处理记录"
+                        aria-label={`删除 ${item.simLabel} 的处理记录`}
+                      >
+                        {deleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                      </button>
+                    </div>
                   </div>
                 </div>
               );

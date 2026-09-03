@@ -322,13 +322,22 @@ jobs:
           [ "$status" = "200" ] || fail "Bound services after restore returned HTTP $status"
           [ "$(jq -r '.bindings[0].serviceName' "$tmp/services-after-restore.json")" = "Smoke Bank" ] || fail "Bound service was not restored"
 
-          echo "[17/17] Verifying reminder and settings pages"
+          echo "[17/17] Verifying processing, keep-alive rules and settings pages"
           status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/reminders.html" -w '%{http_code}' "$base/reminders")" || fail "GET /reminders failed"
-          [ "$status" = "200" ] || fail "Reminder center returned HTTP $status"
-          grep -q '提醒中心' "$tmp/reminders.html" || fail "Reminder center heading was not rendered"
-          grep -q 'Usage activity' "$tmp/reminders.html" || fail "Due keep-alive rule was not rendered in reminder center"
-          grep -q 'data-page-title="提醒中心"' "$tmp/reminders.html" || fail "Reminder top bar title was not synchronized with the route"
+          [ "$status" = "200" ] || fail "Processing center returned HTTP $status"
+          grep -q '处理中心' "$tmp/reminders.html" || fail "Processing center heading was not rendered"
+          grep -q 'Usage activity' "$tmp/reminders.html" || fail "Due keep-alive task was not rendered in processing center"
+          grep -q 'data-page-title="处理中心"' "$tmp/reminders.html" || fail "Processing center top bar title was not synchronized with the route"
           grep -Eq 'data-reminder-count="[1-9][0-9]*"' "$tmp/reminders.html" || fail "Pending reminder count was not rendered in the top bar"
+          grep -q 'id="task-' "$tmp/reminders.html" || fail "Processing center did not render stable task anchors"
+          if grep -q '?section=' "$tmp/reminders.html"; then fail "Processing center still emitted legacy SIM-detail section deep links"; fi
+
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/history.html" -w '%{http_code}' "$base/history")" || fail "GET /history failed"
+          [ "$status" = "200" ] || fail "Keep-alive rules page returned HTTP $status"
+          grep -q '保号规则' "$tmp/history.html" || fail "Keep-alive rules heading was not rendered"
+          grep -q 'data-page-title="保号规则"' "$tmp/history.html" || fail "Keep-alive rules top bar title was not synchronized with the route"
+          grep -q '前往处理中心' "$tmp/history.html" || fail "Keep-alive rules page did not link to processing center"
+          if grep -q '>记录活动<' "$tmp/history.html"; then fail "Keep-alive rules page still exposes the old activity-record action"; fi
 
           status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/settings.html" -w '%{http_code}' "$base/settings")" || fail "GET /settings failed"
           [ "$status" = "200" ] || fail "Settings and backup page returned HTTP $status"

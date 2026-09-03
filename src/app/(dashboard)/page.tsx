@@ -4,7 +4,8 @@ import { AlertTriangle, BellRing, CheckCircle2, Clock3, ShieldCheck, Smartphone,
 import { Card } from "@/components/ui/card";
 import { db } from "@/db";
 import { carriers, simBoundServices, simCards, simKeepAliveRules } from "@/db/schema";
-import { buildReminderItems } from "@/lib/reminders";
+import { filterReminderItems } from "@/lib/reminder-actions";
+import { buildReminderItems, getReminderTaskHref } from "@/lib/reminders";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -65,14 +66,15 @@ export default function DashboardPage() {
     .all();
 
   const today = dateInSingapore(new Date());
-  const reminders = buildReminderItems({ sims: rows, rules: keepAliveRules, today });
+  const rawReminders = buildReminderItems({ sims: rows, rules: keepAliveRules, today });
+  const reminders = filterReminderItems(rawReminders, today);
   const overdueSimIds = new Set<number>();
   const attentionSimIds = new Set<number>();
 
   for (const sim of rows) {
     if (sim.status === "expired") overdueSimIds.add(sim.id);
   }
-  for (const reminder of reminders) {
+  for (const reminder of rawReminders) {
     if (reminder.status === "overdue") overdueSimIds.add(reminder.simId);
     else attentionSimIds.add(reminder.simId);
   }
@@ -90,7 +92,7 @@ export default function DashboardPage() {
       title: reminder.title,
       date: reminder.dueDate as string,
       severity: reminder.status === "overdue" || reminder.status === "grace" ? "overdue" : "warning",
-      href: "/reminders",
+      href: getReminderTaskHref(reminder),
     }));
 
   const activeCount = rows.filter((sim) => sim.status === "active" && !overdueSimIds.has(sim.id)).length;
@@ -109,17 +111,17 @@ export default function DashboardPage() {
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
           <h2 className="text-2xl font-semibold tracking-tight">你的号码生命周期，一处管理</h2>
-          <p className="mt-1 text-sm text-slate-500">号码、实名、资费、保号、提醒、绑定服务与外部通知统一汇总成完整生命周期档案。</p>
+          <p className="mt-1 text-sm text-slate-500">号码、实名、资费、保号规则、处理任务、绑定服务与外部通知统一汇总成完整生命周期档案。</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Link href="/services" className="inline-flex h-10 items-center gap-2 rounded-xl border px-4 text-sm font-medium text-slate-700 transition hover:bg-white">
             <Waypoints className="h-4 w-4" />绑定服务
           </Link>
           <Link href="/reminders" className="inline-flex h-10 items-center gap-2 rounded-xl border px-4 text-sm font-medium text-slate-700 transition hover:bg-white">
-            <BellRing className="h-4 w-4" />提醒中心
+            <BellRing className="h-4 w-4" />处理中心
           </Link>
           <Link href="/history" className="inline-flex h-10 items-center gap-2 rounded-xl border px-4 text-sm font-medium text-slate-700 transition hover:bg-white">
-            <ShieldCheck className="h-4 w-4" />保号管理
+            <ShieldCheck className="h-4 w-4" />保号规则
           </Link>
           <Link href="/sims" className="inline-flex h-10 items-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800">
             <Smartphone className="h-4 w-4" />管理号码
@@ -147,7 +149,7 @@ export default function DashboardPage() {
           <div className="flex items-start justify-between gap-4 border-b px-6 py-5">
             <div>
               <h3 className="font-semibold">需要处理</h3>
-              <p className="mt-1 text-sm text-slate-500">与提醒中心使用同一套生命周期计算，只显示最优先的待处理事项。</p>
+              <p className="mt-1 text-sm text-slate-500">与处理中心使用同一套任务状态，只显示当前仍需要提醒和执行的最优先事项。</p>
             </div>
             <Link href="/reminders" className="shrink-0 text-xs font-medium text-slate-500 underline underline-offset-4">查看全部</Link>
           </div>
@@ -167,7 +169,7 @@ export default function DashboardPage() {
                   </div>
                   <div className="shrink-0 text-left sm:text-right">
                     <div className={`text-sm font-medium ${item.severity === "overdue" ? "text-rose-700" : "text-amber-700"}`}>{item.date}</div>
-                    <Link href={item.href} className="mt-1 inline-block text-xs text-slate-400 underline underline-offset-4">查看提醒</Link>
+                    <Link href={item.href} className="mt-1 inline-block text-xs text-slate-400 underline underline-offset-4">前往处理</Link>
                   </div>
                 </div>
               ))}
@@ -176,7 +178,7 @@ export default function DashboardPage() {
             <div className="flex min-h-56 flex-col items-center justify-center px-6 text-center">
               <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-500"><CheckCircle2 className="h-5 w-5" /></div>
               <p className="mt-4 text-sm font-medium">当前没有待处理事项</p>
-              <p className="mt-1 max-w-sm text-xs leading-5 text-slate-400">号码进入有效期提醒窗口或独立保号规则提醒窗口后，会自动汇总到首页和提醒中心。</p>
+              <p className="mt-1 max-w-sm text-xs leading-5 text-slate-400">号码进入有效期提醒窗口或独立保号规则提醒窗口后，会自动汇总到首页、处理中心和通知渠道。</p>
             </div>
           )}
         </Card>
@@ -193,7 +195,7 @@ export default function DashboardPage() {
               [`号码管理 · ${rows.length} 条`, true],
               [`绑定服务 · ${boundServiceCount} 条`, true],
               [`保号规则 · ${enabledRuleCount} 条`, true],
-              ["站内提醒中心", true],
+              ["生命周期处理中心", true],
               ["外部通知渠道", true],
             ].map(([label, done]) => (
               <div key={String(label)} className="flex items-center gap-3">

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getCurrentUser } from "@/lib/auth";
 import {
   createReminderAction,
+  deleteReminderAction,
   getReminderToday,
   listReminderActions,
 } from "@/lib/reminder-actions";
@@ -17,6 +18,8 @@ const actionSchema = z.object({
   action: z.enum(["snoozed", "ignored"]),
   snoozeDays: z.coerce.number().int().optional(),
 });
+
+const actionIdSchema = z.coerce.number().int().positive("处理记录编号不正确");
 
 async function requireUser() {
   const user = await getCurrentUser();
@@ -62,8 +65,32 @@ export async function POST(request: NextRequest) {
       today: getReminderToday(),
       snoozeDays: parsed.data.snoozeDays,
     });
-    return NextResponse.json({ action, reminders: getCurrentReminderItems() }, { status: 201 });
+    return NextResponse.json(
+      { action, reminders: getCurrentReminderItems(), history: listReminderActions(100) },
+      { status: 201 },
+    );
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "提醒处理失败" }, { status: 400 });
   }
+}
+
+export async function DELETE(request: NextRequest) {
+  const unauthorized = await requireUser();
+  if (unauthorized) return unauthorized;
+
+  const parsed = actionIdSchema.safeParse(request.nextUrl.searchParams.get("actionId"));
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "处理记录编号不正确" }, { status: 400 });
+  }
+
+  const deletedAction = deleteReminderAction(parsed.data);
+  if (!deletedAction) {
+    return NextResponse.json({ error: "处理记录不存在或已被删除" }, { status: 404 });
+  }
+
+  return NextResponse.json({
+    deletedAction,
+    reminders: getCurrentReminderItems(),
+    history: listReminderActions(100),
+  });
 }

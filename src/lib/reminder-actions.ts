@@ -191,3 +191,17 @@ export function createReminderAction(input: {
     .get(Number(result.lastInsertRowid)) as ReminderActionRow;
   return mapAction(row);
 }
+
+export function deleteReminderAction(id: number) {
+  ensureReminderActionTables();
+  const row = sqlite
+    .prepare(
+      `SELECT id, reminder_key, sim_id, sim_label, kind, title, due_date, action, snooze_until, acted_at, verified
+       FROM reminder_actions WHERE id = ?`,
+    )
+    .get(id) as ReminderActionRow | undefined;
+  if (!row) return null;
+
+  sqlite.prepare("DELETE FROM reminder_actions WHERE id = ?").run(id);
+  return mapAction(row);
+}

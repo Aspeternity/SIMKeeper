@@ -107,7 +107,7 @@ export function KeepAliveOverviewSection({
             </span>
           </button>
           <Link href="/history" className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50">
-            <ShieldCheck className="h-3.5 w-3.5" />管理保号
+            <ShieldCheck className="h-3.5 w-3.5" />管理规则
           </Link>
         </div>
 
@@ -168,11 +168,11 @@ export function KeepAliveOverviewSection({
                 })}
               </div>
             ) : (
-              <div className="rounded-xl border border-dashed border-slate-200 px-4 py-5 text-center text-xs text-slate-400">还没有配置保号规则。前往“保号管理”即可开始设置。</div>
+              <div className="rounded-xl border border-dashed border-slate-200 px-4 py-5 text-center text-xs text-slate-400">还没有配置保号规则。前往“保号规则”即可开始设置。</div>
             )}
 
             <div className="rounded-2xl border border-slate-200 p-4">
-              <div className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-800"><Activity className="h-4 w-4 text-slate-400" />最近保号记录</div>
+              <div className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-800"><Activity className="h-4 w-4 text-slate-400" />最近实际活动</div>
               {events.length ? (
                 <div className="divide-y divide-slate-100">
                   {events.slice(0, 5).map((event) => (
@@ -185,7 +185,7 @@ export function KeepAliveOverviewSection({
                     </div>
                   ))}
                 </div>
-              ) : <div className="text-xs text-slate-400">暂无保号活动记录。</div>}
+              ) : <div className="text-xs text-slate-400">暂无生命周期活动记录。</div>}
             </div>
           </div>
         ) : null}

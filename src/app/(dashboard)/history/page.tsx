@@ -1,8 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Activity, CalendarClock, Loader2, Pencil, Plus, Search, ShieldCheck, Trash2 } from "lucide-react";
-import { KeepAliveEventModal } from "@/components/keep-alive/keep-alive-event-modal";
+import { ArrowRight, CalendarClock, Loader2, Pencil, Plus, Search, ShieldCheck, Trash2 } from "lucide-react";
 import { KeepAliveRuleModal } from "@/components/keep-alive/keep-alive-rule-modal";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -16,6 +16,7 @@ import {
 } from "@/lib/keep-alive";
 import type { KeepAliveRuleRecord, KeepAliveSimSummary } from "@/lib/keep-alive-types";
 import { getReminderActionRecordLabel, type ReminderActionRecord } from "@/lib/reminder-action-types";
+import { REMINDER_STATE_CHANGED_EVENT } from "@/lib/reminders";
 
 function ruleStatusClass(status: KeepAliveRuleStatus) {
   switch (status) {
@@ -82,7 +83,6 @@ export default function KeepAlivePage() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
   const [ruleTarget, setRuleTarget] = useState<{ sim: KeepAliveSimSummary; rule: KeepAliveRuleRecord | null } | null>(null);
-  const [eventTarget, setEventTarget] = useState<KeepAliveSimSummary | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -90,10 +90,10 @@ export default function KeepAlivePage() {
     try {
       const response = await fetch("/api/keep-alive", { cache: "no-store" });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "保号数据加载失败");
+      if (!response.ok) throw new Error(data.error || "保号规则加载失败");
       setSims(data.sims || []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "保号数据加载失败");
+      setError(err instanceof Error ? err.message : "保号规则加载失败");
     } finally {
       setLoading(false);
     }
@@ -114,6 +114,15 @@ export default function KeepAlivePage() {
     });
   }, [filter, query, sims]);
 
+  function announceReminderStateChanged() {
+    window.dispatchEvent(new Event(REMINDER_STATE_CHANGED_EVENT));
+  }
+
+  async function refreshAfterRuleChange() {
+    await loadData();
+    announceReminderStateChanged();
+  }
+
   async function deleteRule(rule: KeepAliveRuleRecord) {
     if (!window.confirm(`确定删除保号规则“${rule.name}”吗？历史活动记录不会删除。`)) return;
     setError("");
@@ -121,7 +130,7 @@ export default function KeepAlivePage() {
       const response = await fetch(`/api/keep-alive?type=rule&id=${rule.id}`, { method: "DELETE" });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "删除规则失败");
-      await loadData();
+      await refreshAfterRuleChange();
     } catch (err) {
       setError(err instanceof Error ? err.message : "删除失败");
     }
@@ -129,10 +138,15 @@ export default function KeepAlivePage() {
 
   return (
     <div className="mx-auto max-w-7xl space-y-6">
-      <div>
-        <div className="flex items-center gap-2 text-sm font-medium text-slate-500"><ShieldCheck className="h-4 w-4" />生命周期</div>
-        <h2 className="mt-2 text-2xl font-semibold tracking-tight">保号管理</h2>
-        <p className="mt-1 text-sm text-slate-500">真实生命周期状态始终按号码有效期和保号规则计算；“稍后提醒 / 忽略本轮”只改变提醒节奏，不会把未完成的保号事项伪装成正常。</p>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <div className="flex items-center gap-2 text-sm font-medium text-slate-500"><ShieldCheck className="h-4 w-4" />生命周期规则</div>
+          <h2 className="mt-2 text-2xl font-semibold tracking-tight">保号规则</h2>
+          <p className="mt-1 text-sm text-slate-500">这里只定义每张卡怎样保号、多久处理一次以及提醒窗口；真实充值、短信、续期等操作统一在处理中心完成。</p>
+        </div>
+        <Link href="/reminders" className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800">
+          前往处理中心 <ArrowRight className="h-4 w-4" />
+        </Link>
       </div>
 
       {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
@@ -159,7 +173,7 @@ export default function KeepAlivePage() {
         </div>
 
         {loading ? (
-          <div className="flex min-h-72 items-center justify-center text-sm text-slate-500"><Loader2 className="mr-2 h-4 w-4 animate-spin" />正在加载保号数据…</div>
+          <div className="flex min-h-72 items-center justify-center text-sm text-slate-500"><Loader2 className="mr-2 h-4 w-4 animate-spin" />正在加载保号规则…</div>
         ) : !filtered.length ? (
           <div className="flex min-h-72 flex-col items-center justify-center px-6 text-center">
             <ShieldCheck className="h-6 w-6 text-slate-300" />
@@ -182,13 +196,13 @@ export default function KeepAlivePage() {
                       <div className="mt-1 text-sm text-slate-500">{sim.phoneNumber || "未填写号码"} · {sim.carrierName} · {sim.country}</div>
                       <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">
                         <span>号码有效期：{sim.validUntil || "未设置"}</span>
-                        <span>最近保号活动：{sim.latestEvent ? `${sim.latestEvent.activityDate} · ${getKeepAliveActivityLabel(sim.latestEvent.activityType)}` : "暂无记录"}</span>
+                        <span>最近实际活动：{sim.latestEvent ? `${sim.latestEvent.activityDate} · ${getKeepAliveActivityLabel(sim.latestEvent.activityType)}` : "暂无记录"}</span>
                         {earliest ? <span>最近需处理：{earliest.nextDueDate} · {earliest.name}</span> : null}
                       </div>
                     </div>
                     <div className="flex shrink-0 flex-wrap gap-2">
                       <button type="button" onClick={() => setRuleTarget({ sim, rule: null })} className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50"><Plus className="h-3.5 w-3.5" />新增规则</button>
-                      <button type="button" onClick={() => setEventTarget(sim)} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-slate-950 px-3 text-xs font-medium text-white transition hover:bg-slate-800"><Activity className="h-3.5 w-3.5" />记录活动</button>
+                      <Link href="/reminders" className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-slate-950 px-3 text-xs font-medium text-white transition hover:bg-slate-800"><ArrowRight className="h-3.5 w-3.5" />前往处理中心</Link>
                     </div>
                   </div>
 
@@ -252,16 +266,7 @@ export default function KeepAlivePage() {
           simCurrencyCode={ruleTarget.sim.currencyCode}
           rule={ruleTarget.rule}
           onClose={() => setRuleTarget(null)}
-          onSaved={loadData}
-        />
-      ) : null}
-
-      {eventTarget ? (
-        <KeepAliveEventModal
-          sim={eventTarget}
-          rules={eventTarget.rules}
-          onClose={() => setEventTarget(null)}
-          onSaved={loadData}
+          onSaved={refreshAfterRuleChange}
         />
       ) : null}
     </div>

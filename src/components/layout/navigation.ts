@@ -1,10 +1,10 @@
 import {
   BellRing,
-  History,
   LayoutDashboard,
   RadioTower,
   Send,
   Settings,
+  ShieldCheck,
   Smartphone,
   Waypoints,
   type LucideIcon,
@@ -16,15 +16,15 @@ export type NavigationItem = {
   icon: LucideIcon;
 };
 
-export const APP_VERSION = "0.1.0-alpha.12";
+export const APP_VERSION = "0.1.0-alpha.13";
 
 export const PRIMARY_NAV_ITEMS: NavigationItem[] = [
   { label: "概览", href: "/", icon: LayoutDashboard },
   { label: "号码管理", href: "/sims", icon: Smartphone },
   { label: "运营商", href: "/carriers", icon: RadioTower },
   { label: "绑定服务", href: "/services", icon: Waypoints },
-  { label: "保号管理", href: "/history", icon: History },
-  { label: "提醒中心", href: "/reminders", icon: BellRing },
+  { label: "保号规则", href: "/history", icon: ShieldCheck },
+  { label: "处理中心", href: "/reminders", icon: BellRing },
   { label: "通知渠道", href: "/notifications", icon: Send },
 ];
 

@@ -24,6 +24,10 @@ import {
   getReminderKindLabel,
   getReminderRelativeLabel,
   getReminderStatusLabel,
+  getReminderTaskAnchor,
+  getReminderTaskHref,
+  REMINDER_STATE_CHANGED_EVENT,
+  REMINDER_TASK_FOCUS_EVENT,
   type ReminderItem,
   type ReminderStatus,
 } from "@/lib/reminders";
@@ -48,13 +52,43 @@ export function Topbar({ username, reminders }: { username: string; reminders: R
   const pathname = usePathname();
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const [reminderPanelOpen, setReminderPanelOpen] = useState(false);
+  const [reminderItems, setReminderItems] = useState(reminders);
   const reminderPanelRef = useRef<HTMLDivElement>(null);
   const pageTitle = getPageTitle(pathname);
-  const reminderCount = reminders.length;
+  const reminderCount = reminderItems.length;
   const reminderLabel = reminderCount > 0 ? `${reminderCount} 项待处理提醒` : "当前没有需要处理的提醒";
-  const urgentReminderCount = reminders.filter((item) => ["overdue", "grace", "today"].includes(item.status)).length;
-  const reminderPreview = reminders.slice(0, 5);
+  const urgentReminderCount = reminderItems.filter((item) => ["overdue", "grace", "today"].includes(item.status)).length;
+  const reminderPreview = reminderItems.slice(0, 5);
   const SettingsIcon = SETTINGS_NAV_ITEM.icon;
+
+  useEffect(() => {
+    setReminderItems(reminders);
+  }, [reminders]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function refreshReminderItems() {
+      try {
+        const response = await fetch("/api/reminders", { cache: "no-store" });
+        if (!response.ok) return;
+        const data = await response.json();
+        if (active && Array.isArray(data.reminders)) setReminderItems(data.reminders);
+      } catch {
+        // Keep the last known reminder state when a transient refresh fails.
+      }
+    }
+
+    const handleReminderStateChanged = () => {
+      void refreshReminderItems();
+    };
+
+    window.addEventListener(REMINDER_STATE_CHANGED_EVENT, handleReminderStateChanged);
+    return () => {
+      active = false;
+      window.removeEventListener(REMINDER_STATE_CHANGED_EVENT, handleReminderStateChanged);
+    };
+  }, []);
 
   useEffect(() => {
     setMobileNavigationOpen(false);
@@ -165,9 +199,12 @@ export function Topbar({ username, reminders }: { username: string; reminders: R
                       const Icon = item.kind === "sim_validity" ? Smartphone : ShieldCheck;
                       return (
                         <Link
-                          key={item.key}
-                          href={item.href}
-                          onClick={() => setReminderPanelOpen(false)}
+                          key={`${item.key}-${item.dueDate ?? "none"}`}
+                          href={getReminderTaskHref(item)}
+                          onClick={() => {
+                            setReminderPanelOpen(false);
+                            window.dispatchEvent(new CustomEvent(REMINDER_TASK_FOCUS_EVENT, { detail: getReminderTaskAnchor(item) }));
+                          }}
                           className="group flex gap-3 px-4 py-3.5 transition hover:bg-slate-50"
                         >
                           <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600 transition group-hover:bg-white">
@@ -210,7 +247,7 @@ export function Topbar({ username, reminders }: { username: string; reminders: R
                     onClick={() => setReminderPanelOpen(false)}
                     className="flex h-9 items-center justify-center gap-1.5 rounded-xl text-xs font-medium text-slate-600 transition hover:bg-white hover:text-slate-950"
                   >
-                    {reminderCount > reminderPreview.length ? `查看全部 ${reminderCount} 项提醒` : "打开提醒中心"}
+                    {reminderCount > reminderPreview.length ? `查看全部 ${reminderCount} 项待处理` : "打开处理中心"}
                     <ChevronRight className="h-3.5 w-3.5" />
                   </Link>
                 </div>
