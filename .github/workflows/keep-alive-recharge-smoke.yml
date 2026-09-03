@@ -1,0 +1,221 @@
+name: Verify Keep-alive Recharge Requirement
+
+on:
+  workflow_run:
+    workflows:
+      - Build and Publish Docker Image
+    types:
+      - completed
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  keep-alive-recharge-smoke:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull verified SIMKeeper image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="${{ github.event.workflow_run.head_sha }}"
+          short="${sha:0:7}"
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          image="ghcr.io/${owner}/simkeeper:sha-${short}"
+          docker pull "$image"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Verify minimum recharge threshold
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          container="simkeeper-recharge-threshold-smoke"
+          tmp="$(mktemp -d)"
+          base="http://127.0.0.1:18084"
+          cookies="$tmp/cookies.txt"
+          today="$(TZ=Asia/Shanghai date +%F)"
+          initial_due="$(TZ=Asia/Shanghai date -d '+7 days' +%F)"
+          advanced_due="$(TZ=Asia/Shanghai date -d "$today +365 days" +%F)"
+
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            rm -rf "$tmp"
+          }
+          trap cleanup EXIT
+
+          fail() {
+            echo "::error::$1"
+            docker logs "$container" 2>&1 || true
+            for file in "$tmp"/*.json "$tmp"/*.html; do
+              [ -f "$file" ] || continue
+              echo "----- $file -----"
+              head -c 16000 "$file" || true
+              echo
+            done
+            exit 1
+          }
+
+          mkdir -p "$tmp/data"
+          docker run -d \
+            --name "$container" \
+            -p 18084:3000 \
+            -e SIMKEEPER_COOKIE_SECURE=false \
+            -e PUID="$(id -u)" \
+            -e PGID="$(id -g)" \
+            -v "$tmp/data:/app/data" \
+            "$IMAGE" >/dev/null || fail "Unable to start recharge threshold smoke container"
+
+          ready=0
+          for _ in $(seq 1 40); do
+            if curl -fsS --max-time 2 "$base/api/health" >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          [ "$ready" -eq 1 ] || fail "SIMKeeper did not become healthy"
+
+          curl -fsS --max-time 10 -c "$cookies" -o /dev/null \
+            -X POST \
+            --data-urlencode 'username=rechargeadmin' \
+            --data-urlencode 'password=recharge-smoke-123' \
+            --data-urlencode 'confirmPassword=recharge-smoke-123' \
+            "$base/api/auth/setup" || fail "Administrator setup failed"
+
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/carrier.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' \
+            --data '{"name":"Globe Threshold Test","countryCode":"PH","website":"","notes":""}' \
+            "$base/api/carriers")" || fail "Carrier creation failed"
+          [ "$status" = "201" ] || fail "Carrier creation returned HTTP $status"
+          carrier_id="$(jq -r '.carrier.id // empty' "$tmp/carrier.json")"
+          [ -n "$carrier_id" ] || fail "Carrier id missing"
+
+          jq -n --argjson carrierId "$carrier_id" '{
+            label:"Globe Recharge Test",
+            phoneNumber:"09171234567",
+            carrierId:$carrierId,
+            simType:"esim",
+            iccid:"",
+            balance:20,
+            currencyCode:"PHP",
+            status:"active",
+            activationDate:"",
+            validUntil:"",
+            notes:"Recharge threshold regression test"
+          }' > "$tmp/sim-create.json"
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/sim.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' --data-binary @"$tmp/sim-create.json" "$base/api/sims")" || fail "SIM creation failed"
+          [ "$status" = "201" ] || fail "SIM creation returned HTTP $status"
+          sim_id="$(jq -r '.sim.id // empty' "$tmp/sim.json")"
+          [ -n "$sim_id" ] || fail "SIM id missing"
+
+          jq -n --argjson simId "$sim_id" --arg initialDue "$initial_due" '{
+            simId:$simId,
+            name:"Regular Load 保号",
+            intervalValue:365,
+            intervalUnit:"day",
+            qualifyingActions:["recharge"],
+            minimumRechargeAmount:20,
+            rechargeCurrencyCode:"PHP",
+            dueDateSource:"independent",
+            nextDueDate:$initialDue,
+            warningDays:30,
+            gracePeriodDays:0,
+            enabled:true,
+            notes:"Single recharge must be at least PHP 20"
+          }' > "$tmp/rule-create.json"
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/rule.json" -w '%{http_code}' \
+            -X PUT -H 'Content-Type: application/json' --data-binary @"$tmp/rule-create.json" "$base/api/keep-alive")" || fail "Rule creation failed"
+          [ "$status" = "200" ] || fail "Rule creation returned HTTP $status"
+          rule_id="$(jq -r '.rule.id // empty' "$tmp/rule.json")"
+          [ -n "$rule_id" ] || fail "Rule id missing"
+          [ "$(jq -r '.rule.minimumRechargeAmount' "$tmp/rule.json")" = "20" ] || fail "Minimum recharge amount was not persisted"
+          [ "$(jq -r '.rule.rechargeCurrencyCode' "$tmp/rule.json")" = "PHP" ] || fail "Recharge currency was not persisted"
+          [ "$(jq -r '.rule.nextDueDate' "$tmp/rule.json")" = "$initial_due" ] || fail "Initial rule due date was not persisted"
+
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/reminders.html" -w '%{http_code}' "$base/reminders")" || fail "Reminder center request failed"
+          [ "$status" = "200" ] || fail "Reminder center returned HTTP $status"
+          grep -q 'Globe Recharge Test' "$tmp/reminders.html" || fail "Reminder center did not show the test SIM"
+          grep -q '充值至少 PHP 20' "$tmp/reminders.html" || fail "Reminder center did not show the minimum recharge requirement"
+
+          jq -n --argjson simId "$sim_id" --arg today "$today" '{
+            simId:$simId,
+            activityType:"recharge",
+            activityDate:$today,
+            amount:10,
+            currencyCode:"PHP",
+            balanceAfter:null,
+            validUntilAfter:"",
+            notes:"Below minimum"
+          }' > "$tmp/recharge-low.json"
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/recharge-low-response.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' --data-binary @"$tmp/recharge-low.json" "$base/api/keep-alive")" || fail "Low recharge event failed"
+          [ "$status" = "201" ] || fail "Low recharge returned HTTP $status"
+          jq -e --argjson id "$rule_id" '.advancedRuleIds | index($id) == null' "$tmp/recharge-low-response.json" >/dev/null || fail "Below-minimum recharge incorrectly advanced the rule"
+          jq -e --argjson id "$rule_id" '.notQualifiedRules[] | select(.id == $id and .reason == "below_minimum")' "$tmp/recharge-low-response.json" >/dev/null || fail "Below-minimum reason was not reported"
+          [ "$(jq -r '.rules[0].nextDueDate' "$tmp/recharge-low-response.json")" = "$initial_due" ] || fail "Below-minimum recharge changed the due date"
+
+          jq -n --argjson simId "$sim_id" --arg today "$today" '{
+            simId:$simId,
+            activityType:"recharge",
+            activityDate:$today,
+            amount:null,
+            currencyCode:"PHP",
+            balanceAfter:null,
+            validUntilAfter:"",
+            notes:"Missing amount"
+          }' > "$tmp/recharge-missing.json"
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/recharge-missing-response.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' --data-binary @"$tmp/recharge-missing.json" "$base/api/keep-alive")" || fail "Missing amount event failed"
+          [ "$status" = "201" ] || fail "Missing amount recharge returned HTTP $status"
+          jq -e --argjson id "$rule_id" '.advancedRuleIds | index($id) == null' "$tmp/recharge-missing-response.json" >/dev/null || fail "Recharge without amount incorrectly advanced the rule"
+          jq -e --argjson id "$rule_id" '.notQualifiedRules[] | select(.id == $id and .reason == "missing_amount")' "$tmp/recharge-missing-response.json" >/dev/null || fail "Missing-amount reason was not reported"
+          [ "$(jq -r '.rules[0].nextDueDate' "$tmp/recharge-missing-response.json")" = "$initial_due" ] || fail "Recharge without amount changed the due date"
+
+          jq -n --argjson simId "$sim_id" --arg today "$today" '{
+            simId:$simId,
+            activityType:"recharge",
+            activityDate:$today,
+            amount:20,
+            currencyCode:"USD",
+            balanceAfter:null,
+            validUntilAfter:"",
+            notes:"Wrong currency"
+          }' > "$tmp/recharge-currency.json"
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/recharge-currency-response.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' --data-binary @"$tmp/recharge-currency.json" "$base/api/keep-alive")" || fail "Wrong-currency event failed"
+          [ "$status" = "201" ] || fail "Wrong-currency recharge returned HTTP $status"
+          jq -e --argjson id "$rule_id" '.advancedRuleIds | index($id) == null' "$tmp/recharge-currency-response.json" >/dev/null || fail "Wrong-currency recharge incorrectly advanced the rule"
+          jq -e --argjson id "$rule_id" '.notQualifiedRules[] | select(.id == $id and .reason == "currency_mismatch")' "$tmp/recharge-currency-response.json" >/dev/null || fail "Currency-mismatch reason was not reported"
+          [ "$(jq -r '.rules[0].nextDueDate' "$tmp/recharge-currency-response.json")" = "$initial_due" ] || fail "Wrong-currency recharge changed the due date"
+
+          jq -n --argjson simId "$sim_id" --arg today "$today" '{
+            simId:$simId,
+            activityType:"recharge",
+            activityDate:$today,
+            amount:20,
+            currencyCode:"PHP",
+            balanceAfter:40,
+            validUntilAfter:"",
+            notes:"Meets minimum"
+          }' > "$tmp/recharge-valid.json"
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/recharge-valid-response.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' --data-binary @"$tmp/recharge-valid.json" "$base/api/keep-alive")" || fail "Qualifying recharge event failed"
+          [ "$status" = "201" ] || fail "Qualifying recharge returned HTTP $status"
+          jq -e --argjson id "$rule_id" '.advancedRuleIds | index($id) != null' "$tmp/recharge-valid-response.json" >/dev/null || fail "Qualifying recharge did not advance the rule"
+          [ "$(jq -r '.rules[0].nextDueDate' "$tmp/recharge-valid-response.json")" = "$advanced_due" ] || fail "Qualifying recharge did not advance by the configured interval"
+          [ "$(jq -r '.sim.balance' "$tmp/recharge-valid-response.json")" = "40" ] || fail "Qualifying recharge did not synchronize the resulting balance"
+
+          echo "Keep-alive minimum recharge threshold smoke test passed."
