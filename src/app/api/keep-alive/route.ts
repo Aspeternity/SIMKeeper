@@ -6,6 +6,7 @@ import { carriers, simCards, simKeepAliveEvents, simKeepAliveRules } from "@/db/
 import { getCurrentUser } from "@/lib/auth";
 import {
   addKeepAliveInterval,
+  evaluateKeepAliveActivityRequirement,
   getKeepAliveRuleStatus,
   KEEP_ALIVE_ACTIVITY_TYPES,
   KEEP_ALIVE_DUE_DATE_SOURCES,
@@ -29,6 +30,11 @@ const activityValues = KEEP_ALIVE_ACTIVITY_TYPES.map((item) => item.value) as [s
 const intervalValues = KEEP_ALIVE_INTERVAL_UNITS.map((item) => item.value) as [string, ...string[]];
 const dueDateSourceValues = KEEP_ALIVE_DUE_DATE_SOURCES.map((item) => item.value) as [string, ...string[]];
 
+const optionalAmount = z.preprocess(
+  (value) => (value === "" || value === null || value === undefined ? null : Number(value)),
+  z.number().finite().positive("最低充值金额必须大于 0").nullable(),
+);
+
 const ruleSchema = z.object({
   id: z.coerce.number().int().positive().optional(),
   simId: z.coerce.number().int().positive("请选择号码"),
@@ -36,6 +42,8 @@ const ruleSchema = z.object({
   intervalValue: z.coerce.number().int().min(1, "周期不能小于 1").max(3650, "周期数值过大"),
   intervalUnit: z.enum(intervalValues),
   qualifyingActions: z.array(z.enum(activityValues)).min(1, "至少选择一种可刷新保号周期的活动"),
+  minimumRechargeAmount: optionalAmount,
+  rechargeCurrencyCode: z.string().trim().max(3, "充值币种代码不能超过 3 位").optional().default(""),
   dueDateSource: z.enum(dueDateSourceValues).optional().default("independent"),
   nextDueDate: dateField,
   warningDays: z.coerce.number().int().min(0).max(365).default(30),
@@ -186,8 +194,20 @@ function buildPayload(simId?: number) {
   };
 }
 
-function latestMatchingEvent(simId: number, qualifyingActions: string[]) {
-  return getEvents(simId).find((event) => qualifyingActions.includes(event.activityType)) ?? null;
+function latestMatchingEvent(
+  simId: number,
+  qualifyingActions: string[],
+  minimumRechargeAmount: number | null,
+  rechargeCurrencyCode: string | null,
+) {
+  return getEvents(simId).find((event) => evaluateKeepAliveActivityRequirement({
+    qualifyingActions,
+    minimumRechargeAmount,
+    rechargeCurrencyCode,
+    activityType: event.activityType,
+    amount: event.amount,
+    currencyCode: event.currencyCode,
+  }).qualifies) ?? null;
 }
 
 export async function GET(request: NextRequest) {
@@ -232,11 +252,20 @@ export async function PUT(request: NextRequest) {
   }
 
   const qualifyingActions = Array.from(new Set(parsed.data.qualifyingActions));
+  const hasRecharge = qualifyingActions.includes("recharge");
+  const minimumRechargeAmount = hasRecharge ? parsed.data.minimumRechargeAmount : null;
+  const rechargeCurrencyCode = minimumRechargeAmount !== null
+    ? (parsed.data.rechargeCurrencyCode || sim.currencyCode || "").toUpperCase()
+    : null;
+  if (minimumRechargeAmount !== null && !/^[A-Z]{3}$/.test(rechargeCurrencyCode || "")) {
+    return NextResponse.json({ error: "设置最低充值金额时必须选择充值币种" }, { status: 400 });
+  }
+
   let nextDueDate: string | null = null;
   if (parsed.data.dueDateSource === "independent") {
     nextDueDate = parsed.data.nextDueDate || null;
     if (!nextDueDate) {
-      const latest = latestMatchingEvent(parsed.data.simId, qualifyingActions);
+      const latest = latestMatchingEvent(parsed.data.simId, qualifyingActions, minimumRechargeAmount, rechargeCurrencyCode);
       if (latest) nextDueDate = addKeepAliveInterval(latest.activityDate, parsed.data.intervalValue, parsed.data.intervalUnit);
     }
   }
@@ -248,6 +277,8 @@ export async function PUT(request: NextRequest) {
     intervalValue: parsed.data.intervalValue,
     intervalUnit: parsed.data.intervalUnit,
     qualifyingActions: JSON.stringify(qualifyingActions),
+    minimumRechargeAmount,
+    rechargeCurrencyCode,
     dueDateSource: parsed.data.dueDateSource,
     nextDueDate,
     warningDays: parsed.data.warningDays,
@@ -312,11 +343,25 @@ export async function POST(request: NextRequest) {
   }
 
   const advancedRuleIds: number[] = [];
+  const notQualifiedRules: Array<{ id: number; name: string; reason: string }> = [];
   const rules = db.select().from(simKeepAliveRules).where(eq(simKeepAliveRules.simId, parsed.data.simId)).all();
   for (const rule of rules) {
     if (!rule.enabled) continue;
     const actions = parseQualifyingActions(rule.qualifyingActions);
-    if (!actions.includes(parsed.data.activityType)) continue;
+    const qualification = evaluateKeepAliveActivityRequirement({
+      qualifyingActions: actions,
+      minimumRechargeAmount: rule.minimumRechargeAmount,
+      rechargeCurrencyCode: rule.rechargeCurrencyCode,
+      activityType: parsed.data.activityType,
+      amount: parsed.data.amount,
+      currencyCode,
+    });
+    if (!qualification.qualifies) {
+      if (actions.includes(parsed.data.activityType) && qualification.reason) {
+        notQualifiedRules.push({ id: rule.id, name: rule.name, reason: qualification.reason });
+      }
+      continue;
+    }
 
     if (rule.dueDateSource === "sim_validity") {
       if (parsed.data.validUntilAfter) advancedRuleIds.push(rule.id);
@@ -333,7 +378,7 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({ event: inserted, advancedRuleIds, ...buildPayload(parsed.data.simId) }, { status: 201 });
+  return NextResponse.json({ event: inserted, advancedRuleIds, notQualifiedRules, ...buildPayload(parsed.data.simId) }, { status: 201 });
 }
 
 export async function DELETE(request: NextRequest) {
