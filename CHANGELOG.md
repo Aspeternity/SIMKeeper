@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.1.0-alpha.9
+
+### Added
+
+- Complete mobile navigation drawer covering every primary module and Settings & Backup
+- Real lifecycle reminder count on the top-bar bell and inside the mobile reminder entry
+- Shared navigation metadata so desktop navigation, mobile navigation and page titles stay synchronized
+- Keyboard Escape and backdrop-close behavior for the mobile navigation drawer, including background scroll locking
+
+### Changed
+
+- The top bar now shows the current module name instead of displaying `概览` on every route
+- The previously inactive notification bell now opens Reminder Center and describes the current pending count accessibly
+- The top bar is sticky on long pages so navigation and reminders remain reachable while scrolling
+- Sidebar and package version updated to `v0.1.0-alpha.9`
+- Main Docker smoke coverage now verifies mobile-navigation access, dynamic page titles and reminder-count rendering
+
+## v0.1.0-alpha.8.6
+
+### Changed
+
+- The Number Management country/region filter now lists only countries that actually have recorded SIMs, including per-country counts
+- A selected country filter automatically resets if its last matching SIM is removed or moved to another country
+- Sidebar and package version updated to `v0.1.0-alpha.8.6`
+
 ## v0.1.0-alpha.8.5
 
 ### Added

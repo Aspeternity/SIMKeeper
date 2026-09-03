@@ -4,6 +4,7 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
 import { Card } from "@/components/ui/card";
 import { getCurrentUser, hasAdmin } from "@/lib/auth";
+import { getCurrentReminderItems } from "@/lib/notifications";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,12 +49,13 @@ export default async function DashboardLayout({ children }: { children: React.Re
   if (!user) {
     return <AuthGate mode="login" />;
   }
+  const reminderCount = getCurrentReminderItems().length;
 
   return (
     <div className="flex min-h-screen bg-slate-50">
       <Sidebar />
       <div className="min-w-0 flex-1">
-        <Topbar username={user.username} />
+        <Topbar username={user.username} reminderCount={reminderCount} />
         <main className="p-5 sm:p-8">{children}</main>
       </div>
     </div>
