@@ -1,6 +1,6 @@
 {
   "name": "simkeeper",
-  "version": "0.1.0-alpha.15",
+  "version": "0.1.0-alpha.16",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -14,9 +14,11 @@
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.44.5",
     "jose": "^6.1.0",
+    "jsqr": "^1.4.0",
     "libphonenumber-js": "^1.13.12",
     "lucide-react": "^0.468.0",
     "next": "^15.5.2",
+    "qrcode": "^1.5.4",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "tailwind-merge": "^2.6.0",
@@ -25,6 +27,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.10.2",
+    "@types/qrcode": "^1.5.5",
     "@types/react": "^19.0.3",
     "@types/react-dom": "^19.0.2",
     "autoprefixer": "^10.4.20",

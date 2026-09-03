@@ -2,9 +2,15 @@ import { asc, eq } from "drizzle-orm";
 import { parsePhoneNumberFromString, type CountryCode } from "libphonenumber-js";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/db";
+import { db, sqlite } from "@/db";
 import { carriers, simCards, simTariffs } from "@/db/schema";
 import { getCurrentUser } from "@/lib/auth";
+import {
+  deleteEsimProfile,
+  getEsimProfileSummary,
+  hasMeaningfulEsimProfile,
+  upsertEsimProfile,
+} from "@/lib/esim-profiles";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,6 +21,30 @@ const dateField = z
   .refine((value) => value === "" || /^\d{4}-\d{2}-\d{2}$/.test(value), "日期格式不正确")
   .optional()
   .default("");
+
+const optionalSecret = (max: number, label: string) => z.string().max(max, `${label}内容过长`).optional();
+
+const esimProfileSchema = z
+  .object({
+    profileStatus: z.enum(["unknown", "unused", "installed", "used", "expired"]).optional().default("unknown"),
+    source: z.union([z.enum(["website", "app", "email", "order", "physical_card", "other"]), z.literal("")]).optional().default(""),
+    reusePolicy: z.enum(["unknown", "reusable", "single_use", "replacement_required"]).optional().default("unknown"),
+    notes: z.string().trim().max(1000, "eSIM 配置备注不能超过 1000 个字符").optional().default(""),
+    smdpAddress: optionalSecret(500, "SM-DP+ Address"),
+    activationCode: optionalSecret(2000, "Activation Code"),
+    confirmationCode: optionalSecret(1000, "Confirmation Code"),
+    lpaString: optionalSecret(4096, "LPA 激活字符串"),
+    originalQrDataUrl: z
+      .string()
+      .max(4_000_000, "原始二维码图片过大")
+      .refine(
+        (value) => value === "" || /^data:image\/(png|jpeg|jpg|webp);base64,/i.test(value),
+        "原始二维码图片格式不受支持",
+      )
+      .optional(),
+  })
+  .optional()
+  .nullable();
 
 const simSchema = z
   .object({
@@ -54,6 +84,7 @@ const simSchema = z
       .default(""),
     identityNotes: z.string().trim().max(500, "实名备注不能超过 500 个字符").optional().default(""),
     notes: z.string().trim().max(500, "备注不能超过 500 个字符").optional().default(""),
+    esimProfile: esimProfileSchema,
   })
   .superRefine((value, context) => {
     const currencyCode = value.currencyCode.toUpperCase();
@@ -65,6 +96,9 @@ const simSchema = z
     }
     if (value.identityDocumentType === "other" && !value.identityDocumentTypeCustom) {
       context.addIssue({ code: "custom", path: ["identityDocumentTypeCustom"], message: "请输入具体证件 / 材料类型" });
+    }
+    if (value.simType !== "esim" && value.esimProfile && hasMeaningfulEsimProfile(value.esimProfile)) {
+      context.addIssue({ code: "custom", path: ["esimProfile"], message: "只有 eSIM 才能保存 eSIM 激活配置" });
     }
   });
 
@@ -117,6 +151,11 @@ const rowSelection = {
   tariffVerifiedAt: simTariffs.verifiedAt,
 };
 
+function attachEsimProfileSummary<T extends { id: number; simType: string }>(row: T) {
+  if (row.simType !== "esim") return { ...row, esimProfile: null };
+  return { ...row, esimProfile: getEsimProfileSummary(row.id) };
+}
+
 function listRows() {
   return db
     .select(rowSelection)
@@ -124,17 +163,19 @@ function listRows() {
     .innerJoin(carriers, eq(simCards.carrierId, carriers.id))
     .leftJoin(simTariffs, eq(simTariffs.simId, simCards.id))
     .orderBy(asc(carriers.country), asc(carriers.name), asc(simCards.label))
-    .all();
+    .all()
+    .map(attachEsimProfileSummary);
 }
 
 function getRow(id: number) {
-  return db
+  const row = db
     .select(rowSelection)
     .from(simCards)
     .innerJoin(carriers, eq(simCards.carrierId, carriers.id))
     .leftJoin(simTariffs, eq(simTariffs.simId, simCards.id))
     .where(eq(simCards.id, id))
     .get();
+  return row ? attachEsimProfileSummary(row) : undefined;
 }
 
 function normalizePhoneNumber(phoneNumber: string, countryCode: string) {
@@ -207,14 +248,25 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: normalizedPhone.error }, { status: 400 });
   }
 
-  const now = new Date().toISOString();
-  const inserted = db
-    .insert(simCards)
-    .values({ ...normalize(parsed.data, normalizedPhone.phoneNumber), createdAt: now, updatedAt: now })
-    .returning({ id: simCards.id })
-    .get();
+  try {
+    const insertedId = sqlite.transaction(() => {
+      const now = new Date().toISOString();
+      const inserted = db
+        .insert(simCards)
+        .values({ ...normalize(parsed.data, normalizedPhone.phoneNumber), createdAt: now, updatedAt: now })
+        .returning({ id: simCards.id })
+        .get();
 
-  return NextResponse.json({ sim: getRow(inserted.id) }, { status: 201 });
+      if (parsed.data.simType === "esim" && parsed.data.esimProfile && hasMeaningfulEsimProfile(parsed.data.esimProfile)) {
+        upsertEsimProfile(inserted.id, parsed.data.esimProfile);
+      }
+      return inserted.id;
+    })();
+
+    return NextResponse.json({ sim: getRow(insertedId) }, { status: 201 });
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "保存 eSIM 配置失败" }, { status: 400 });
+  }
 }
 
 export async function PATCH(request: NextRequest) {
@@ -251,12 +303,27 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: normalizedPhone.error }, { status: 400 });
   }
 
-  db.update(simCards)
-    .set({ ...normalize(parsed.data, normalizedPhone.phoneNumber), updatedAt: new Date().toISOString() })
-    .where(eq(simCards.id, id))
-    .run();
+  try {
+    sqlite.transaction(() => {
+      db.update(simCards)
+        .set({ ...normalize(parsed.data, normalizedPhone.phoneNumber), updatedAt: new Date().toISOString() })
+        .where(eq(simCards.id, id))
+        .run();
 
-  return NextResponse.json({ sim: getRow(id) });
+      if (parsed.data.simType !== "esim" || parsed.data.esimProfile === null) {
+        deleteEsimProfile(id);
+      } else if (parsed.data.esimProfile) {
+        const existing = getEsimProfileSummary(id);
+        if (existing || hasMeaningfulEsimProfile(parsed.data.esimProfile)) {
+          upsertEsimProfile(id, parsed.data.esimProfile);
+        }
+      }
+    })();
+
+    return NextResponse.json({ sim: getRow(id) });
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "保存 eSIM 配置失败" }, { status: 400 });
+  }
 }
 
 export async function DELETE(request: NextRequest) {

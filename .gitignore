@@ -7,5 +7,6 @@ npm-debug.log*
 data/*.db
 data/*.db-*
 data/.session-secret
+data/.credential-secret
 data/backups/*
 !data/backups/.gitkeep

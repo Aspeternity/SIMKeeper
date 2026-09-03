@@ -1,3 +1,5 @@
+import type { EsimProfileSummary } from "@/lib/esim-profile-types";
+
 export type CarrierRecord = {
   id: number;
   name: string;
@@ -44,4 +46,5 @@ export type SimRecord = {
   roamingAvailable: string | null;
   tariffUsageSummary: string | null;
   tariffVerifiedAt: string | null;
+  esimProfile: EsimProfileSummary | null;
 };

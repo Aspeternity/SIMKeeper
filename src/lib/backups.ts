@@ -3,11 +3,13 @@ import "server-only";
 import fs from "node:fs";
 import path from "node:path";
 import { dataDir, sqlite } from "@/db";
+import { exportCredentialSecret, importCredentialSecret } from "@/lib/credential-crypto";
+import { ensureEsimProfileTable } from "@/lib/esim-profiles";
 import { ensureNotificationTables } from "@/lib/notifications";
 import { ensureReminderActionTables } from "@/lib/reminder-actions";
 
 export const BACKUP_FORMAT = "simkeeper-portable-backup";
-export const BACKUP_FORMAT_VERSION = 1;
+export const BACKUP_FORMAT_VERSION = 2;
 export const DEFAULT_BACKUP_RETENTION = 20;
 export const MIN_BACKUP_RETENTION = 1;
 export const MAX_BACKUP_RETENTION = 100;
@@ -17,6 +19,7 @@ export const BACKUP_TABLES = [
   "settings",
   "carriers",
   "sim_cards",
+  "sim_esim_profiles",
   "sim_tariffs",
   "sim_tariff_rates",
   "sim_tariff_rate_rules",
@@ -34,6 +37,7 @@ const DELETE_ORDER = [...BACKUP_TABLES].reverse();
 const backupDir = path.join(dataDir, "backups");
 
 function ensureBackupTables() {
+  ensureEsimProfileTable();
   ensureNotificationTables();
   ensureReminderActionTables();
 }
@@ -48,6 +52,7 @@ export type BackupPayload = {
   appVersion: string;
   createdAt: string;
   reason: string;
+  credentialSecret?: string;
   tables: Record<BackupTableName, BackupRow[]>;
 };
 
@@ -116,6 +121,7 @@ export function createBackupPayload(reason = "manual"): BackupPayload {
     appVersion: getAppVersion(),
     createdAt: new Date().toISOString(),
     reason,
+    credentialSecret: exportCredentialSecret(),
     tables,
   };
 }
@@ -168,12 +174,17 @@ export function parseBackupPayload(value: unknown): BackupPayload {
     }),
   ) as Record<BackupTableName, BackupRow[]>;
 
+  if (tables.sim_esim_profiles.length && typeof raw.credentialSecret !== "string") {
+    throw new Error("备份包含 eSIM 激活凭据，但缺少对应的凭据密钥，无法安全恢复");
+  }
+
   return {
     format: BACKUP_FORMAT,
     formatVersion: Number(raw.formatVersion),
     appVersion: typeof raw.appVersion === "string" ? raw.appVersion : "unknown",
     createdAt: typeof raw.createdAt === "string" ? raw.createdAt : new Date(0).toISOString(),
     reason: typeof raw.reason === "string" ? raw.reason : "imported",
+    credentialSecret: typeof raw.credentialSecret === "string" ? raw.credentialSecret : undefined,
     tables,
   };
 }
@@ -232,6 +243,9 @@ export function restoreBackupPayload(value: unknown) {
   ensureBackupTables();
   const payload = parseBackupPayload(value);
   const safetyBackup = createLocalBackup("pre-restore", false);
+  const previousCredentialSecret = exportCredentialSecret();
+
+  if (payload.credentialSecret) importCredentialSecret(payload.credentialSecret);
 
   const restore = sqlite.transaction(() => {
     for (const table of DELETE_ORDER) {
@@ -252,7 +266,13 @@ export function restoreBackupPayload(value: unknown) {
     if (violations.length) throw new Error("恢复后的数据未通过外键完整性检查，已自动回滚");
   });
 
-  restore();
+  try {
+    restore();
+  } catch (error) {
+    importCredentialSecret(previousCredentialSecret);
+    throw error;
+  }
+
   return { payload, safetyBackup: safetyBackup.name };
 }
 

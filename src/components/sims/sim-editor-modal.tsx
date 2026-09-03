@@ -3,10 +3,12 @@
 import { FormEvent, useMemo, useState } from "react";
 import { getCountryCallingCode, parsePhoneNumberFromString, type CountryCode } from "libphonenumber-js";
 import { Loader2, UserRoundCheck, X } from "lucide-react";
+import { EsimProfileEditor } from "@/components/sims/esim-profile-editor";
 import { Card } from "@/components/ui/card";
 import { CountryRegionSelect } from "@/components/ui/country-region-select";
 import { Input } from "@/components/ui/input";
 import { ModalPortal } from "@/components/ui/modal-portal";
+import { createEmptyEsimProfileForm, type EsimProfileFormValue } from "@/lib/esim-profile-types";
 import {
   CURRENCIES,
   getDefaultCurrency,
@@ -104,8 +106,19 @@ function initialForm(carriers: CarrierRecord[], editing: SimRecord | null): Form
   };
 }
 
+function initialEsimProfile(editing: SimRecord | null): EsimProfileFormValue {
+  if (!editing?.esimProfile) return createEmptyEsimProfileForm();
+  return {
+    profileStatus: editing.esimProfile.profileStatus,
+    source: editing.esimProfile.source || "",
+    reusePolicy: editing.esimProfile.reusePolicy,
+    notes: editing.esimProfile.notes || "",
+  };
+}
+
 export function SimEditorModal({ carriers, editing, onClose, onSaved }: { carriers: CarrierRecord[]; editing: SimRecord | null; onClose: () => void; onSaved: () => Promise<void> | void }) {
   const [form, setForm] = useState<FormState>(() => initialForm(carriers, editing));
+  const [esimProfile, setEsimProfile] = useState<EsimProfileFormValue>(() => initialEsimProfile(editing));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -146,14 +159,21 @@ export function SimEditorModal({ carriers, editing, onClose, onSaved }: { carrie
       setError("请输入具体证件 / 材料类型");
       return;
     }
+    if (editing?.esimProfile && form.simType !== "esim" && !window.confirm("切换为实体 SIM 会删除这张号码已经归档的 eSIM 激活信息，确定继续吗？")) {
+      return;
+    }
 
     setSaving(true);
     setError("");
     try {
+      const payload = {
+        ...form,
+        esimProfile: form.simType === "esim" ? esimProfile : null,
+      };
       const response = await fetch("/api/sims", {
         method: editing ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(editing ? { id: editing.id, ...form } : form),
+        body: JSON.stringify(editing ? { id: editing.id, ...payload } : payload),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "保存失败");
@@ -168,8 +188,8 @@ export function SimEditorModal({ carriers, editing, onClose, onSaved }: { carrie
 
   return (
     <ModalPortal onBackdropClick={saving ? undefined : onClose}>
-      <Card className="w-full max-w-3xl overflow-hidden shadow-2xl">
-        <div className="flex items-center justify-between border-b bg-white px-6 py-5">
+      <Card className="flex w-full max-w-4xl flex-col overflow-hidden shadow-2xl sm:max-h-[calc(100dvh-2rem)]">
+        <div className="flex shrink-0 items-center justify-between border-b bg-white px-6 py-5">
           <div>
             <h3 className="font-semibold">{editing ? "编辑号码" : "新增号码"}</h3>
             <p className="mt-1 text-xs text-slate-400">国家/地区和国际区号会根据运营商自动匹配，号码保存为统一国际格式。</p>
@@ -179,159 +199,151 @@ export function SimEditorModal({ carriers, editing, onClose, onSaved }: { carrie
           </button>
         </div>
 
-        <form onSubmit={submit} className="space-y-5 bg-white p-6">
-          <div className="grid gap-4 sm:grid-cols-[1.4fr_0.6fr]">
-            <label className="space-y-1.5 text-sm">
-              <span className="font-medium text-slate-700">运营商</span>
-              <select
-                value={form.carrierId}
-                onChange={(event) => changeCarrier(event.target.value)}
-                required
-                autoFocus
-                className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
-              >
-                <option value="">请选择运营商</option>
-                {carriers.map((carrier) => <option key={carrier.id} value={carrier.id}>{carrier.name} · {carrier.country}</option>)}
-              </select>
-              {selectedCarrier ? <div className="text-xs text-slate-400">{selectedCarrier.country} · {selectedCarrier.countryCode} · 国际区号 {callingCode || "未知"}</div> : null}
-            </label>
-            <label className="space-y-1.5 text-sm">
-              <span className="font-medium text-slate-700">SIM 类型</span>
-              <select value={form.simType} onChange={(event) => setForm({ ...form, simType: event.target.value })} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100">
-                {SIM_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
-              </select>
-            </label>
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="space-y-1.5 text-sm">
-              <span className="font-medium text-slate-700">号码名称</span>
-              <Input value={form.label} onChange={(event) => setForm({ ...form, label: event.target.value })} placeholder="为这张号码设置一个易识别的名称" required />
-            </label>
-            <div className="space-y-1.5 text-sm">
-              <span className="font-medium text-slate-700">手机号 / MSISDN</span>
-              <div className="flex h-10 overflow-hidden rounded-xl border border-slate-200 bg-white transition focus-within:border-slate-400 focus-within:ring-2 focus-within:ring-slate-100">
-                <div className="flex min-w-[72px] items-center justify-center border-r border-slate-200 bg-slate-50 px-3 font-medium text-slate-600">{callingCode || "—"}</div>
-                <input
-                  value={form.phoneNumber}
-                  onChange={(event) => setForm({ ...form, phoneNumber: event.target.value })}
-                  placeholder={selectedCarrier ? "输入本地号码" : "请先选择运营商"}
-                  disabled={!selectedCarrier}
-                  inputMode="tel"
-                  autoComplete="tel-national"
-                  className="min-w-0 flex-1 bg-transparent px-3 text-sm text-slate-700 outline-none placeholder:text-slate-400 disabled:cursor-not-allowed disabled:bg-slate-50"
-                />
-              </div>
-              <div className="text-xs text-slate-400">只需输入本地号码，保存时会自动规范为 E.164 国际格式。</div>
-            </div>
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-[1.4fr_0.6fr]">
-            <label className="space-y-1.5 text-sm">
-              <span className="font-medium text-slate-700">ICCID</span>
-              <Input value={form.iccid} onChange={(event) => setForm({ ...form, iccid: event.target.value.replace(/\s+/g, "") })} placeholder="可选，10-32 位数字" inputMode="numeric" />
-            </label>
-            <label className="space-y-1.5 text-sm">
-              <span className="font-medium text-slate-700">状态</span>
-              <select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100">
-                {SIM_STATUSES.map((status) => <option key={status.value} value={status.value}>{status.label}</option>)}
-              </select>
-            </label>
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-[1fr_150px]">
-            <label className="space-y-1.5 text-sm">
-              <span className="font-medium text-slate-700">余额</span>
-              <Input value={form.balance} onChange={(event) => setForm({ ...form, balance: event.target.value })} placeholder="可选" inputMode="decimal" type="number" min="0" step="any" />
-            </label>
-            <label className="space-y-1.5 text-sm">
-              <span className="font-medium text-slate-700">币种</span>
-              <select value={form.currencyCode} onChange={(event) => setForm({ ...form, currencyCode: event.target.value })} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100">
-                {CURRENCIES.map((currency) => <option key={currency.code} value={currency.code}>{currency.code} · {currency.label}</option>)}
-              </select>
-            </label>
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="space-y-1.5 text-sm">
-              <span className="font-medium text-slate-700">激活日期</span>
-              <Input value={form.activationDate} onChange={(event) => setForm({ ...form, activationDate: event.target.value })} type="date" />
-            </label>
-            <label className="space-y-1.5 text-sm">
-              <span className="font-medium text-slate-700">有效期至</span>
-              <Input value={form.validUntil} onChange={(event) => setForm({ ...form, validUntil: event.target.value })} type="date" />
-            </label>
-          </div>
-
-          <section className="space-y-4 border-t pt-5">
-            <div className="flex items-start gap-2">
-              <UserRoundCheck className="mt-0.5 h-4 w-4 text-slate-400" />
-              <div>
-                <h4 className="text-sm font-medium text-slate-800">实名信息</h4>
-                <p className="mt-1 text-xs leading-5 text-slate-400">可选，用于备份号码开户 / KYC 时使用的实名主体、证件或辅助材料。属于敏感信息，请确保 SIMKeeper 实例及备份文件访问安全。</p>
-              </div>
-            </div>
-
-            <div className="grid gap-4 sm:grid-cols-[180px_1fr]">
+        <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col bg-white">
+          <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-6">
+            <div className="grid gap-4 sm:grid-cols-[1.4fr_0.6fr]">
               <label className="space-y-1.5 text-sm">
-                <span className="font-medium text-slate-700">实名状态</span>
-                <select value={form.identityStatus} onChange={(event) => setForm({ ...form, identityStatus: event.target.value })} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100">
-                  {IDENTITY_STATUSES.map((status) => <option key={status.value} value={status.value}>{status.label}</option>)}
+                <span className="font-medium text-slate-700">运营商</span>
+                <select
+                  value={form.carrierId}
+                  onChange={(event) => changeCarrier(event.target.value)}
+                  required
+                  autoFocus
+                  className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                >
+                  <option value="">请选择运营商</option>
+                  {carriers.map((carrier) => <option key={carrier.id} value={carrier.id}>{carrier.name} · {carrier.country}</option>)}
                 </select>
+                {selectedCarrier ? <div className="text-xs text-slate-400">{selectedCarrier.country} · {selectedCarrier.countryCode} · 国际区号 {callingCode || "未知"}</div> : null}
               </label>
               <label className="space-y-1.5 text-sm">
-                <span className="font-medium text-slate-700">实名姓名 / 主体</span>
-                <Input value={form.identityName} onChange={(event) => setForm({ ...form, identityName: event.target.value })} placeholder="个人姓名或企业主体名称" autoComplete="off" />
+                <span className="font-medium text-slate-700">SIM 类型</span>
+                <select value={form.simType} onChange={(event) => setForm({ ...form, simType: event.target.value })} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100">
+                  {SIM_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
+                </select>
               </label>
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="space-y-1.5 text-sm">
-                <span className="font-medium text-slate-700">证件 / 材料类型</span>
-                <select value={form.identityDocumentType} onChange={(event) => changeIdentityDocumentType(event.target.value)} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100">
-                  <option value="">未记录</option>
-                  {IDENTITY_DOCUMENT_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
-                </select>
+                <span className="font-medium text-slate-700">号码名称</span>
+                <Input value={form.label} onChange={(event) => setForm({ ...form, label: event.target.value })} placeholder="为这张号码设置一个易识别的名称" required />
+              </label>
+              <div className="space-y-1.5 text-sm">
+                <span className="font-medium text-slate-700">手机号 / MSISDN</span>
+                <div className="flex h-10 overflow-hidden rounded-xl border border-slate-200 bg-white transition focus-within:border-slate-400 focus-within:ring-2 focus-within:ring-slate-100">
+                  <div className="flex min-w-[72px] items-center justify-center border-r border-slate-200 bg-slate-50 px-3 font-medium text-slate-600">{callingCode || "—"}</div>
+                  <input value={form.phoneNumber} onChange={(event) => setForm({ ...form, phoneNumber: event.target.value })} placeholder={selectedCarrier ? "输入本地号码" : "请先选择运营商"} disabled={!selectedCarrier} inputMode="tel" autoComplete="tel-national" className="min-w-0 flex-1 bg-transparent px-3 text-sm text-slate-700 outline-none placeholder:text-slate-400 disabled:cursor-not-allowed disabled:bg-slate-50" />
+                </div>
+                <div className="text-xs text-slate-400">只需输入本地号码，保存时会自动规范为 E.164 国际格式。</div>
+              </div>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-[1.4fr_0.6fr]">
+              <label className="space-y-1.5 text-sm">
+                <span className="font-medium text-slate-700">ICCID</span>
+                <Input value={form.iccid} onChange={(event) => setForm({ ...form, iccid: event.target.value.replace(/\s+/g, "") })} placeholder="可选，10-32 位数字" inputMode="numeric" />
               </label>
               <label className="space-y-1.5 text-sm">
-                <span className="font-medium text-slate-700">证件 / 材料编号</span>
-                <Input value={form.identityDocumentNumber} onChange={(event) => setForm({ ...form, identityDocumentNumber: event.target.value })} placeholder="可选，例如证件号、账单编号或账户号" autoComplete="off" spellCheck={false} />
+                <span className="font-medium text-slate-700">状态</span>
+                <select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100">
+                  {SIM_STATUSES.map((status) => <option key={status.value} value={status.value}>{status.label}</option>)}
+                </select>
               </label>
             </div>
 
-            {form.identityDocumentType === "other" ? (
-              <label className="block space-y-1.5 text-sm">
-                <span className="font-medium text-slate-700">具体证件 / 材料类型</span>
-                <Input
-                  value={form.identityDocumentTypeCustom}
-                  onChange={(event) => setForm({ ...form, identityDocumentTypeCustom: event.target.value })}
-                  placeholder="例如：港澳通行证、水电账单、地址证明"
-                  autoComplete="off"
-                  required
-                />
-                <span className="block text-xs text-slate-400">选择“其他证件 / 材料”后填写，保存时会作为实际类型显示在号码详情中。</span>
+            <div className="grid gap-4 sm:grid-cols-[1fr_150px]">
+              <label className="space-y-1.5 text-sm">
+                <span className="font-medium text-slate-700">余额</span>
+                <Input value={form.balance} onChange={(event) => setForm({ ...form, balance: event.target.value })} placeholder="可选" inputMode="decimal" type="number" min="0" step="any" />
               </label>
+              <label className="space-y-1.5 text-sm">
+                <span className="font-medium text-slate-700">币种</span>
+                <select value={form.currencyCode} onChange={(event) => setForm({ ...form, currencyCode: event.target.value })} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100">
+                  {CURRENCIES.map((currency) => <option key={currency.code} value={currency.code}>{currency.code} · {currency.label}</option>)}
+                </select>
+              </label>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="space-y-1.5 text-sm">
+                <span className="font-medium text-slate-700">激活日期</span>
+                <Input value={form.activationDate} onChange={(event) => setForm({ ...form, activationDate: event.target.value })} type="date" />
+              </label>
+              <label className="space-y-1.5 text-sm">
+                <span className="font-medium text-slate-700">有效期至</span>
+                <Input value={form.validUntil} onChange={(event) => setForm({ ...form, validUntil: event.target.value })} type="date" />
+              </label>
+            </div>
+
+            {form.simType === "esim" ? (
+              <EsimProfileEditor simId={editing?.id} summary={editing?.esimProfile ?? null} value={esimProfile} onChange={setEsimProfile} disabled={saving} />
             ) : null}
 
-            <div className="space-y-1.5 text-sm">
-              <span className="font-medium text-slate-700">证件 / 材料国家 / 地区</span>
-              <CountryRegionSelect value={form.identityCountryCode} onChange={(identityCountryCode) => setForm({ ...form, identityCountryCode })} disabled={saving} />
-            </div>
+            <section className="space-y-4 border-t pt-5">
+              <div className="flex items-start gap-2">
+                <UserRoundCheck className="mt-0.5 h-4 w-4 text-slate-400" />
+                <div>
+                  <h4 className="text-sm font-medium text-slate-800">实名信息</h4>
+                  <p className="mt-1 text-xs leading-5 text-slate-400">可选，用于备份号码开户 / KYC 时使用的实名主体、证件或辅助材料。属于敏感信息，请确保 SIMKeeper 实例及备份文件访问安全。</p>
+                </div>
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-[180px_1fr]">
+                <label className="space-y-1.5 text-sm">
+                  <span className="font-medium text-slate-700">实名状态</span>
+                  <select value={form.identityStatus} onChange={(event) => setForm({ ...form, identityStatus: event.target.value })} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100">
+                    {IDENTITY_STATUSES.map((status) => <option key={status.value} value={status.value}>{status.label}</option>)}
+                  </select>
+                </label>
+                <label className="space-y-1.5 text-sm">
+                  <span className="font-medium text-slate-700">实名姓名 / 主体</span>
+                  <Input value={form.identityName} onChange={(event) => setForm({ ...form, identityName: event.target.value })} placeholder="个人姓名或企业主体名称" autoComplete="off" />
+                </label>
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className="space-y-1.5 text-sm">
+                  <span className="font-medium text-slate-700">证件 / 材料类型</span>
+                  <select value={form.identityDocumentType} onChange={(event) => changeIdentityDocumentType(event.target.value)} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100">
+                    <option value="">未记录</option>
+                    {IDENTITY_DOCUMENT_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
+                  </select>
+                </label>
+                <label className="space-y-1.5 text-sm">
+                  <span className="font-medium text-slate-700">证件 / 材料编号</span>
+                  <Input value={form.identityDocumentNumber} onChange={(event) => setForm({ ...form, identityDocumentNumber: event.target.value })} placeholder="可选，例如证件号、账单编号或账户号" autoComplete="off" spellCheck={false} />
+                </label>
+              </div>
+
+              {form.identityDocumentType === "other" ? (
+                <label className="block space-y-1.5 text-sm">
+                  <span className="font-medium text-slate-700">具体证件 / 材料类型</span>
+                  <Input value={form.identityDocumentTypeCustom} onChange={(event) => setForm({ ...form, identityDocumentTypeCustom: event.target.value })} placeholder="例如：港澳通行证、水电账单、地址证明" autoComplete="off" required />
+                  <span className="block text-xs text-slate-400">选择“其他证件 / 材料”后填写，保存时会作为实际类型显示在号码详情中。</span>
+                </label>
+              ) : null}
+
+              <div className="space-y-1.5 text-sm">
+                <span className="font-medium text-slate-700">证件 / 材料国家 / 地区</span>
+                <CountryRegionSelect value={form.identityCountryCode} onChange={(identityCountryCode) => setForm({ ...form, identityCountryCode })} disabled={saving} />
+              </div>
+
+              <label className="block space-y-1.5 text-sm">
+                <span className="font-medium text-slate-700">实名备注</span>
+                <textarea value={form.identityNotes} onChange={(event) => setForm({ ...form, identityNotes: event.target.value })} placeholder="可记录实名渠道、材料用途、证件版本、客服核验提示等" rows={2} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100" />
+              </label>
+            </section>
 
             <label className="block space-y-1.5 text-sm">
-              <span className="font-medium text-slate-700">实名备注</span>
-              <textarea value={form.identityNotes} onChange={(event) => setForm({ ...form, identityNotes: event.target.value })} placeholder="可记录实名渠道、材料用途、证件版本、客服核验提示等" rows={2} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100" />
+              <span className="font-medium text-slate-700">号码备注</span>
+              <textarea value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} placeholder="可记录套餐、用途、卡槽位置等其他信息" rows={3} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100" />
             </label>
-          </section>
 
-          <label className="block space-y-1.5 text-sm">
-            <span className="font-medium text-slate-700">号码备注</span>
-            <textarea value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} placeholder="可记录套餐、用途、卡槽位置等其他信息" rows={3} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100" />
-          </label>
+            {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
+          </div>
 
-          {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
-
-          <div className="flex justify-end gap-2 pt-1">
+          <div className="flex shrink-0 justify-end gap-2 border-t bg-white px-6 py-4">
             <button type="button" onClick={onClose} disabled={saving} className="h-10 rounded-xl border px-4 text-sm font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-50">取消</button>
             <button type="submit" disabled={saving} className="inline-flex h-10 min-w-24 items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60">
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}

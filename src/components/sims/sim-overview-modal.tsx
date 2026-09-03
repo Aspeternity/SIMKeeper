@@ -15,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { KeepAliveOverviewSection } from "@/components/keep-alive/keep-alive-overview-section";
+import { EsimProfileOverviewSection } from "@/components/sims/esim-profile-overview-section";
 import { Card } from "@/components/ui/card";
 import { ModalPortal } from "@/components/ui/modal-portal";
 import { COUNTRY_REGIONS } from "@/lib/countries";
@@ -562,6 +563,10 @@ export function SimOverviewModal({
               </>
             ) : null}
           </section>
+
+          {sim.simType === "esim" ? (
+            <EsimProfileOverviewSection simId={sim.id} initialSummary={sim.esimProfile} onEdit={onEdit} />
+          ) : null}
 
           <section className="space-y-3 border-t pt-6">
             <SectionHeader
