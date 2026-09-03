@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { dataDir, sqlite } from "@/db";
 import { ensureNotificationTables } from "@/lib/notifications";
+import { ensureReminderActionTables } from "@/lib/reminder-actions";
 
 export const BACKUP_FORMAT = "simkeeper-portable-backup";
 export const BACKUP_FORMAT_VERSION = 1;
@@ -23,6 +24,7 @@ export const BACKUP_TABLES = [
   "sim_tariff_custom_items",
   "sim_keep_alive_rules",
   "sim_keep_alive_events",
+  "reminder_actions",
   "sim_bound_services",
   "notification_channels",
   "notification_deliveries",
@@ -31,7 +33,12 @@ export const BACKUP_TABLES = [
 const DELETE_ORDER = [...BACKUP_TABLES].reverse();
 const backupDir = path.join(dataDir, "backups");
 
-ensureNotificationTables();
+function ensureBackupTables() {
+  ensureNotificationTables();
+  ensureReminderActionTables();
+}
+
+ensureBackupTables();
 
 export type BackupTableName = (typeof BACKUP_TABLES)[number];
 export type BackupRow = Record<string, unknown>;
@@ -98,7 +105,7 @@ export function setBackupRetention(value: number) {
 }
 
 export function createBackupPayload(reason = "manual"): BackupPayload {
-  ensureNotificationTables();
+  ensureBackupTables();
   const tables = Object.fromEntries(
     BACKUP_TABLES.map((table) => [table, sqlite.prepare(`SELECT * FROM ${quoteIdentifier(table)}`).all() as BackupRow[]]),
   ) as Record<BackupTableName, BackupRow[]>;
@@ -139,7 +146,7 @@ export function createLocalBackup(reason = "manual", prune = true) {
 }
 
 export function parseBackupPayload(value: unknown): BackupPayload {
-  ensureNotificationTables();
+  ensureBackupTables();
   if (!value || typeof value !== "object") throw new Error("备份文件格式不正确");
   const raw = value as Partial<BackupPayload> & { tables?: unknown };
   if (raw.format !== BACKUP_FORMAT) throw new Error("这不是 SIMKeeper 可移植备份文件");
@@ -178,7 +185,7 @@ export function readLocalBackup(name: string) {
 }
 
 export function listLocalBackups(): BackupListItem[] {
-  ensureNotificationTables();
+  ensureBackupTables();
   fs.mkdirSync(backupDir, { recursive: true });
   return fs
     .readdirSync(backupDir)
@@ -222,7 +229,7 @@ export function pruneLocalBackups(retention = getBackupRetention()) {
 }
 
 export function restoreBackupPayload(value: unknown) {
-  ensureNotificationTables();
+  ensureBackupTables();
   const payload = parseBackupPayload(value);
   const safetyBackup = createLocalBackup("pre-restore", false);
 

@@ -2,7 +2,7 @@
 
 **SIMKeeper — Self-hosted SIM & eSIM lifecycle manager**
 
-当前版本：`v0.1.0-alpha.10`
+当前版本：`v0.1.0-alpha.11`
 
 当前已包含：
 
@@ -12,6 +12,7 @@
 - 充值后余额与运营商有效期同步更新
 - 号码绑定服务及关键账号依赖管理
 - Dashboard 与提醒中心统一生命周期计算
+- 提醒可直接定位到对应号码/保号规则，并支持已处理、稍后提醒、忽略本次和处理历史
 - Telegram、Bark、Gotify 和 Webhook 通知渠道
 - 每日精确通知时间、提醒里程碑、渠道筛选和自定义通知模板
 - 完整 JSON 导出、本地备份、恢复前安全备份及保留策略
@@ -99,7 +100,7 @@ curl http://HOST:3000/api/health
 {
   "status": "ok",
   "database": "connected",
-  "version": "0.1.0-alpha.10",
+  "version": "0.1.0-alpha.11",
   "revision": "<git-commit-sha>"
 }
 ```
@@ -142,7 +143,7 @@ docker compose up -d --force-recreate
 - [x] 实名资料与资费档案
 - [x] 保号规则、活动历史与充值要求
 - [x] 绑定服务
-- [x] 提醒中心与外部通知
+- [x] 提醒中心、提醒处理历史与外部通知
 - [x] 完整备份与恢复
 - [x] 桌面 / 手机端响应式导航
 - [x] 核心流程与功能专项 smoke test

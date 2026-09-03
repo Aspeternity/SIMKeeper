@@ -16,7 +16,7 @@ export type NavigationItem = {
   icon: LucideIcon;
 };
 
-export const APP_VERSION = "0.1.0-alpha.10";
+export const APP_VERSION = "0.1.0-alpha.11";
 
 export const PRIMARY_NAV_ITEMS: NavigationItem[] = [
   { label: "概览", href: "/", icon: LayoutDashboard },

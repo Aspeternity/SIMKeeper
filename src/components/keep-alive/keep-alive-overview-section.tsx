@@ -30,12 +30,26 @@ function eventSummary(event: KeepAliveEventRecord) {
   return parts.join(" · ");
 }
 
-export function KeepAliveOverviewSection({ simId }: { simId: number }) {
-  const [open, setOpen] = useState(false);
+export function KeepAliveOverviewSection({
+  simId,
+  initialOpen = false,
+  focusRuleId = null,
+  showServices = true,
+}: {
+  simId: number;
+  initialOpen?: boolean;
+  focusRuleId?: number | null;
+  showServices?: boolean;
+}) {
+  const [open, setOpen] = useState(initialOpen);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [rules, setRules] = useState<KeepAliveRuleRecord[]>([]);
   const [events, setEvents] = useState<KeepAliveEventRecord[]>([]);
+
+  useEffect(() => {
+    if (initialOpen) setOpen(true);
+  }, [initialOpen, simId]);
 
   useEffect(() => {
     let active = true;
@@ -61,11 +75,19 @@ export function KeepAliveOverviewSection({ simId }: { simId: number }) {
     };
   }, [simId]);
 
+  useEffect(() => {
+    if (!open || loading || !focusRuleId) return;
+    const timer = window.setTimeout(() => {
+      document.getElementById(`keep-alive-rule-${focusRuleId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [focusRuleId, loading, open]);
+
   return (
     <>
-      <ServiceOverviewSection simId={simId} />
+      {showServices ? <ServiceOverviewSection simId={simId} /> : null}
 
-      <section className="space-y-3 border-t pt-6">
+      <section className={`space-y-3 ${showServices ? "border-t pt-6" : ""}`}>
         <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
           <button type="button" onClick={() => setOpen((value) => !value)} className="group flex min-w-0 flex-1 items-start gap-2 text-left" title={open ? "收起" : "展开"}>
             <ChevronDown className={`mt-0.5 h-4 w-4 shrink-0 text-slate-400 transition-transform ${open ? "" : "-rotate-90"}`} />
@@ -88,29 +110,37 @@ export function KeepAliveOverviewSection({ simId }: { simId: number }) {
           <div className="space-y-3">
             {rules.length ? (
               <div className="grid gap-3 lg:grid-cols-2">
-                {rules.map((rule) => (
-                  <div key={rule.id} className="rounded-xl border border-slate-200 p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-sm font-medium text-slate-800">{rule.name}</span>
-                          <span className={`rounded-md px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset ${statusClass(rule.status)}`}>{getKeepAliveRuleStatusLabel(rule.status)}</span>
-                          <span className="rounded-md bg-slate-50 px-2 py-0.5 text-[10px] text-slate-500 ring-1 ring-inset ring-slate-100">{getKeepAliveDueDateSourceLabel(rule.dueDateSource)}</span>
+                {rules.map((rule) => {
+                  const focused = focusRuleId === rule.id;
+                  return (
+                    <div
+                      id={`keep-alive-rule-${rule.id}`}
+                      key={rule.id}
+                      className={`rounded-xl border p-4 transition ${focused ? "border-sky-300 bg-sky-50/60 ring-2 ring-sky-100" : "border-slate-200"}`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-medium text-slate-800">{rule.name}</span>
+                            {focused ? <span className="rounded-md bg-sky-100 px-2 py-0.5 text-[10px] font-medium text-sky-700">提醒对应规则</span> : null}
+                            <span className={`rounded-md px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset ${statusClass(rule.status)}`}>{getKeepAliveRuleStatusLabel(rule.status)}</span>
+                            <span className="rounded-md bg-slate-50 px-2 py-0.5 text-[10px] text-slate-500 ring-1 ring-inset ring-slate-100">{getKeepAliveDueDateSourceLabel(rule.dueDateSource)}</span>
+                          </div>
+                          <div className="mt-1 text-xs text-slate-400">每 {getKeepAliveIntervalLabel(rule.intervalValue, rule.intervalUnit)} · {rule.qualifyingActions.map(getKeepAliveActivityLabel).join(" / ")}</div>
+                          {getKeepAliveRechargeRequirementLabel(rule.minimumRechargeAmount, rule.rechargeCurrencyCode) ? (
+                            <div className="mt-1 text-xs font-medium text-slate-500">充值要求：{getKeepAliveRechargeRequirementLabel(rule.minimumRechargeAmount, rule.rechargeCurrencyCode)}</div>
+                          ) : null}
                         </div>
-                        <div className="mt-1 text-xs text-slate-400">每 {getKeepAliveIntervalLabel(rule.intervalValue, rule.intervalUnit)} · {rule.qualifyingActions.map(getKeepAliveActivityLabel).join(" / ")}</div>
-                        {getKeepAliveRechargeRequirementLabel(rule.minimumRechargeAmount, rule.rechargeCurrencyCode) ? (
-                          <div className="mt-1 text-xs font-medium text-slate-500">充值要求：{getKeepAliveRechargeRequirementLabel(rule.minimumRechargeAmount, rule.rechargeCurrencyCode)}</div>
-                        ) : null}
+                        <CalendarClock className="h-4 w-4 shrink-0 text-slate-300" />
                       </div>
-                      <CalendarClock className="h-4 w-4 shrink-0 text-slate-300" />
+                      <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2.5">
+                        <div className="text-[10px] text-slate-400">{rule.dueDateSource === "sim_validity" ? "下一次操作日期 · 跟随号码有效期" : "下一次操作日期"}</div>
+                        <div className="mt-0.5 text-sm font-medium text-slate-700">{rule.nextDueDate || "待设置"}</div>
+                      </div>
+                      {rule.notes ? <div className="mt-2 text-xs leading-5 text-slate-400">{rule.notes}</div> : null}
                     </div>
-                    <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2.5">
-                      <div className="text-[10px] text-slate-400">{rule.dueDateSource === "sim_validity" ? "下一次操作日期 · 跟随号码有效期" : "下一次操作日期"}</div>
-                      <div className="mt-0.5 text-sm font-medium text-slate-700">{rule.nextDueDate || "待设置"}</div>
-                    </div>
-                    {rule.notes ? <div className="mt-2 text-xs leading-5 text-slate-400">{rule.notes}</div> : null}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div className="rounded-xl border border-dashed border-slate-200 px-4 py-5 text-center text-xs text-slate-400">还没有配置保号规则。前往“保号管理”即可开始设置。</div>

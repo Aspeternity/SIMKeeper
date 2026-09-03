@@ -11,6 +11,7 @@ import {
   DEFAULT_NOTIFICATION_TITLE_TEMPLATE,
   renderNotificationTemplate,
 } from "@/lib/notification-templates";
+import { filterReminderItems } from "@/lib/reminder-actions";
 import {
   buildReminderItems,
   getReminderKindLabel,
@@ -452,7 +453,7 @@ export function listNotificationDeliveries(limit = 50) {
   return rows.map(mapDelivery);
 }
 
-export function getCurrentReminderItems() {
+export function getRawCurrentReminderItems(today = datePartsInTimeZone().date) {
   const sims = db
     .select({
       id: simCards.id,
@@ -483,7 +484,12 @@ export function getCurrentReminderItems() {
     .from(simKeepAliveRules)
     .all();
 
-  return buildReminderItems({ sims, rules, today: datePartsInTimeZone().date });
+  return buildReminderItems({ sims, rules, today });
+}
+
+export function getCurrentReminderItems() {
+  const today = datePartsInTimeZone().date;
+  return filterReminderItems(getRawCurrentReminderItems(today), today);
 }
 
 function stringConfig(config: NotificationChannelConfig, key: string) {

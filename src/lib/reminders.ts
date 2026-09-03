@@ -112,7 +112,7 @@ export function buildReminderItems({
           dueDate: sim.validUntil,
           status,
           days: state.days,
-          href: "/sims",
+          href: `/sims/${sim.id}?section=validity`,
           detail: sim.validUntil
             ? `号码有效期将在 ${sim.validUntil} 到期 · 跟随保号规则“${linkedValidityRule.name}” · 提前 ${linkedValidityRule.warningDays} 天提醒${requirement ? ` · 操作要求：${requirement}` : ""}`
             : `跟随号码有效期的保号规则“${linkedValidityRule.name}”已启用，但号码尚未设置有效期${requirement ? ` · 操作要求：${requirement}` : ""}`,
@@ -134,7 +134,7 @@ export function buildReminderItems({
           dueDate: sim.validUntil,
           status: days < 0 ? "overdue" : days === 0 ? "today" : "upcoming",
           days,
-          href: "/sims",
+          href: `/sims/${sim.id}?section=validity`,
           detail: `号码有效期将在 ${sim.validUntil} 到期`,
           requirement: null,
         });
@@ -166,7 +166,7 @@ export function buildReminderItems({
         dueDate: rule.nextDueDate,
         status,
         days: state.days,
-        href: "/history",
+        href: `/sims/${sim.id}?section=keep-alive&rule=${rule.id}`,
         detail: rule.nextDueDate
           ? `下一次保号操作日期 ${rule.nextDueDate} · 提前 ${rule.warningDays} 天提醒${requirement ? ` · 操作要求：${requirement}` : ""}`
           : `该保号规则尚未设置下一次操作日期${requirement ? ` · 操作要求：${requirement}` : ""}`,
