@@ -36,7 +36,7 @@ jobs:
           docker pull "$image"
           echo "IMAGE=$image" >> "$GITHUB_ENV"
 
-      - name: Verify scheduling, templates, digest delivery and secret masking
+      - name: Verify split schedule, templates, delivery and secret masking
         shell: bash
         run: |
           set -euo pipefail
@@ -170,15 +170,29 @@ jobs:
             strict_catchup=0
           fi
 
-          jq -n --arg past "$past_time" '{action:"settings",settings:{enabled:true,dailyTime:$past,milestoneDays:[0],catchUpEnabled:false,titleTemplate:"CUSTOM {{heading}} :: {{count}}",bodyTemplate:"BODY {{date}}\n{{items}}\nEND",itemTemplate:"ITEM {{index}} | {{simLabel}} | {{status}} | {{relative}}{{dueSuffix}}"}}' > "$tmp/settings-payload.json"
-          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/settings.json" -w '%{http_code}' \
-            -X PATCH -H 'Content-Type: application/json' --data-binary @"$tmp/settings-payload.json" "$base/api/notifications")" || fail "Notification settings update failed"
-          [ "$status" = "200" ] || fail "Notification settings update returned HTTP $status"
-          [ "$(jq -r '.settings.enabled' "$tmp/settings.json")" = "true" ] || fail "Notification master switch was not enabled"
-          [ "$(jq -r '.settings.catchUpEnabled' "$tmp/settings.json")" = "false" ] || fail "Catch-up switch was not persisted as disabled"
-          [ "$(jq -r '.settings.titleTemplate' "$tmp/settings.json")" = 'CUSTOM {{heading}} :: {{count}}' ] || fail "Title template was not persisted"
-          [ "$(jq -r '.settings.bodyTemplate' "$tmp/settings.json")" = $'BODY {{date}}\n{{items}}\nEND' ] || fail "Body template was not persisted"
-          [ "$(jq -r '.settings.itemTemplate' "$tmp/settings.json")" = 'ITEM {{index}} | {{simLabel}} | {{status}} | {{relative}}{{dueSuffix}}' ] || fail "Item template was not persisted"
+          jq -n --arg past "$past_time" '{action:"schedule",schedule:{enabled:true,dailyTime:$past,milestoneDays:[0],catchUpEnabled:false}}' > "$tmp/schedule-payload.json"
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/schedule.json" -w '%{http_code}' \
+            -X PATCH -H 'Content-Type: application/json' --data-binary @"$tmp/schedule-payload.json" "$base/api/notifications")" || fail "Notification schedule update failed"
+          [ "$status" = "200" ] || fail "Notification schedule update returned HTTP $status"
+          [ "$(jq -r '.settings.enabled' "$tmp/schedule.json")" = "true" ] || fail "Notification master switch was not enabled"
+          [ "$(jq -r '.settings.catchUpEnabled' "$tmp/schedule.json")" = "false" ] || fail "Catch-up switch was not persisted as disabled"
+          [ "$(jq -r '.settings.titleTemplate' "$tmp/schedule.json")" = 'SIMKeeper {{heading}} · {{count}} 项' ] || fail "Saving schedule unexpectedly changed the notification template"
+
+          jq -n '{action:"templates",templates:{titleTemplate:"CUSTOM {{heading}} :: {{count}}",bodyTemplate:"BODY {{date}}\n{{items}}\nEND",itemTemplate:"ITEM {{index}} | {{simLabel}} | {{status}} | {{relative}}{{dueSuffix}}"}}' > "$tmp/templates-payload.json"
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/templates.json" -w '%{http_code}' \
+            -X PATCH -H 'Content-Type: application/json' --data-binary @"$tmp/templates-payload.json" "$base/api/notifications")" || fail "Notification template update failed"
+          [ "$status" = "200" ] || fail "Notification template update returned HTTP $status"
+          [ "$(jq -r '.settings.titleTemplate' "$tmp/templates.json")" = 'CUSTOM {{heading}} :: {{count}}' ] || fail "Title template was not persisted"
+          [ "$(jq -r '.settings.bodyTemplate' "$tmp/templates.json")" = $'BODY {{date}}\n{{items}}\nEND' ] || fail "Body template was not persisted"
+          [ "$(jq -r '.settings.itemTemplate' "$tmp/templates.json")" = 'ITEM {{index}} | {{simLabel}} | {{status}} | {{relative}}{{dueSuffix}}' ] || fail "Item template was not persisted"
+          [ "$(jq -r '.settings.dailyTime' "$tmp/templates.json")" = "$past_time" ] || fail "Saving templates unexpectedly changed the daily schedule"
+          [ "$(jq -r '.settings.catchUpEnabled' "$tmp/templates.json")" = "false" ] || fail "Saving templates unexpectedly changed catch-up behavior"
+
+          jq -n --arg past "$past_time" '{action:"schedule",schedule:{enabled:true,dailyTime:$past,milestoneDays:[0],catchUpEnabled:false}}' > "$tmp/schedule-again-payload.json"
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/schedule-again.json" -w '%{http_code}' \
+            -X PATCH -H 'Content-Type: application/json' --data-binary @"$tmp/schedule-again-payload.json" "$base/api/notifications")" || fail "Second schedule update failed"
+          [ "$status" = "200" ] || fail "Second schedule update returned HTTP $status"
+          [ "$(jq -r '.settings.titleTemplate' "$tmp/schedule-again.json")" = 'CUSTOM {{heading}} :: {{count}}' ] || fail "Saving schedule overwrote the custom template"
 
           if [ "$strict_catchup" -eq 1 ]; then
             status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/catchup-disabled.json" -w '%{http_code}' \
@@ -236,6 +250,9 @@ jobs:
           status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/notifications.html" -w '%{http_code}' "$base/notifications")" || fail "Notification page request failed"
           [ "$status" = "200" ] || fail "Notification page returned HTTP $status"
           grep -q '通知渠道' "$tmp/notifications.html" || fail "Notification page heading was not rendered"
+          grep -q '通知模板' "$tmp/notifications.html" || fail "Notification template entry button was not rendered"
+          grep -q '保存通知计划' "$tmp/notifications.html" || fail "Independent schedule save action was not rendered"
+          if grep -q '摘要正文模板' "$tmp/notifications.html"; then fail "Template editor is still expanded on the notification home page"; fi
 
           status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/backup.json" -w '%{http_code}' "$base/api/backups?export=1")" || fail "Portable backup export failed"
           [ "$status" = "200" ] || fail "Portable backup export returned HTTP $status"
@@ -245,4 +262,4 @@ jobs:
           jq -e '.tables.settings[] | select(.key == "notification_catch_up_enabled" and .value == "0")' "$tmp/backup.json" >/dev/null || fail "Catch-up setting was not included in complete backup"
           jq -e '.tables.settings[] | select(.key == "notification_title_template" and .value == "CUSTOM {{heading}} :: {{count}}")' "$tmp/backup.json" >/dev/null || fail "Notification template was not included in complete backup"
 
-          echo "Notification scheduling and template smoke test passed."
+          echo "Notification split-settings smoke test passed."
