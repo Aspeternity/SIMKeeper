@@ -13,11 +13,13 @@ import {
   type KeepAliveDueDateSource,
 } from "@/lib/keep-alive";
 import type { KeepAliveRuleRecord } from "@/lib/keep-alive-types";
+import { CURRENCIES } from "@/lib/sim-options";
 
 export function KeepAliveRuleModal({
   simId,
   simLabel,
   simValidUntil,
+  simCurrencyCode,
   rule,
   onClose,
   onSaved,
@@ -25,6 +27,7 @@ export function KeepAliveRuleModal({
   simId: number;
   simLabel: string;
   simValidUntil: string | null;
+  simCurrencyCode: string | null;
   rule: KeepAliveRuleRecord | null;
   onClose: () => void;
   onSaved: () => Promise<void> | void;
@@ -33,6 +36,8 @@ export function KeepAliveRuleModal({
   const [intervalValue, setIntervalValue] = useState(rule ? String(rule.intervalValue) : "");
   const [intervalUnit, setIntervalUnit] = useState(rule?.intervalUnit || "day");
   const [qualifyingActions, setQualifyingActions] = useState<string[]>(rule?.qualifyingActions || ["recharge"]);
+  const [minimumRechargeAmount, setMinimumRechargeAmount] = useState(rule?.minimumRechargeAmount === null || rule?.minimumRechargeAmount === undefined ? "" : String(rule.minimumRechargeAmount));
+  const [rechargeCurrencyCode, setRechargeCurrencyCode] = useState(rule?.rechargeCurrencyCode || simCurrencyCode || "USD");
   const [dueDateSource, setDueDateSource] = useState<KeepAliveDueDateSource>(
     rule?.dueDateSource || (simValidUntil ? "sim_validity" : "independent"),
   );
@@ -48,6 +53,7 @@ export function KeepAliveRuleModal({
     () => qualifyingActions.map(getKeepAliveActivityLabel).join("、") || "未选择",
     [qualifyingActions],
   );
+  const rechargeEnabled = qualifyingActions.includes("recharge");
 
   function toggleAction(value: string) {
     setQualifyingActions((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value]);
@@ -68,6 +74,8 @@ export function KeepAliveRuleModal({
           intervalValue,
           intervalUnit,
           qualifyingActions,
+          minimumRechargeAmount: rechargeEnabled ? minimumRechargeAmount : "",
+          rechargeCurrencyCode: rechargeEnabled ? rechargeCurrencyCode : "",
           dueDateSource,
           nextDueDate: dueDateSource === "independent" ? nextDueDate : "",
           warningDays,
@@ -147,7 +155,7 @@ export function KeepAliveRuleModal({
                   ? simValidUntil
                     ? "来自号码管理；修改号码“有效期至”后这里会立即同步。"
                     : "当前号码尚未设置“有效期至”，请先在号码管理中填写。"
-                  : "可手动初始化；留空时会尝试根据最近匹配活动按保号周期计算。"}
+                  : "可手动初始化；留空时会尝试根据最近一次真正满足规则条件的活动计算。"}
               </div>
             </label>
           </div>
@@ -166,6 +174,26 @@ export function KeepAliveRuleModal({
               ))}
             </div>
           </div>
+
+          {rechargeEnabled ? (
+            <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+              <div className="text-sm font-medium text-slate-700">充值要求</div>
+              <p className="mt-1 text-xs leading-5 text-slate-400">可设置一次充值至少达到多少才算满足保号规则。留空表示任意金额充值都有效。</p>
+              <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_160px]">
+                <label className="space-y-1.5 text-sm">
+                  <span className="text-xs font-medium text-slate-600">最低充值金额</span>
+                  <Input value={minimumRechargeAmount} onChange={(event) => setMinimumRechargeAmount(event.target.value)} type="number" min="0.000001" step="any" inputMode="decimal" placeholder="例如 20" />
+                </label>
+                <label className="space-y-1.5 text-sm">
+                  <span className="text-xs font-medium text-slate-600">充值币种</span>
+                  <select value={rechargeCurrencyCode} onChange={(event) => setRechargeCurrencyCode(event.target.value)} disabled={!minimumRechargeAmount} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400 disabled:bg-slate-100 disabled:text-slate-400">
+                    {CURRENCIES.map((currency) => <option key={currency.code} value={currency.code}>{currency.code} · {currency.label}</option>)}
+                  </select>
+                </label>
+              </div>
+              {minimumRechargeAmount ? <div className="mt-2 text-xs font-medium text-slate-500">当前要求：单次充值至少 {rechargeCurrencyCode} {minimumRechargeAmount}</div> : null}
+            </div>
+          ) : null}
 
           <div className="grid gap-4 sm:grid-cols-3">
             <label className="space-y-1.5 text-sm">
@@ -193,7 +221,7 @@ export function KeepAliveRuleModal({
 
           <label className="block space-y-1.5 text-sm">
             <span className="font-medium text-slate-700">规则备注</span>
-            <textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={2} placeholder="可记录运营商原文、最低充值金额、特殊限制等" className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100" />
+            <textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={2} placeholder="可记录运营商原文、特殊限制或核实来源等" className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100" />
           </label>
 
           {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
