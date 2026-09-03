@@ -36,7 +36,7 @@ jobs:
           docker pull "$image"
           echo "IMAGE=$image" >> "$GITHUB_ENV"
 
-      - name: Verify precise scheduling, digest delivery and secret masking
+      - name: Verify scheduling, templates, digest delivery and secret masking
         shell: bash
         run: |
           set -euo pipefail
@@ -47,9 +47,12 @@ jobs:
           cookies="$tmp/cookies.txt"
           today="$(TZ=Asia/Shanghai date +%F)"
           secret="notification-smoke-secret"
+          capture="$tmp/webhook-capture.jsonl"
+          receiver_pid=""
 
           cleanup() {
             docker rm -f "$container" >/dev/null 2>&1 || true
+            if [ -n "$receiver_pid" ]; then kill "$receiver_pid" >/dev/null 2>&1 || true; fi
             rm -rf "$tmp"
           }
           trap cleanup EXIT
@@ -57,6 +60,8 @@ jobs:
           fail() {
             echo "::error::$1"
             docker logs "$container" 2>&1 || true
+            [ -f "$tmp/receiver.log" ] && { echo "----- receiver.log -----"; cat "$tmp/receiver.log" || true; }
+            [ -f "$capture" ] && { echo "----- webhook capture -----"; cat "$capture" || true; }
             for file in "$tmp"/*.json "$tmp"/*.html; do
               [ -f "$file" ] || continue
               echo "----- $file -----"
@@ -66,9 +71,46 @@ jobs:
             exit 1
           }
 
+          cat > "$tmp/receiver.py" <<'PY'
+          import json
+          import os
+          from http.server import BaseHTTPRequestHandler, HTTPServer
+          from urllib.parse import parse_qs, urlparse
+
+          capture = os.environ["CAPTURE_FILE"]
+
+          class Handler(BaseHTTPRequestHandler):
+              def do_GET(self):
+                  parsed = urlparse(self.path)
+                  query = parse_qs(parsed.query)
+                  record = {
+                      "path": parsed.path,
+                      "title": query.get("title", [""])[0],
+                      "message": query.get("message", [""])[0],
+                      "count": query.get("count", [""])[0],
+                      "auth": self.headers.get("Authorization", ""),
+                  }
+                  with open(capture, "a", encoding="utf-8") as handle:
+                      handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+                  self.send_response(200)
+                  self.end_headers()
+                  self.wfile.write(b"ok")
+
+              def log_message(self, format, *args):
+                  return
+
+          HTTPServer(("0.0.0.0", 18083), Handler).serve_forever()
+          PY
+
+          CAPTURE_FILE="$capture" python3 "$tmp/receiver.py" >"$tmp/receiver.log" 2>&1 &
+          receiver_pid=$!
+          sleep 1
+          kill -0 "$receiver_pid" >/dev/null 2>&1 || fail "Webhook capture server did not start"
+
           mkdir -p "$tmp/data"
           docker run -d \
             --name "$container" \
+            --add-host=host.docker.internal:host-gateway \
             -p 18082:3000 \
             -e SIMKEEPER_COOKIE_SECURE=false \
             -e PUID="$(id -u)" \
@@ -108,7 +150,7 @@ jobs:
             [ "$status" = "201" ] || fail "SIM $suffix creation returned HTTP $status"
           done
 
-          jq -n --arg secret "$secret" '{action:"create",channel:{name:"Loopback Webhook",type:"webhook",enabled:true,config:{url:"http://127.0.0.1:3000/api/health",method:"GET",bearerToken:$secret,filters:{kinds:["sim_validity"],statuses:["today"]}}}}' > "$tmp/channel-payload.json"
+          jq -n --arg secret "$secret" '{action:"create",channel:{name:"Loopback Webhook",type:"webhook",enabled:true,config:{url:"http://host.docker.internal:18083/hook",method:"GET",bearerToken:$secret,filters:{kinds:["sim_validity"],statuses:["today"]}}}}' > "$tmp/channel-payload.json"
           status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/channel.json" -w '%{http_code}' \
             -X POST -H 'Content-Type: application/json' --data-binary @"$tmp/channel-payload.json" "$base/api/notifications")" || fail "Notification channel creation failed"
           [ "$status" = "201" ] || fail "Notification channel creation returned HTTP $status"
@@ -118,13 +160,48 @@ jobs:
           [ "$(jq -r '.channel.config.bearerToken // empty' "$tmp/channel.json")" = "" ] || fail "Bearer Token was returned in channel config"
           if grep -q "$secret" "$tmp/channel.json"; then fail "Bearer Token leaked through notification API response"; fi
 
+          total_minutes=$((10#$(TZ=Asia/Shanghai date +%H) * 60 + 10#$(TZ=Asia/Shanghai date +%M)))
+          strict_catchup=1
+          if [ "$total_minutes" -ge 5 ]; then
+            past_minutes=$((total_minutes - 5))
+            past_time=$(printf '%02d:%02d' $((past_minutes / 60)) $((past_minutes % 60)))
+          else
+            past_time="00:00"
+            strict_catchup=0
+          fi
+
+          jq -n --arg past "$past_time" '{action:"settings",settings:{enabled:true,dailyTime:$past,milestoneDays:[0],catchUpEnabled:false,titleTemplate:"CUSTOM {{heading}} :: {{count}}",bodyTemplate:"BODY {{date}}\n{{items}}\nEND",itemTemplate:"ITEM {{index}} | {{simLabel}} | {{status}} | {{relative}}{{dueSuffix}}"}}' > "$tmp/settings-payload.json"
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/settings.json" -w '%{http_code}' \
+            -X PATCH -H 'Content-Type: application/json' --data-binary @"$tmp/settings-payload.json" "$base/api/notifications")" || fail "Notification settings update failed"
+          [ "$status" = "200" ] || fail "Notification settings update returned HTTP $status"
+          [ "$(jq -r '.settings.enabled' "$tmp/settings.json")" = "true" ] || fail "Notification master switch was not enabled"
+          [ "$(jq -r '.settings.catchUpEnabled' "$tmp/settings.json")" = "false" ] || fail "Catch-up switch was not persisted as disabled"
+          [ "$(jq -r '.settings.titleTemplate' "$tmp/settings.json")" = 'CUSTOM {{heading}} :: {{count}}' ] || fail "Title template was not persisted"
+          [ "$(jq -r '.settings.bodyTemplate' "$tmp/settings.json")" = $'BODY {{date}}\n{{items}}\nEND' ] || fail "Body template was not persisted"
+          [ "$(jq -r '.settings.itemTemplate' "$tmp/settings.json")" = 'ITEM {{index}} | {{simLabel}} | {{status}} | {{relative}}{{dueSuffix}}' ] || fail "Item template was not persisted"
+
+          if [ "$strict_catchup" -eq 1 ]; then
+            status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/catchup-disabled.json" -w '%{http_code}' \
+              -X POST -H 'Content-Type: application/json' --data '{"action":"dispatchDue"}' "$base/api/notifications")" || fail "Catch-up disabled dispatch check failed"
+            [ "$status" = "200" ] || fail "Catch-up disabled dispatch returned HTTP $status"
+            [ "$(jq -r '.result.reason' "$tmp/catchup-disabled.json")" = "catch_up_disabled" ] || fail "Missed schedule was not skipped when catch-up was disabled"
+            [ "$(jq -r '.result.sent' "$tmp/catchup-disabled.json")" = "0" ] || fail "Catch-up disabled schedule unexpectedly sent a digest"
+          fi
+
           status="$(curl -sS --max-time 15 -b "$cookies" -o "$tmp/test.json" -w '%{http_code}' \
             -X POST -H 'Content-Type: application/json' --data "{\"action\":\"test\",\"id\":$channel_id}" "$base/api/notifications")" || fail "Test notification request failed"
           [ "$status" = "200" ] || fail "Test notification returned HTTP $status"
           [ "$(jq -r '.deliveries[0].status' "$tmp/test.json")" = "success" ] || fail "Test notification did not record success"
           if grep -q "$secret" "$tmp/test.json"; then fail "Bearer Token leaked after test notification"; fi
+          sleep 1
+          test_title="$(tail -n 1 "$capture" | jq -r '.title')"
+          test_message="$(tail -n 1 "$capture" | jq -r '.message')"
+          test_auth="$(tail -n 1 "$capture" | jq -r '.auth')"
+          [ "$test_title" = "CUSTOM 测试通知 :: 1" ] || fail "Test notification did not use the custom title template"
+          printf '%s' "$test_message" | grep -q 'ITEM 1 | 示例号码 | 即将到期 | 还有 7 天' || fail "Test notification did not use the custom item template"
+          [ "$test_auth" = "Bearer $secret" ] || fail "Stored Webhook Bearer Token was not used for delivery"
 
-          jq -n --argjson id "$channel_id" '{action:"channel",channel:{id:$id,name:"Loopback Webhook",type:"webhook",enabled:true,config:{url:"http://127.0.0.1:3000/api/health",method:"GET",bearerToken:"",filters:{kinds:["sim_validity"],statuses:["today"]}}}}' > "$tmp/channel-update.json"
+          jq -n --argjson id "$channel_id" '{action:"channel",channel:{id:$id,name:"Loopback Webhook",type:"webhook",enabled:true,config:{url:"http://host.docker.internal:18083/hook",method:"GET",bearerToken:"",filters:{kinds:["sim_validity"],statuses:["today"]}}}}' > "$tmp/channel-update.json"
           status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/channel-update-response.json" -w '%{http_code}' \
             -X PATCH -H 'Content-Type: application/json' --data-binary @"$tmp/channel-update.json" "$base/api/notifications")" || fail "Notification channel update failed"
           [ "$status" = "200" ] || fail "Notification channel update returned HTTP $status"
@@ -134,30 +211,26 @@ jobs:
             -X POST -H 'Content-Type: application/json' --data "{\"action\":\"test\",\"id\":$channel_id}" "$base/api/notifications")" || fail "Test after secret-preserving edit failed"
           [ "$status" = "200" ] || fail "Test after secret-preserving edit returned HTTP $status"
 
-          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/settings.json" -w '%{http_code}' \
-            -X PATCH -H 'Content-Type: application/json' \
-            --data '{"action":"settings","settings":{"enabled":true,"dailyTime":"00:00","milestoneDays":[0]}}' "$base/api/notifications")" || fail "Notification settings update failed"
-          [ "$status" = "200" ] || fail "Notification settings update returned HTTP $status"
-          [ "$(jq -r '.settings.enabled' "$tmp/settings.json")" = "true" ] || fail "Notification master switch was not enabled"
-          [ "$(jq -r '.settings.dailyTime' "$tmp/settings.json")" = "00:00" ] || fail "Precise daily notification time was not saved"
-          [ "$(jq -r '.settings.milestoneDays | join(",")' "$tmp/settings.json")" = "0" ] || fail "Notification milestone settings were not saved"
-
-          status="$(curl -sS --max-time 15 -b "$cookies" -o "$tmp/dispatch1.json" -w '%{http_code}' \
-            -X POST -H 'Content-Type: application/json' --data '{"action":"dispatchDue"}' "$base/api/notifications")" || fail "First scheduled dispatch failed"
-          [ "$status" = "200" ] || fail "First scheduled dispatch returned HTTP $status"
-          [ "$(jq -r '.result.failed' "$tmp/dispatch1.json")" = "0" ] || fail "First scheduled dispatch recorded a failure"
-          [ "$(jq -r '.result.sent' "$tmp/dispatch1.json")" = "1" ] || fail "Two reminders were not merged into one channel digest"
-          [ "$(jq -r '.result.deliveredReminders' "$tmp/dispatch1.json")" = "2" ] || fail "Digest did not contain both due reminders"
-          [ "$(jq -r '.settings.lastScheduledDate' "$tmp/dispatch1.json")" = "$today" ] || fail "Scheduled date was not recorded after automatic dispatch"
-
-          status="$(curl -sS --max-time 15 -b "$cookies" -o "$tmp/dispatch2.json" -w '%{http_code}' \
-            -X POST -H 'Content-Type: application/json' --data '{"action":"dispatchDue"}' "$base/api/notifications")" || fail "Second scheduled dispatch failed"
-          [ "$status" = "200" ] || fail "Second scheduled dispatch returned HTTP $status"
-          [ "$(jq -r '.result.reason' "$tmp/dispatch2.json")" = "already_scheduled" ] || fail "Second same-day automatic run was not blocked by daily scheduling state"
-          [ "$(jq -r '.result.sent' "$tmp/dispatch2.json")" = "0" ] || fail "Second same-day automatic run sent another digest"
+          status="$(curl -sS --max-time 15 -b "$cookies" -o "$tmp/manual-dispatch.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' --data '{"action":"dispatch"}' "$base/api/notifications")" || fail "Manual digest dispatch failed"
+          [ "$status" = "200" ] || fail "Manual digest dispatch returned HTTP $status"
+          [ "$(jq -r '.result.failed' "$tmp/manual-dispatch.json")" = "0" ] || fail "Manual digest dispatch recorded a failure"
+          [ "$(jq -r '.result.sent' "$tmp/manual-dispatch.json")" = "1" ] || fail "Two reminders were not merged into one channel digest"
+          [ "$(jq -r '.result.deliveredReminders' "$tmp/manual-dispatch.json")" = "2" ] || fail "Digest did not contain both due reminders"
+          sleep 1
+          digest_title="$(tail -n 1 "$capture" | jq -r '.title')"
+          digest_message="$(tail -n 1 "$capture" | jq -r '.message')"
+          digest_count="$(tail -n 1 "$capture" | jq -r '.count')"
+          [ "$digest_title" = "CUSTOM 当前提醒 :: 2" ] || fail "Manual digest did not use custom title template"
+          [ "$digest_count" = "2" ] || fail "Webhook digest count was not 2"
+          printf '%s' "$digest_message" | grep -q 'Notification SIM A' || fail "Digest template omitted SIM A"
+          printf '%s' "$digest_message" | grep -q 'Notification SIM B' || fail "Digest template omitted SIM B"
+          printf '%s' "$digest_message" | grep -q '^BODY ' || fail "Digest did not use custom body template"
 
           status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/notifications-get.json" -w '%{http_code}' "$base/api/notifications")" || fail "Notification API reload failed"
           [ "$status" = "200" ] || fail "Notification API reload returned HTTP $status"
+          [ "$(jq -r '.settings.catchUpEnabled' "$tmp/notifications-get.json")" = "false" ] || fail "Catch-up switch did not survive API reload"
+          [ "$(jq -r '.settings.titleTemplate' "$tmp/notifications-get.json")" = 'CUSTOM {{heading}} :: {{count}}' ] || fail "Template did not survive API reload"
           if grep -q "$secret" "$tmp/notifications-get.json"; then fail "Bearer Token leaked through notification API reload"; fi
 
           status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/notifications.html" -w '%{http_code}' "$base/notifications")" || fail "Notification page request failed"
@@ -169,5 +242,7 @@ jobs:
           [ "$(jq -r '.tables.notification_channels | length' "$tmp/backup.json")" = "1" ] || fail "Notification channel was not included in portable backup"
           [ "$(jq -r '.tables.notification_deliveries | length' "$tmp/backup.json")" -ge 4 ] || fail "Notification delivery history was not included in portable backup"
           grep -q "$secret" "$tmp/backup.json" || fail "Complete backup did not retain the server-side notification credential"
+          jq -e '.tables.settings[] | select(.key == "notification_catch_up_enabled" and .value == "0")' "$tmp/backup.json" >/dev/null || fail "Catch-up setting was not included in complete backup"
+          jq -e '.tables.settings[] | select(.key == "notification_title_template" and .value == "CUSTOM {{heading}} :: {{count}}")' "$tmp/backup.json" >/dev/null || fail "Notification template was not included in complete backup"
 
-          echo "Notification delivery smoke test passed."
+          echo "Notification scheduling and template smoke test passed."
