@@ -6,7 +6,14 @@ import { carriers, simCards, simKeepAliveRules } from "@/db/schema";
 import { daysBetweenDates } from "@/lib/keep-alive";
 import type { NotificationChannelType } from "@/lib/notification-options";
 import {
+  DEFAULT_NOTIFICATION_BODY_TEMPLATE,
+  DEFAULT_NOTIFICATION_ITEM_TEMPLATE,
+  DEFAULT_NOTIFICATION_TITLE_TEMPLATE,
+  renderNotificationTemplate,
+} from "@/lib/notification-templates";
+import {
   buildReminderItems,
+  getReminderKindLabel,
   getReminderRelativeLabel,
   getReminderStatusLabel,
   type ReminderItem,
@@ -23,6 +30,7 @@ export const OVERDUE_REPEAT_INTERVAL_DAYS = 7;
 const ALL_NOTIFICATION_KINDS: ReminderKind[] = ["sim_validity", "keep_alive"];
 const ALL_NOTIFICATION_STATUSES: ReminderStatus[] = ["upcoming", "today", "grace", "overdue", "unscheduled"];
 const MAX_TIMER_DELAY_MS = 2_147_000_000;
+const SCHEDULE_START_TOLERANCE_MS = 60_000;
 
 export type NotificationChannelFilter = {
   kinds: ReminderKind[];
@@ -60,12 +68,21 @@ export type NotificationSettings = {
   dailyTime: string;
   dailyHour: number;
   milestoneDays: number[];
+  catchUpEnabled: boolean;
+  titleTemplate: string;
+  bodyTemplate: string;
+  itemTemplate: string;
   lastDispatchAt: string | null;
   lastScheduledDate: string | null;
   nextDispatchAt: string | null;
   timeZone: string;
   scheduleMode: "daily_exact";
-  catchUpEnabled: true;
+};
+
+type DispatchPlan = {
+  instant: Date;
+  scheduledDate: string;
+  catchUp: boolean;
 };
 
 export function ensureNotificationTables() {
@@ -149,6 +166,13 @@ function readMilestoneDays() {
   }
 }
 
+function normalizeTemplate(value: string, fallback: string, maxLength: number, label: string) {
+  const normalized = value.replace(/\r\n/g, "\n").trim();
+  if (!normalized) return fallback;
+  if (normalized.length > maxLength) throw new Error(`${label}不能超过 ${maxLength} 个字符`);
+  return normalized;
+}
+
 type ZonedDateTimeParts = {
   date: string;
   hour: number;
@@ -200,14 +224,30 @@ function localDateTimeToInstant(date: string, time: string) {
   return guess;
 }
 
-function getNextDispatchInstant(settings: Pick<NotificationSettings, "enabled" | "dailyTime" | "lastScheduledDate">, now = new Date()) {
+function getNextDispatchPlan(
+  settings: Pick<NotificationSettings, "enabled" | "dailyTime" | "lastScheduledDate" | "catchUpEnabled">,
+  now = new Date(),
+): DispatchPlan | null {
   if (!settings.enabled) return null;
   const parts = datePartsInTimeZone(now);
   const todayTarget = localDateTimeToInstant(parts.date, settings.dailyTime);
+  const delta = now.getTime() - todayTarget.getTime();
 
-  if (now.getTime() < todayTarget.getTime()) return todayTarget;
-  if (settings.lastScheduledDate !== parts.date) return new Date(now.getTime() + 1000);
-  return localDateTimeToInstant(addDaysToDate(parts.date, 1), settings.dailyTime);
+  if (now.getTime() < todayTarget.getTime()) {
+    return { instant: todayTarget, scheduledDate: parts.date, catchUp: false };
+  }
+
+  if (settings.lastScheduledDate === parts.date) {
+    const tomorrow = addDaysToDate(parts.date, 1);
+    return { instant: localDateTimeToInstant(tomorrow, settings.dailyTime), scheduledDate: tomorrow, catchUp: false };
+  }
+
+  if (delta <= SCHEDULE_START_TOLERANCE_MS || settings.catchUpEnabled) {
+    return { instant: new Date(now.getTime() + 1000), scheduledDate: parts.date, catchUp: delta > SCHEDULE_START_TOLERANCE_MS };
+  }
+
+  const tomorrow = addDaysToDate(parts.date, 1);
+  return { instant: localDateTimeToInstant(tomorrow, settings.dailyTime), scheduledDate: tomorrow, catchUp: false };
 }
 
 export function getNotificationSettings(): NotificationSettings {
@@ -224,31 +264,51 @@ export function getNotificationSettings(): NotificationSettings {
     dailyTime = DEFAULT_NOTIFICATION_TIME;
   }
 
+  const rawCatchUp = readSetting("notification_catch_up_enabled");
   const base = {
     enabled: readSetting("notification_enabled") === "1",
     dailyTime,
     dailyHour: Number(dailyTime.slice(0, 2)),
     milestoneDays: readMilestoneDays(),
+    catchUpEnabled: rawCatchUp === undefined ? true : rawCatchUp !== "0",
+    titleTemplate: readSetting("notification_title_template") || DEFAULT_NOTIFICATION_TITLE_TEMPLATE,
+    bodyTemplate: readSetting("notification_body_template") || DEFAULT_NOTIFICATION_BODY_TEMPLATE,
+    itemTemplate: readSetting("notification_item_template") || DEFAULT_NOTIFICATION_ITEM_TEMPLATE,
     lastDispatchAt: readSetting("notification_last_dispatch_at") || null,
     lastScheduledDate: readSetting("notification_last_scheduled_date") || null,
     timeZone: NOTIFICATION_TIME_ZONE,
     scheduleMode: "daily_exact" as const,
-    catchUpEnabled: true as const,
   };
 
   return {
     ...base,
-    nextDispatchAt: getNextDispatchInstant(base)?.toISOString() ?? null,
+    nextDispatchAt: getNextDispatchPlan(base)?.instant.toISOString() ?? null,
   };
 }
 
-export function setNotificationSettings(input: { enabled: boolean; dailyTime: string; milestoneDays: number[] }) {
+export function setNotificationSettings(input: {
+  enabled: boolean;
+  dailyTime: string;
+  milestoneDays: number[];
+  catchUpEnabled: boolean;
+  titleTemplate: string;
+  bodyTemplate: string;
+  itemTemplate: string;
+}) {
   const dailyTime = normalizeDailyTime(input.dailyTime);
   const milestoneDays = normalizeMilestoneDays(input.milestoneDays);
+  const titleTemplate = normalizeTemplate(input.titleTemplate, DEFAULT_NOTIFICATION_TITLE_TEMPLATE, 300, "通知标题模板");
+  const bodyTemplate = normalizeTemplate(input.bodyTemplate, DEFAULT_NOTIFICATION_BODY_TEMPLATE, 4000, "摘要正文模板");
+  const itemTemplate = normalizeTemplate(input.itemTemplate, DEFAULT_NOTIFICATION_ITEM_TEMPLATE, 2000, "单条提醒模板");
+
   writeSetting("notification_enabled", input.enabled ? "1" : "0");
   writeSetting("notification_daily_time", dailyTime);
   writeSetting("notification_daily_hour", String(Number(dailyTime.slice(0, 2))));
   writeSetting("notification_milestone_days", JSON.stringify(milestoneDays));
+  writeSetting("notification_catch_up_enabled", input.catchUpEnabled ? "1" : "0");
+  writeSetting("notification_title_template", titleTemplate);
+  writeSetting("notification_body_template", bodyTemplate);
+  writeSetting("notification_item_template", itemTemplate);
   rescheduleNotificationScheduler();
   return getNotificationSettings();
 }
@@ -307,9 +367,7 @@ export function createNotificationChannel(input: {
   ensureNotificationTables();
   const now = new Date().toISOString();
   const result = sqlite
-    .prepare(
-      "INSERT INTO notification_channels (name, type, enabled, config_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-    )
+    .prepare("INSERT INTO notification_channels (name, type, enabled, config_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
     .run(input.name, input.type, input.enabled ? 1 : 0, JSON.stringify(input.config), now, now);
   return getNotificationChannel(Number(result.lastInsertRowid));
 }
@@ -604,21 +662,71 @@ function automaticReminderIsDue(channel: NotificationChannel, reminder: Reminder
   return false;
 }
 
-function reminderDigestLine(item: ReminderItem, index: number) {
-  const due = item.dueDate ? ` · ${item.dueDate}` : "";
-  return `${index + 1}. ${item.simLabel} · ${item.title}\n   ${getReminderStatusLabel(item.status)} · ${getReminderRelativeLabel(item)}${due}`;
+function digestSharedVariables(channel: NotificationChannel, heading: string, count: number, date: string) {
+  return {
+    app: "SIMKeeper",
+    heading,
+    count,
+    date,
+    channelName: channel.name,
+  };
 }
 
-function reminderDigestMessage(items: ReminderItem[]) {
-  return items.map(reminderDigestLine).join("\n\n");
+function renderReminderItem(settings: NotificationSettings, channel: NotificationChannel, item: ReminderItem, index: number, heading: string, date: string, count: number) {
+  const shared = digestSharedVariables(channel, heading, count, date);
+  return renderNotificationTemplate(settings.itemTemplate, {
+    ...shared,
+    index: index + 1,
+    simLabel: item.simLabel,
+    phoneNumber: item.phoneNumber || "",
+    carrierName: item.carrierName,
+    country: item.country,
+    title: item.title,
+    kind: getReminderKindLabel(item.kind),
+    status: getReminderStatusLabel(item.status),
+    relative: getReminderRelativeLabel(item),
+    dueDate: item.dueDate || "",
+    dueSuffix: item.dueDate ? ` · ${item.dueDate}` : "",
+    detail: item.detail,
+  });
+}
+
+function renderReminderDigest(settings: NotificationSettings, channel: NotificationChannel, items: ReminderItem[], heading: string, date: string) {
+  const shared = digestSharedVariables(channel, heading, items.length, date);
+  const renderedItems = items.map((item, index) => renderReminderItem(settings, channel, item, index, heading, date, items.length)).join("\n\n");
+  const title = renderNotificationTemplate(settings.titleTemplate, shared);
+  const message = renderNotificationTemplate(settings.bodyTemplate, { ...shared, items: renderedItems });
+  return { title, message };
+}
+
+function sampleReminder(date: string): ReminderItem {
+  const dueDate = addDaysToDate(date, 7);
+  return {
+    key: "test-preview",
+    simId: 0,
+    simLabel: "示例号码",
+    phoneNumber: "+852 5123 4567",
+    carrierName: "示例运营商",
+    country: "香港",
+    kind: "sim_validity",
+    title: "号码有效期",
+    dueDate,
+    status: "upcoming",
+    days: 7,
+    href: "/sims",
+    detail: `号码有效期将在 ${dueDate} 到期`,
+  };
 }
 
 export async function testNotificationChannel(id: number) {
   const channel = getNotificationChannel(id);
   if (!channel) throw new Error("通知渠道不存在");
+  const settings = getNotificationSettings();
   const deliveredOn = datePartsInTimeZone().date;
+  const sample = sampleReminder(deliveredOn);
+  const rendered = renderReminderDigest(settings, channel, [sample], "测试通知", deliveredOn);
   try {
-    await sendChannelMessage(channel, "SIMKeeper 测试通知", "如果你看到这条消息，说明这个通知渠道已经配置成功。\n\n这是一条测试消息，不代表号码存在待处理事项。");
+    await sendChannelMessage(channel, rendered.title, rendered.message);
     insertDelivery({ channel, kind: "test", deliveredOn, status: "success" });
     return { ok: true };
   } catch (error) {
@@ -628,7 +736,7 @@ export async function testNotificationChannel(id: number) {
   }
 }
 
-export async function dispatchNotifications(options: { force?: boolean; respectSchedule?: boolean } = {}) {
+export async function dispatchNotifications(options: { force?: boolean; respectSchedule?: boolean; scheduledDate?: string } = {}) {
   ensureNotificationTables();
   const settings = getNotificationSettings();
   const force = Boolean(options.force);
@@ -642,11 +750,24 @@ export async function dispatchNotifications(options: { force?: boolean; respectS
 
   if (!force && respectSchedule) {
     const scheduledInstant = localDateTimeToInstant(nowParts.date, settings.dailyTime);
-    if (now.getTime() < scheduledInstant.getTime()) {
-      return { sent: 0, failed: 0, skipped: 0, suppressed: 0, reminders: 0, deliveredReminders: 0, channels: 0, reason: "before_schedule" as const };
-    }
     if (settings.lastScheduledDate === nowParts.date) {
       return { sent: 0, failed: 0, skipped: 0, suppressed: 0, reminders: 0, deliveredReminders: 0, channels: 0, reason: "already_scheduled" as const };
+    }
+
+    if (options.scheduledDate) {
+      if (options.scheduledDate > nowParts.date || now.getTime() < scheduledInstant.getTime()) {
+        return { sent: 0, failed: 0, skipped: 0, suppressed: 0, reminders: 0, deliveredReminders: 0, channels: 0, reason: "before_schedule" as const };
+      }
+      if (options.scheduledDate < nowParts.date && !settings.catchUpEnabled) {
+        return { sent: 0, failed: 0, skipped: 0, suppressed: 0, reminders: 0, deliveredReminders: 0, channels: 0, reason: "catch_up_disabled" as const };
+      }
+    } else {
+      if (now.getTime() < scheduledInstant.getTime()) {
+        return { sent: 0, failed: 0, skipped: 0, suppressed: 0, reminders: 0, deliveredReminders: 0, channels: 0, reason: "before_schedule" as const };
+      }
+      if (!settings.catchUpEnabled && now.getTime() - scheduledInstant.getTime() > SCHEDULE_START_TOLERANCE_MS) {
+        return { sent: 0, failed: 0, skipped: 0, suppressed: 0, reminders: 0, deliveredReminders: 0, channels: 0, reason: "catch_up_disabled" as const };
+      }
     }
   }
 
@@ -678,10 +799,9 @@ export async function dispatchNotifications(options: { force?: boolean; respectS
 
     if (!eligible.length) continue;
 
-    const title = force ? `SIMKeeper 当前提醒 · ${eligible.length} 项` : `SIMKeeper 今日提醒 · ${eligible.length} 项`;
-    const message = reminderDigestMessage(eligible);
+    const rendered = renderReminderDigest(settings, channel, eligible, force ? "当前提醒" : "今日提醒", nowParts.date);
     try {
-      await sendChannelMessage(channel, title, message, eligible);
+      await sendChannelMessage(channel, rendered.title, rendered.message, eligible);
       for (const reminder of eligible) {
         insertDelivery({ channel, kind: "reminder", reminder, deliveredOn: nowParts.date, status: "success" });
       }
@@ -723,12 +843,12 @@ function armNotificationScheduler() {
   }
 
   const settings = getNotificationSettings();
-  const next = getNextDispatchInstant(settings);
-  if (!next) return;
+  const plan = getNextDispatchPlan(settings);
+  if (!plan) return;
 
-  const delay = Math.max(1000, next.getTime() - Date.now());
+  const delay = Math.max(1000, plan.instant.getTime() - Date.now());
   schedulerTimer = setTimeout(() => {
-    void dispatchNotifications({ force: false, respectSchedule: true })
+    void dispatchNotifications({ force: false, respectSchedule: true, scheduledDate: plan.scheduledDate })
       .catch((error) => {
         console.error("[SIMKeeper] notification scheduler failed", error);
       })
