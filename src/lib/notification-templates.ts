@@ -20,6 +20,7 @@ export const NOTIFICATION_TEMPLATE_VARIABLES = [
   { key: "relative", label: "相对日期，例如还有 7 天", scope: "item" },
   { key: "dueDate", label: "到期日期", scope: "item" },
   { key: "dueSuffix", label: "带前置分隔符的到期日期；无日期时为空", scope: "item" },
+  { key: "requirement", label: "操作要求，例如充值至少 PHP 20", scope: "item" },
   { key: "detail", label: "提醒详细说明", scope: "item" },
 ] as const;
 
