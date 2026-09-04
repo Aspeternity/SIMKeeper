@@ -1,0 +1,190 @@
+name: Verify Device Storage Locations
+
+on:
+  workflow_run:
+    workflows:
+      - Build and Publish Docker Image
+    types:
+      - completed
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  device-storage-smoke:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull verified SIMKeeper image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="${{ github.event.workflow_run.head_sha }}"
+          short="${sha:0:7}"
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          image="ghcr.io/${owner}/simkeeper:sha-${short}"
+          docker pull "$image"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Verify device locations, migration, deletion and backup
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          container="simkeeper-device-storage-smoke"
+          tmp="$(mktemp -d)"
+          base="http://127.0.0.1:18087"
+          cookies="$tmp/cookies.txt"
+
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            rm -rf "$tmp"
+          }
+          trap cleanup EXIT
+
+          fail() {
+            echo "::error::$1"
+            docker logs "$container" 2>&1 || true
+            for file in "$tmp"/*.json; do
+              [ -f "$file" ] || continue
+              echo "----- $file -----"
+              cat "$file" || true
+              echo
+            done
+            exit 1
+          }
+
+          mkdir -p "$tmp/data"
+
+          # Simulate an existing alpha.16 database whose sim_cards table has no device_id.
+          python3 - "$tmp/data/simkeeper.db" <<'PY'
+          import sqlite3
+          import sys
+          path = sys.argv[1]
+          con = sqlite3.connect(path)
+          con.execute("""
+          CREATE TABLE sim_cards (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            label TEXT NOT NULL,
+            phone_number TEXT,
+            carrier_id INTEGER NOT NULL,
+            sim_type TEXT NOT NULL,
+            iccid TEXT,
+            balance REAL,
+            currency_code TEXT,
+            status TEXT NOT NULL,
+            activation_date TEXT,
+            valid_until TEXT,
+            notes TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          )
+          """)
+          con.commit()
+          con.close()
+          PY
+
+          docker run -d \
+            --name "$container" \
+            -p 18087:3000 \
+            -e SIMKEEPER_COOKIE_SECURE=false \
+            -e PUID="$(id -u)" \
+            -e PGID="$(id -g)" \
+            -v "$tmp/data:/app/data" \
+            "$IMAGE" >/dev/null || fail "Unable to start device storage smoke container"
+
+          ready=0
+          for _ in $(seq 1 40); do
+            if curl -fsS --max-time 2 "$base/api/health" >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          [ "$ready" -eq 1 ] || fail "SIMKeeper did not become healthy after legacy schema migration"
+
+          python3 - "$tmp/data/simkeeper.db" <<'PY' || fail "device_id migration was not applied"
+          import sqlite3
+          import sys
+          con = sqlite3.connect(sys.argv[1])
+          columns = {row[1] for row in con.execute("PRAGMA table_info(sim_cards)")}
+          tables = {row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+          assert "device_id" in columns, columns
+          assert "devices" in tables, tables
+          con.close()
+          PY
+
+          curl -fsS --max-time 10 -c "$cookies" -o /dev/null \
+            -X POST \
+            --data-urlencode 'username=smokeadmin' \
+            --data-urlencode 'password=smoke-test-123' \
+            --data-urlencode 'confirmPassword=smoke-test-123' \
+            "$base/api/auth/setup" || fail "Unable to create smoke administrator"
+
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/carrier.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' \
+            --data '{"name":"Smoke Device Carrier","countryCode":"PH","website":"","notes":""}' \
+            "$base/api/carriers")" || fail "Carrier creation failed"
+          [ "$status" = "201" ] || fail "Carrier creation returned HTTP $status"
+          carrier_id="$(jq -r '.carrier.id // empty' "$tmp/carrier.json")"
+          [ -n "$carrier_id" ] || fail "Carrier id missing"
+
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/device.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' \
+            --data '{"name":"Smoke eSTK","type":"esim_adapter","brand":"Smoke","model":"Adapter","notes":"location smoke"}' \
+            "$base/api/devices")" || fail "Device creation failed"
+          [ "$status" = "201" ] || fail "Device creation returned HTTP $status"
+          device_id="$(jq -r '.device.id // empty' "$tmp/device.json")"
+          [ -n "$device_id" ] || fail "Device id missing"
+          [ "$(jq -r '.device.simCount' "$tmp/device.json")" = "0" ] || fail "New device should have zero SIMs"
+
+          jq -n --argjson carrierId "$carrier_id" --argjson deviceId "$device_id" '{
+            label:"Device Location Smoke",phoneNumber:"",carrierId:$carrierId,deviceId:$deviceId,simType:"physical",iccid:"",balance:null,currencyCode:"PHP",status:"active",activationDate:"",validUntil:"",
+            identityStatus:"unknown",identityName:"",identityDocumentType:"",identityDocumentTypeCustom:"",identityDocumentNumber:"",identityCountryCode:"",identityNotes:"",notes:"",esimProfile:null
+          }' > "$tmp/sim-payload.json"
+
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/sim.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' --data-binary @"$tmp/sim-payload.json" "$base/api/sims")" || fail "SIM creation failed"
+          [ "$status" = "201" ] || fail "SIM creation returned HTTP $status"
+          sim_id="$(jq -r '.sim.id // empty' "$tmp/sim.json")"
+          [ -n "$sim_id" ] || fail "SIM id missing"
+          [ "$(jq -r '.sim.deviceId' "$tmp/sim.json")" = "$device_id" ] || fail "Create response did not keep device id"
+          [ "$(jq -r '.sim.deviceName' "$tmp/sim.json")" = "Smoke eSTK" ] || fail "Create response did not expose device name"
+
+          curl -fsS --max-time 10 -b "$cookies" "$base/api/devices" > "$tmp/devices.json" || fail "Device list query failed"
+          [ "$(jq -r --argjson id "$device_id" '.devices[] | select(.id == $id) | .simCount' "$tmp/devices.json")" = "1" ] || fail "Device reverse view count was not updated"
+
+          curl -fsS --max-time 10 -b "$cookies" "$base/api/sims" > "$tmp/sims.json" || fail "SIM list query failed"
+          [ "$(jq -r --argjson id "$sim_id" '.sims[] | select(.id == $id) | .deviceId' "$tmp/sims.json")" = "$device_id" ] || fail "SIM list lost device assignment"
+          [ "$(jq -r --argjson id "$sim_id" '.sims[] | select(.id == $id) | .deviceName' "$tmp/sims.json")" = "Smoke eSTK" ] || fail "SIM list did not expose storage location"
+
+          curl -fsS --max-time 10 -b "$cookies" "$base/api/backups?export=1" > "$tmp/backup.json" || fail "Portable backup export failed"
+          [ "$(jq -r '.tables.devices | length' "$tmp/backup.json")" = "1" ] || fail "Portable backup missing devices table"
+          [ "$(jq -r --argjson id "$sim_id" '.tables.sim_cards[] | select(.id == $id) | .device_id' "$tmp/backup.json")" = "$device_id" ] || fail "Portable backup lost SIM device reference"
+
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/device-delete.json" -w '%{http_code}' \
+            -X DELETE "$base/api/devices?id=$device_id")" || fail "Device deletion failed"
+          [ "$status" = "200" ] || fail "Device deletion returned HTTP $status"
+          [ "$(jq -r '.releasedSims' "$tmp/device-delete.json")" = "1" ] || fail "Device deletion did not report released SIM"
+
+          curl -fsS --max-time 10 -b "$cookies" "$base/api/sims" > "$tmp/sims-after-delete.json" || fail "SIM list after device deletion failed"
+          [ "$(jq -r --argjson id "$sim_id" '.sims[] | select(.id == $id) | .deviceId' "$tmp/sims-after-delete.json")" = "null" ] || fail "Deleting device did not return SIM to unassigned"
+          [ "$(jq -r --argjson id "$sim_id" '.sims[] | select(.id == $id) | .deviceName' "$tmp/sims-after-delete.json")" = "null" ] || fail "Deleted device name remained on SIM"
+
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/bad-device.json" -w '%{http_code}' \
+            -X PATCH -H 'Content-Type: application/json' \
+            --data-binary "$(jq -c --argjson id "$sim_id" --argjson carrierId "$carrier_id" '. + {id:$id,carrierId:$carrierId,deviceId:999999}' "$tmp/sim-payload.json")" \
+            "$base/api/sims")" || fail "Invalid device validation request failed"
+          [ "$status" = "400" ] || fail "Unknown device id should be rejected with HTTP 400, got $status"
+
+          echo "Device storage location smoke test passed"

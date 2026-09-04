@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, Pencil, Plus, ReceiptText, Search, Smartphone, Trash2 } from "lucide-react";
+import { Loader2, MapPin, Pencil, Plus, ReceiptText, Search, Smartphone, Trash2 } from "lucide-react";
 import { SimEditorModal } from "@/components/sims/sim-editor-modal";
 import { SimOverviewModal } from "@/components/sims/sim-overview-modal";
 import { TariffModal } from "@/components/sims/tariff-modal";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import type { DeviceRecord } from "@/lib/device-types";
 import { getSimStatusLabel, getSimTypeLabel, SIM_STATUSES } from "@/lib/sim-options";
 import type { CarrierRecord, SimRecord } from "@/lib/sim-types";
 import { getRoamingAvailabilityLabel, getSmsReceivePolicyLabel } from "@/lib/tariff-options";
@@ -91,12 +92,14 @@ function countryFlag(countryCode: string) {
 export default function SimsPage() {
   const [sims, setSims] = useState<SimRecord[]>([]);
   const [carriers, setCarriers] = useState<CarrierRecord[]>([]);
+  const [devices, setDevices] = useState<DeviceRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [countryFilter, setCountryFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [carrierFilter, setCarrierFilter] = useState("all");
+  const [deviceFilter, setDeviceFilter] = useState("all");
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<SimRecord | null>(null);
   const [tariffSim, setTariffSim] = useState<SimRecord | null>(null);
@@ -106,15 +109,22 @@ export default function SimsPage() {
     setLoading(true);
     setError("");
     try {
-      const [simsResponse, carriersResponse] = await Promise.all([
+      const [simsResponse, carriersResponse, devicesResponse] = await Promise.all([
         fetch("/api/sims", { cache: "no-store" }),
         fetch("/api/carriers", { cache: "no-store" }),
+        fetch("/api/devices", { cache: "no-store" }),
       ]);
-      const [simsData, carriersData] = await Promise.all([simsResponse.json(), carriersResponse.json()]);
+      const [simsData, carriersData, devicesData] = await Promise.all([
+        simsResponse.json(),
+        carriersResponse.json(),
+        devicesResponse.json(),
+      ]);
       if (!simsResponse.ok) throw new Error(simsData.error || "号码数据加载失败");
       if (!carriersResponse.ok) throw new Error(carriersData.error || "运营商数据加载失败");
+      if (!devicesResponse.ok) throw new Error(devicesData.error || "设备数据加载失败");
       setSims(simsData.sims || []);
       setCarriers(carriersData.carriers || []);
+      setDevices(devicesData.devices || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "号码数据加载失败");
     } finally {
@@ -128,7 +138,6 @@ export default function SimsPage() {
 
   const countryOptions = useMemo(() => {
     const countries = new Map<string, { code: string; name: string; count: number }>();
-
     sims.forEach((sim) => {
       const code = sim.countryCode.trim().toUpperCase();
       if (!code) return;
@@ -139,15 +148,18 @@ export default function SimsPage() {
       }
       countries.set(code, { code, name: sim.country, count: 1 });
     });
-
     return Array.from(countries.values()).sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
   }, [sims]);
 
   useEffect(() => {
-    if (countryFilter !== "all" && !countryOptions.some((country) => country.code === countryFilter)) {
-      setCountryFilter("all");
-    }
+    if (countryFilter !== "all" && !countryOptions.some((country) => country.code === countryFilter)) setCountryFilter("all");
   }, [countryFilter, countryOptions]);
+
+  useEffect(() => {
+    if (deviceFilter !== "all" && deviceFilter !== "unassigned" && !devices.some((device) => device.id === Number(deviceFilter))) {
+      setDeviceFilter("all");
+    }
+  }, [deviceFilter, devices]);
 
   const filtered = useMemo(() => {
     const value = query.trim().toLowerCase();
@@ -161,6 +173,7 @@ export default function SimsPage() {
           sim.country,
           sim.countryCode,
           sim.iccid || "",
+          sim.deviceName || "",
           sim.notes || "",
           sim.tariffPlanName || "",
           sim.tariffUsageSummary || "",
@@ -168,9 +181,12 @@ export default function SimsPage() {
       const matchesCountry = countryFilter === "all" || sim.countryCode.toUpperCase() === countryFilter;
       const matchesStatus = statusFilter === "all" || sim.status === statusFilter;
       const matchesCarrier = carrierFilter === "all" || sim.carrierId === Number(carrierFilter);
-      return matchesQuery && matchesCountry && matchesStatus && matchesCarrier;
+      const matchesDevice =
+        deviceFilter === "all" ||
+        (deviceFilter === "unassigned" ? sim.deviceId === null : sim.deviceId === Number(deviceFilter));
+      return matchesQuery && matchesCountry && matchesStatus && matchesCarrier && matchesDevice;
     });
-  }, [carrierFilter, countryFilter, query, sims, statusFilter]);
+  }, [carrierFilter, countryFilter, deviceFilter, query, sims, statusFilter]);
 
   const tariffCount = useMemo(() => sims.filter((sim) => Boolean(sim.tariffId)).length, [sims]);
 
@@ -207,7 +223,7 @@ export default function SimsPage() {
             生命周期
           </div>
           <h2 className="mt-2 text-2xl font-semibold tracking-tight">号码管理</h2>
-          <p className="mt-1 text-sm text-slate-500">集中管理号码基础资料、余额、有效期和资费信息。</p>
+          <p className="mt-1 text-sm text-slate-500">集中管理号码基础资料、存放位置、余额、有效期和资费信息。</p>
         </div>
         {carriers.length ? (
           <button onClick={openCreate} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800">
@@ -244,10 +260,10 @@ export default function SimsPage() {
             </div>
             <div className="relative w-full lg:w-80">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索号码、名称、运营商、套餐或 ICCID" className="pl-9" />
+              <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索号码、运营商、存放设备、套餐或 ICCID" className="pl-9" />
             </div>
           </div>
-          <div className="flex flex-col gap-2 sm:flex-row">
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
             <select
               value={countryFilter}
               onChange={(event) => setCountryFilter(event.target.value)}
@@ -268,6 +284,11 @@ export default function SimsPage() {
             <select value={carrierFilter} onChange={(event) => setCarrierFilter(event.target.value)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-slate-400">
               <option value="all">全部运营商</option>
               {carriers.map((carrier) => <option key={carrier.id} value={carrier.id}>{carrier.name} · {carrier.country}</option>)}
+            </select>
+            <select value={deviceFilter} onChange={(event) => setDeviceFilter(event.target.value)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-slate-400">
+              <option value="all">全部存放位置</option>
+              <option value="unassigned">未分配</option>
+              {devices.map((device) => <option key={device.id} value={device.id}>{device.name}</option>)}
             </select>
           </div>
         </div>
@@ -316,11 +337,14 @@ export default function SimsPage() {
                             <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700 ring-1 ring-inset ring-amber-100">未录入资费</span>
                           )}
                         </div>
-                        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-sm text-slate-500">
+                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-500">
                           <span>{sim.phoneNumber || "未填写手机号"}</span>
                           <span>{sim.carrierName}</span>
                           <span>{sim.country} · {sim.countryCode}</span>
                           <span>{getSimTypeLabel(sim.simType)}</span>
+                          <span className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] ${sim.deviceId === null ? "bg-slate-50 text-slate-400" : "bg-sky-50 text-sky-700"}`}>
+                            <MapPin className="h-3 w-3" />{sim.deviceName || "未分配"}
+                          </span>
                         </div>
                         {sim.tariffId ? (
                           <div className="mt-2 flex flex-wrap gap-1.5">

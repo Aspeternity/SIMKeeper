@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { getCountryCallingCode, parsePhoneNumberFromString, type CountryCode } from "libphonenumber-js";
 import { Loader2, UserRoundCheck, X } from "lucide-react";
 import { EsimProfileEditor } from "@/components/sims/esim-profile-editor";
@@ -8,6 +8,7 @@ import { Card } from "@/components/ui/card";
 import { CountryRegionSelect } from "@/components/ui/country-region-select";
 import { Input } from "@/components/ui/input";
 import { ModalPortal } from "@/components/ui/modal-portal";
+import { getDeviceTypeLabel, type DeviceRecord } from "@/lib/device-types";
 import { createEmptyEsimProfileForm, type EsimProfileFormValue } from "@/lib/esim-profile-types";
 import {
   CURRENCIES,
@@ -23,6 +24,7 @@ type FormState = {
   label: string;
   phoneNumber: string;
   carrierId: string;
+  deviceId: string;
   simType: string;
   iccid: string;
   balance: string;
@@ -65,6 +67,7 @@ function initialForm(carriers: CarrierRecord[], editing: SimRecord | null): Form
       label: editing.label,
       phoneNumber: toNationalNumber(editing.phoneNumber, editing.countryCode),
       carrierId: String(editing.carrierId),
+      deviceId: editing.deviceId === null ? "" : String(editing.deviceId),
       simType: editing.simType,
       iccid: editing.iccid || "",
       balance: editing.balance === null ? "" : String(editing.balance),
@@ -88,6 +91,7 @@ function initialForm(carriers: CarrierRecord[], editing: SimRecord | null): Form
     label: "",
     phoneNumber: "",
     carrierId: carrier ? String(carrier.id) : "",
+    deviceId: "",
     simType: "physical",
     iccid: "",
     balance: "",
@@ -119,6 +123,9 @@ function initialEsimProfile(editing: SimRecord | null): EsimProfileFormValue {
 export function SimEditorModal({ carriers, editing, onClose, onSaved }: { carriers: CarrierRecord[]; editing: SimRecord | null; onClose: () => void; onSaved: () => Promise<void> | void }) {
   const [form, setForm] = useState<FormState>(() => initialForm(carriers, editing));
   const [esimProfile, setEsimProfile] = useState<EsimProfileFormValue>(() => initialEsimProfile(editing));
+  const [devices, setDevices] = useState<DeviceRecord[]>([]);
+  const [loadingDevices, setLoadingDevices] = useState(true);
+  const [devicesError, setDevicesError] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -130,6 +137,33 @@ export function SimEditorModal({ carriers, editing, onClose, onSaved }: { carrie
     () => (selectedCarrier ? getCallingCode(selectedCarrier.countryCode) : ""),
     [selectedCarrier],
   );
+  const currentDeviceMissing = Boolean(
+    form.deviceId && !devices.some((device) => device.id === Number(form.deviceId)) && editing?.deviceId === Number(form.deviceId),
+  );
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadDevices() {
+      setLoadingDevices(true);
+      setDevicesError("");
+      try {
+        const response = await fetch("/api/devices", { cache: "no-store" });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "设备列表加载失败");
+        if (active) setDevices(data.devices || []);
+      } catch (err) {
+        if (active) setDevicesError(err instanceof Error ? err.message : "设备列表加载失败");
+      } finally {
+        if (active) setLoadingDevices(false);
+      }
+    }
+
+    void loadDevices();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   function changeCarrier(carrierId: string) {
     const carrier = carriers.find((item) => item.id === Number(carrierId));
@@ -201,7 +235,7 @@ export function SimEditorModal({ carriers, editing, onClose, onSaved }: { carrie
 
         <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col bg-white">
           <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-6">
-            <div className="grid gap-4 sm:grid-cols-[1.4fr_0.6fr]">
+            <div className="grid gap-4 sm:grid-cols-[1.2fr_0.55fr_0.85fr]">
               <label className="space-y-1.5 text-sm">
                 <span className="font-medium text-slate-700">运营商</span>
                 <select
@@ -221,6 +255,22 @@ export function SimEditorModal({ carriers, editing, onClose, onSaved }: { carrie
                 <select value={form.simType} onChange={(event) => setForm({ ...form, simType: event.target.value })} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100">
                   {SIM_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
                 </select>
+              </label>
+              <label className="space-y-1.5 text-sm">
+                <span className="font-medium text-slate-700">存放位置</span>
+                <select
+                  value={form.deviceId}
+                  onChange={(event) => setForm({ ...form, deviceId: event.target.value })}
+                  disabled={loadingDevices && !form.deviceId}
+                  className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 disabled:bg-slate-50 disabled:text-slate-400"
+                >
+                  <option value="">未分配</option>
+                  {currentDeviceMissing && editing?.deviceName ? <option value={form.deviceId}>{editing.deviceName} · 当前设备</option> : null}
+                  {devices.map((device) => <option key={device.id} value={device.id}>{device.name} · {getDeviceTypeLabel(device.type)}</option>)}
+                </select>
+                <div className={`text-xs ${devicesError ? "text-amber-600" : "text-slate-400"}`}>
+                  {loadingDevices ? "正在加载设备…" : devicesError ? `${devicesError}，当前仍可保存为未分配。` : devices.length ? "来自设备管理；未安装到设备上时选择“未分配”。" : "暂无设备，可先保持“未分配”，之后在设备管理中添加。"}
+                </div>
               </label>
             </div>
 
@@ -337,7 +387,7 @@ export function SimEditorModal({ carriers, editing, onClose, onSaved }: { carrie
 
             <label className="block space-y-1.5 text-sm">
               <span className="font-medium text-slate-700">号码备注</span>
-              <textarea value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} placeholder="可记录套餐、用途、卡槽位置等其他信息" rows={3} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100" />
+              <textarea value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} placeholder="可记录套餐、用途等其他信息" rows={3} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100" />
             </label>
 
             {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}

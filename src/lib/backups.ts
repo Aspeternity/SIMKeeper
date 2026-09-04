@@ -18,6 +18,7 @@ export const BACKUP_TABLES = [
   "users",
   "settings",
   "carriers",
+  "devices",
   "sim_cards",
   "sim_esim_profiles",
   "sim_tariffs",

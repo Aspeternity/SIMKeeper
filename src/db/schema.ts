@@ -25,6 +25,21 @@ export const carriers = sqliteTable("carriers", {
   updatedAt: text("updated_at").notNull(),
 });
 
+export const devices = sqliteTable(
+  "devices",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    name: text("name").notNull(),
+    type: text("type").notNull(),
+    brand: text("brand"),
+    model: text("model"),
+    notes: text("notes"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [index("idx_devices_type").on(table.type), index("idx_devices_name").on(table.name)],
+);
+
 export const simCards = sqliteTable("sim_cards", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   label: text("label").notNull(),
@@ -32,6 +47,7 @@ export const simCards = sqliteTable("sim_cards", {
   carrierId: integer("carrier_id")
     .notNull()
     .references(() => carriers.id, { onDelete: "restrict" }),
+  deviceId: integer("device_id").references(() => devices.id, { onDelete: "set null" }),
   simType: text("sim_type").notNull(),
   iccid: text("iccid"),
   balance: real("balance"),

@@ -15,6 +15,9 @@ export type SimRecord = {
   carrierName: string;
   country: string;
   countryCode: string;
+  deviceId: number | null;
+  deviceName: string | null;
+  deviceType: string | null;
   simType: string;
   iccid: string | null;
   balance: number | null;

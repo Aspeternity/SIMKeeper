@@ -1,5 +1,6 @@
 import {
   BellRing,
+  Box,
   LayoutDashboard,
   RadioTower,
   Send,
@@ -16,11 +17,12 @@ export type NavigationItem = {
   icon: LucideIcon;
 };
 
-export const APP_VERSION = "0.1.0-alpha.16";
+export const APP_VERSION = "0.1.0-alpha.17";
 
 export const PRIMARY_NAV_ITEMS: NavigationItem[] = [
   { label: "概览", href: "/", icon: LayoutDashboard },
   { label: "号码管理", href: "/sims", icon: Smartphone },
+  { label: "设备管理", href: "/devices", icon: Box },
   { label: "运营商", href: "/carriers", icon: RadioTower },
   { label: "绑定服务", href: "/services", icon: Waypoints },
   { label: "保号规则", href: "/history", icon: ShieldCheck },

@@ -3,7 +3,7 @@ import { parsePhoneNumberFromString, type CountryCode } from "libphonenumber-js"
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db, sqlite } from "@/db";
-import { carriers, simCards, simTariffs } from "@/db/schema";
+import { carriers, devices, simCards, simTariffs } from "@/db/schema";
 import { getCurrentUser } from "@/lib/auth";
 import {
   deleteEsimProfile,
@@ -46,11 +46,17 @@ const esimProfileSchema = z
   .optional()
   .nullable();
 
+const deviceIdField = z.preprocess(
+  (value) => (value === "" || value === null || value === undefined ? null : Number(value)),
+  z.number().int().positive("存放位置无效").nullable(),
+);
+
 const simSchema = z
   .object({
     label: z.string().trim().min(1, "请输入号码名称").max(80, "号码名称不能超过 80 个字符"),
     phoneNumber: z.string().trim().max(40, "手机号不能超过 40 个字符").optional().default(""),
     carrierId: z.coerce.number().int().positive("请选择运营商"),
+    deviceId: deviceIdField,
     simType: z.enum(["physical", "esim"]),
     iccid: z
       .string()
@@ -118,6 +124,9 @@ const rowSelection = {
   carrierName: carriers.name,
   country: carriers.country,
   countryCode: carriers.countryCode,
+  deviceId: simCards.deviceId,
+  deviceName: devices.name,
+  deviceType: devices.type,
   simType: simCards.simType,
   iccid: simCards.iccid,
   balance: simCards.balance,
@@ -161,6 +170,7 @@ function listRows() {
     .select(rowSelection)
     .from(simCards)
     .innerJoin(carriers, eq(simCards.carrierId, carriers.id))
+    .leftJoin(devices, eq(simCards.deviceId, devices.id))
     .leftJoin(simTariffs, eq(simTariffs.simId, simCards.id))
     .orderBy(asc(carriers.country), asc(carriers.name), asc(simCards.label))
     .all()
@@ -172,6 +182,7 @@ function getRow(id: number) {
     .select(rowSelection)
     .from(simCards)
     .innerJoin(carriers, eq(simCards.carrierId, carriers.id))
+    .leftJoin(devices, eq(simCards.deviceId, devices.id))
     .leftJoin(simTariffs, eq(simTariffs.simId, simCards.id))
     .where(eq(simCards.id, id))
     .get();
@@ -201,6 +212,7 @@ function normalize(parsed: z.infer<typeof simSchema>, phoneNumber: string | null
     label: parsed.label,
     phoneNumber,
     carrierId: parsed.carrierId,
+    deviceId: parsed.deviceId,
     simType: parsed.simType,
     iccid: parsed.iccid || null,
     balance: parsed.balance,
@@ -217,6 +229,11 @@ function normalize(parsed: z.infer<typeof simSchema>, phoneNumber: string | null
     identityNotes: parsed.identityNotes || null,
     notes: parsed.notes || null,
   };
+}
+
+function validDevice(deviceId: number | null) {
+  if (deviceId === null) return true;
+  return Boolean(db.select({ id: devices.id }).from(devices).where(eq(devices.id, deviceId)).get());
 }
 
 export async function GET() {
@@ -242,6 +259,9 @@ export async function POST(request: NextRequest) {
   if (!carrier) {
     return NextResponse.json({ error: "所选运营商不存在，请重新选择" }, { status: 400 });
   }
+  if (!validDevice(parsed.data.deviceId)) {
+    return NextResponse.json({ error: "所选存放设备不存在，请重新选择" }, { status: 400 });
+  }
 
   const normalizedPhone = normalizePhoneNumber(parsed.data.phoneNumber, carrier.countryCode);
   if (normalizedPhone.error) {
@@ -265,7 +285,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ sim: getRow(insertedId) }, { status: 201 });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "保存 eSIM 配置失败" }, { status: 400 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "保存号码失败" }, { status: 400 });
   }
 }
 
@@ -297,6 +317,9 @@ export async function PATCH(request: NextRequest) {
   if (!carrier) {
     return NextResponse.json({ error: "所选运营商不存在，请重新选择" }, { status: 400 });
   }
+  if (!validDevice(parsed.data.deviceId)) {
+    return NextResponse.json({ error: "所选存放设备不存在，请重新选择" }, { status: 400 });
+  }
 
   const normalizedPhone = normalizePhoneNumber(parsed.data.phoneNumber, carrier.countryCode);
   if (normalizedPhone.error) {
@@ -322,7 +345,7 @@ export async function PATCH(request: NextRequest) {
 
     return NextResponse.json({ sim: getRow(id) });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "保存 eSIM 配置失败" }, { status: 400 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "保存号码失败" }, { status: 400 });
   }
 }
 

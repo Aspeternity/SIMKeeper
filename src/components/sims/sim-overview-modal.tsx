@@ -553,6 +553,7 @@ export function SimOverviewModal({
                   <DetailItem label="手机号 / MSISDN" value={sim.phoneNumber || "未记录"} />
                   <DetailItem label="运营商" value={`${sim.carrierName} · ${sim.country}`} />
                   <DetailItem label="SIM 类型" value={getSimTypeLabel(sim.simType)} />
+                  <DetailItem label="存放位置" value={sim.deviceName || "未分配"} />
                   <DetailItem label="ICCID" value={sim.iccid || "未记录"} />
                   <DetailItem label="余额" value={sim.balance === null ? "未记录" : `${sim.balance} ${sim.currencyCode || ""}`} />
                   <DetailItem label="激活日期" value={sim.activationDate || "未记录"} />

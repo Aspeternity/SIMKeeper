@@ -2,11 +2,12 @@
 
 **SIMKeeper — Self-hosted SIM & eSIM lifecycle manager**
 
-当前版本：`v0.1.0-alpha.16`
+当前版本：`v0.1.0-alpha.17`
 
 当前已包含：
 
 - 运营商及 SIM / eSIM 号码管理，号码自动规范化为 E.164
+- 设备管理与号码存放位置：设备卡片、号码下拉分配、未分配状态、按位置筛选；删除设备会安全释放其中号码至“未分配”
 - eSIM 激活凭据归档：SM-DP+、Activation Code、Confirmation Code、LPA 字符串、配置状态、来源与重复激活策略
 - eSIM 二维码在浏览器本地自动解析，并可按已保存的 LPA 信息重新生成二维码；原始二维码可选加密保留
 - eSIM 激活凭据使用独立密钥 AES-256-GCM 加密后写入 SQLite，普通号码列表接口只返回是否已归档等摘要信息
@@ -25,7 +26,7 @@
 - 旧版未核验的“已处理”记录不会继续压制提醒
 - Telegram、Bark、Gotify 和 Webhook 通知渠道
 - 每日精确通知时间、提醒里程碑、渠道筛选和自定义通知模板
-- 完整 JSON 导出、本地备份、恢复前安全备份及保留策略；eSIM 凭据可随可移植备份跨实例恢复
+- 完整 JSON 导出、本地备份、恢复前安全备份及保留策略；设备与 eSIM 凭据均可随可移植备份跨实例恢复
 - 桌面与手机端响应式导航、页面标题、实时提醒数量和右上角提醒概览
 - SQLite 持久化、管理员登录、本地 Session Secret 和健康检查
 - Docker 单容器运行及 GitHub Actions 验证后自动发布 GHCR 镜像
@@ -81,7 +82,7 @@ http://HOST:3000
 → Dashboard
 → 退出
 → 登录
-→ 运营商 / 号码 / 资费 / 保号规则 / 绑定服务
+→ 运营商 / 号码 / 设备 / 资费 / 保号规则 / 绑定服务
 → 处理中心 / 提醒 / 导航
 → 完整备份及恢复
 ```
@@ -110,7 +111,7 @@ curl http://HOST:3000/api/health
 {
   "status": "ok",
   "database": "connected",
-  "version": "0.1.0-alpha.16",
+  "version": "0.1.0-alpha.17",
   "revision": "<git-commit-sha>"
 }
 ```
@@ -153,6 +154,7 @@ docker compose up -d --force-recreate
 - [x] GHCR 自动发布
 - [x] 运营商 CRUD
 - [x] SIM / eSIM CRUD 与 E.164 规范化
+- [x] 设备管理与号码存放位置
 - [x] eSIM 加密激活凭据、二维码本地解析与二维码重新生成
 - [x] 实名资料与资费档案
 - [x] 保号规则、活动历史与充值要求
