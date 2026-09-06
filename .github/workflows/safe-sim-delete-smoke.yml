@@ -26,7 +26,7 @@ jobs:
           echo "IMAGE=ghcr.io/aspeternity/simkeeper:sha-${sha:0:7}" >> "$GITHUB_ENV"
           docker pull "ghcr.io/aspeternity/simkeeper:sha-${sha:0:7}"
 
-      - name: Verify safe deletion transaction
+      - name: Verify safe deletion and optional summary snapshot
         shell: bash
         run: |
           set -euo pipefail
@@ -58,14 +58,19 @@ jobs:
           carrier_id="$(jq -r '.carrier.id' "$tmp/carrier.json")"
 
           create_sim() {
-            jq -n --arg label "$1" --argjson carrierId "$carrier_id" '{label:$label,phoneNumber:"",carrierId:$carrierId,deviceId:null,simType:"physical",iccid:"",balance:null,currencyCode:"PHP",status:"active",activationDate:"",validUntil:"",identityStatus:"unknown",identityName:"",identityDocumentType:"",identityDocumentTypeCustom:"",identityDocumentNumber:"",identityCountryCode:"",identityNotes:"",notes:"",esimProfile:null}' > "$tmp/sim.json"
+            label="$1"
+            if [ "$label" = "source" ]; then
+              jq -n --arg label "$label" --argjson carrierId "$carrier_id" '{label:$label,phoneNumber:"+639244457547",carrierId:$carrierId,deviceId:null,simType:"physical",iccid:"8986000000000000001",balance:10.3,currencyCode:"PHP",status:"active",activationDate:"2026-08-30",validUntil:"2027-08-30",identityStatus:"registered",identityName:"SMOKE USER",identityDocumentType:"passport",identityDocumentTypeCustom:"",identityDocumentNumber:"ARCHIVE-SECRET-DOC",identityCountryCode:"CN",identityNotes:"private identity note",notes:"archive-note",esimProfile:null}' > "$tmp/sim.json"
+            else
+              jq -n --arg label "$label" --argjson carrierId "$carrier_id" '{label:$label,phoneNumber:"",carrierId:$carrierId,deviceId:null,simType:"physical",iccid:"",balance:null,currencyCode:"PHP",status:"active",activationDate:"",validUntil:"",identityStatus:"unknown",identityName:"",identityDocumentType:"",identityDocumentTypeCustom:"",identityDocumentNumber:"",identityCountryCode:"",identityNotes:"",notes:"",esimProfile:null}' > "$tmp/sim.json"
+            fi
             curl -fsS -b "$cookies" -H 'Content-Type: application/json' --data-binary @"$tmp/sim.json" "$base/api/sims" | jq -r '.sim.id'
           }
           target_id="$(create_sim target)"
           source_id="$(create_sim source)"
 
           create_binding() {
-            jq -n --argjson simId "$source_id" --arg name "$1" '{simId:$simId,serviceName:$name,category:"finance",bindingType:"verification",accountIdentifier:"smoke",importance:"critical",status:"active",website:"",boundAt:"",verifiedAt:"",notes:""}' > "$tmp/binding.json"
+            jq -n --argjson simId "$source_id" --arg name "$1" '{simId:$simId,serviceName:$name,category:"finance",bindingType:"verification",accountIdentifier:"ARCHIVE-SECRET-ACCOUNT",importance:"critical",status:"active",website:"",boundAt:"",verifiedAt:"",notes:""}' > "$tmp/binding.json"
             curl -fsS -b "$cookies" -H 'Content-Type: application/json' --data-binary @"$tmp/binding.json" "$base/api/services" | jq -r '.binding.id'
           }
           delete_id="$(create_binding delete-me)"
@@ -74,17 +79,56 @@ jobs:
           code="$(curl -sS -b "$cookies" -o "$tmp/direct.json" -w '%{http_code}' -X DELETE "$base/api/sims?id=$source_id")"
           [ "$code" = "409" ] || fail "direct delete did not block active bindings"
 
-          jq -n --argjson simId "$source_id" --argjson deleteId "$delete_id" --argjson migrateId "$migrate_id" '{simId:$simId,bindings:[{id:$deleteId,action:"delete"},{id:$migrateId,action:"migrate",targetSimId:999999}]}' > "$tmp/bad.json"
+          jq -n --argjson simId "$source_id" --argjson deleteId "$delete_id" --argjson migrateId "$migrate_id" '{simId:$simId,preserveSnapshot:true,bindings:[{id:$deleteId,action:"delete"},{id:$migrateId,action:"migrate",targetSimId:999999}]}' > "$tmp/bad.json"
           code="$(curl -sS -b "$cookies" -o "$tmp/bad-result.json" -w '%{http_code}' -H 'Content-Type: application/json' --data-binary @"$tmp/bad.json" "$base/api/sims/delete")"
           [ "$code" = "409" ] || fail "invalid migration did not fail"
           curl -fsS -b "$cookies" "$base/api/services?simId=$source_id" > "$tmp/after-bad.json"
           [ "$(jq '[.bindings[] | select(.status == "active")] | length' "$tmp/after-bad.json")" = "2" ] || fail "failed transaction did not roll back"
+          curl -fsS -b "$cookies" "$base/api/sim-archives" > "$tmp/archives-after-bad.json"
+          [ "$(jq '.records | length' "$tmp/archives-after-bad.json")" = "0" ] || fail "failed transaction left an archive snapshot"
 
-          jq -n --argjson simId "$source_id" --argjson deleteId "$delete_id" --argjson migrateId "$migrate_id" --argjson targetId "$target_id" '{simId:$simId,bindings:[{id:$deleteId,action:"delete"},{id:$migrateId,action:"migrate",targetSimId:$targetId}]}' > "$tmp/good.json"
+          jq -n --argjson simId "$source_id" --argjson deleteId "$delete_id" --argjson migrateId "$migrate_id" --argjson targetId "$target_id" '{simId:$simId,preserveSnapshot:true,bindings:[{id:$deleteId,action:"delete"},{id:$migrateId,action:"migrate",targetSimId:$targetId}]}' > "$tmp/good.json"
           curl -fsS -b "$cookies" -H 'Content-Type: application/json' --data-binary @"$tmp/good.json" "$base/api/sims/delete" > "$tmp/good-result.json" || fail "safe delete failed"
           [ "$(jq -r '.migratedBindings' "$tmp/good-result.json")" = "1" ] || fail "migration count wrong"
           [ "$(jq -r '.deletedBindings' "$tmp/good-result.json")" = "1" ] || fail "delete count wrong"
+          [ "$(jq -r '.archived' "$tmp/good-result.json")" = "true" ] || fail "summary snapshot was not created"
+          archive_id="$(jq -r '.archiveId' "$tmp/good-result.json")"
+          [ "$archive_id" -gt 0 ] || fail "archive id missing"
+
           curl -fsS -b "$cookies" "$base/api/services?simId=$target_id" > "$tmp/target-bindings.json"
           [ "$(jq -r --argjson id "$migrate_id" '[.bindings[] | select(.id == $id and .status == "active")] | length' "$tmp/target-bindings.json")" = "1" ] || fail "binding was not migrated"
 
-          echo "Safe SIM deletion smoke test passed"
+          curl -fsS -b "$cookies" "$base/api/sim-archives" > "$tmp/archives.json"
+          [ "$(jq '.records | length' "$tmp/archives.json")" = "1" ] || fail "archive record count wrong"
+          jq -e --argjson archiveId "$archive_id" '.records[0].id == $archiveId' "$tmp/archives.json" >/dev/null || fail "archive id mismatch"
+          jq -e '.records[0].label == "source"' "$tmp/archives.json" >/dev/null || fail "archive label missing"
+          jq -e '.records[0].phoneNumber == "+639244457547"' "$tmp/archives.json" >/dev/null || fail "archive phone missing"
+          jq -e '.records[0].carrierName == "Delete Guard Carrier" and .records[0].countryCode == "PH"' "$tmp/archives.json" >/dev/null || fail "carrier snapshot missing"
+          jq -e '.records[0].simType == "physical" and .records[0].iccid == "8986000000000000001"' "$tmp/archives.json" >/dev/null || fail "SIM identity snapshot missing"
+          jq -e '.records[0].balance == 10.3 and .records[0].currencyCode == "PHP" and .records[0].validUntil == "2027-08-30"' "$tmp/archives.json" >/dev/null || fail "deletion-time state snapshot missing"
+          jq -e '.records[0].identityStatus == "registered" and .records[0].identityName == "SMOKE USER" and .records[0].identityDocumentType == "护照" and .records[0].identityCountry == "中国大陆"' "$tmp/archives.json" >/dev/null || fail "identity summary snapshot missing"
+          jq -e '.records[0].notes == "archive-note"' "$tmp/archives.json" >/dev/null || fail "archive notes missing"
+          jq -e '.records[0].bindingSummary | length == 2' "$tmp/archives.json" >/dev/null || fail "binding summary count wrong"
+          jq -e '.records[0].bindingSummary | any(.serviceName == "delete-me" and .action == "delete")' "$tmp/archives.json" >/dev/null || fail "deleted binding summary missing"
+          jq -e '.records[0].bindingSummary | any(.serviceName == "migrate-me" and .action == "migrate" and .target.label == "target" and .target.carrierName == "Delete Guard Carrier")' "$tmp/archives.json" >/dev/null || fail "migrated binding summary missing"
+          ! jq -r '.records[0] | tostring' "$tmp/archives.json" | grep -Fq 'ARCHIVE-SECRET-DOC' || fail "full identity document number leaked into archive"
+          ! jq -r '.records[0] | tostring' "$tmp/archives.json" | grep -Fq 'ARCHIVE-SECRET-ACCOUNT' || fail "account identifier leaked into archive"
+
+          curl -fsS -b "$cookies" "$base/api/backups?export=1" > "$tmp/backup.json" || fail "backup export failed"
+          [ "$(jq -r '.formatVersion' "$tmp/backup.json")" -ge 3 ] || fail "backup format was not upgraded"
+          [ "$(jq '.tables.sim_deleted_records | length' "$tmp/backup.json")" = "1" ] || fail "archive snapshot missing from portable backup"
+          ! jq -r '.tables.sim_deleted_records[0] | tostring' "$tmp/backup.json" | grep -Fq 'ARCHIVE-SECRET-DOC' || fail "full identity document number leaked into backup archive row"
+          ! jq -r '.tables.sim_deleted_records[0] | tostring' "$tmp/backup.json" | grep -Fq 'ARCHIVE-SECRET-ACCOUNT' || fail "account identifier leaked into backup archive row"
+
+          curl -fsS -b "$cookies" -X DELETE "$base/api/sim-archives?id=$archive_id" >/dev/null || fail "archive permanent delete failed"
+          curl -fsS -b "$cookies" "$base/api/sim-archives" > "$tmp/archives-after-delete.json"
+          [ "$(jq '.records | length' "$tmp/archives-after-delete.json")" = "0" ] || fail "archive record was not permanently removed"
+
+          plain_id="$(create_sim plain)"
+          jq -n --argjson simId "$plain_id" '{simId:$simId,bindings:[]}' > "$tmp/plain-delete.json"
+          curl -fsS -b "$cookies" -H 'Content-Type: application/json' --data-binary @"$tmp/plain-delete.json" "$base/api/sims/delete" > "$tmp/plain-result.json" || fail "plain delete failed"
+          [ "$(jq -r '.archived' "$tmp/plain-result.json")" = "false" ] || fail "snapshot should be opt-in"
+          curl -fsS -b "$cookies" "$base/api/sim-archives" > "$tmp/archives-final.json"
+          [ "$(jq '.records | length' "$tmp/archives-final.json")" = "0" ] || fail "opt-out delete unexpectedly created a snapshot"
+
+          echo "Safe SIM deletion and summary snapshot smoke test passed"

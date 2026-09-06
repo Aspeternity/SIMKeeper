@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowRight, CheckCircle2, Loader2, Trash2, X } from "lucide-react";
+import { AlertTriangle, Archive, ArrowRight, CheckCircle2, Loader2, Trash2, X } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { ModalPortal } from "@/components/ui/modal-portal";
 import {
@@ -60,6 +60,7 @@ export function SimDeleteModal({
 }) {
   const [bindings, setBindings] = useState<BindingRecord[]>([]);
   const [resolutions, setResolutions] = useState<Record<number, BindingResolution>>({});
+  const [preserveSnapshot, setPreserveSnapshot] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -127,6 +128,7 @@ export function SimDeleteModal({
     try {
       const payload = {
         simId: sim.id,
+        preserveSnapshot,
         bindings: bindings.map((binding) => {
           const resolution = resolutions[binding.id];
           if (resolution.action === "migrate") {
@@ -177,7 +179,7 @@ export function SimDeleteModal({
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-white p-6">
           <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm leading-6 text-rose-700">
-            删除后，号码及其资费、保号规则、活动记录、实名资料等关联数据将永久移除。
+            删除后，原号码及其资费、保号规则、活动记录、实名原始资料等关联数据会永久移除。可在下方选择是否额外保留一份只读号码概要。
           </div>
 
           {archivedEsimCredentials ? (
@@ -185,7 +187,7 @@ export function SimDeleteModal({
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
               <div>
                 <div className="font-medium">这张 eSIM 仍保存有激活凭据</div>
-                <div className="mt-1 text-xs leading-5 text-amber-700">删除号码后，已归档的二维码、Activation Code、LPA 等激活资料也会永久删除。</div>
+                <div className="mt-1 text-xs leading-5 text-amber-700">删除号码后，已归档的二维码、Activation Code、LPA 等激活资料也会永久删除；即使保留号码概要也不会保留这些凭据。</div>
               </div>
             </div>
           ) : null}
@@ -283,6 +285,31 @@ export function SimDeleteModal({
               )}
             </section>
           )}
+
+          <section className="rounded-xl border border-slate-200 p-4">
+            <label className="flex cursor-pointer items-start gap-3">
+              <input
+                type="checkbox"
+                checked={preserveSnapshot}
+                onChange={(event) => setPreserveSnapshot(event.target.checked)}
+                disabled={saving}
+                className="mt-1 h-4 w-4 rounded border-slate-300 accent-slate-900 disabled:opacity-50"
+              />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
+                  <Archive className="h-4 w-4 text-slate-500" />保留号码概要记录
+                </div>
+                <p className="mt-1 text-xs leading-5 text-slate-400">删除前保存一份独立只读快照。默认不保留；以后可在号码管理的“删除记录”中查看或永久清除。</p>
+              </div>
+            </label>
+
+            {preserveSnapshot ? (
+              <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2.5 text-[11px] leading-5 text-slate-500">
+                <div><span className="font-medium text-slate-600">会保留：</span>号码与 ICCID、国家/地区、运营商、SIM 类型、激活日期、删除时余额与有效期、资费名称、实名状态/姓名/证件类型/证件国家、绑定服务处理结果和备注。</div>
+                <div className="mt-1"><span className="font-medium text-slate-600">不会保留：</span>eSIM 激活凭据、完整证件号码、存放位置、保号规则、充值明细、提醒/处理历史和完整资费参数。</div>
+              </div>
+            ) : null}
+          </section>
 
           {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
         </div>

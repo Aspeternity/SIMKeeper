@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, MapPin, Pencil, Plus, ReceiptText, Search, Smartphone, Trash2 } from "lucide-react";
+import { Archive, Loader2, MapPin, Pencil, Plus, ReceiptText, Search, Smartphone, Trash2 } from "lucide-react";
 import { SimDeleteModal } from "@/components/sims/sim-delete-modal";
 import { SimEditorModal } from "@/components/sims/sim-editor-modal";
 import { SimOverviewModal } from "@/components/sims/sim-overview-modal";
@@ -214,16 +214,22 @@ export default function SimsPage() {
           <h2 className="mt-2 text-2xl font-semibold tracking-tight">号码管理</h2>
           <p className="mt-1 text-sm text-slate-500">集中管理号码基础资料、存放位置、余额、有效期和资费信息。</p>
         </div>
-        {carriers.length ? (
-          <button onClick={openCreate} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800">
-            <Plus className="h-4 w-4" />
-            新增号码
-          </button>
-        ) : (
-          <Link href="/carriers" className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800">
-            先添加运营商
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <Link href="/sims/deleted" className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border bg-white px-4 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
+            <Archive className="h-4 w-4" />
+            删除记录
           </Link>
-        )}
+          {carriers.length ? (
+            <button onClick={openCreate} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800">
+              <Plus className="h-4 w-4" />
+              新增号码
+            </button>
+          ) : (
+            <Link href="/carriers" className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800">
+              先添加运营商
+            </Link>
+          )}
+        </div>
       </div>
 
       {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}

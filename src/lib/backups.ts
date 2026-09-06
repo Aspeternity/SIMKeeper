@@ -7,9 +7,10 @@ import { exportCredentialSecret, importCredentialSecret } from "@/lib/credential
 import { ensureEsimProfileTable } from "@/lib/esim-profiles";
 import { ensureNotificationTables } from "@/lib/notifications";
 import { ensureReminderActionTables } from "@/lib/reminder-actions";
+import { ensureSimArchiveTable } from "@/lib/sim-archives";
 
 export const BACKUP_FORMAT = "simkeeper-portable-backup";
-export const BACKUP_FORMAT_VERSION = 2;
+export const BACKUP_FORMAT_VERSION = 3;
 export const DEFAULT_BACKUP_RETENTION = 20;
 export const MIN_BACKUP_RETENTION = 1;
 export const MAX_BACKUP_RETENTION = 100;
@@ -20,6 +21,7 @@ export const BACKUP_TABLES = [
   "carriers",
   "devices",
   "sim_cards",
+  "sim_deleted_records",
   "sim_esim_profiles",
   "sim_tariffs",
   "sim_tariff_rates",
@@ -39,6 +41,7 @@ const backupDir = path.join(dataDir, "backups");
 
 function ensureBackupTables() {
   ensureEsimProfileTable();
+  ensureSimArchiveTable();
   ensureNotificationTables();
   ensureReminderActionTables();
 }
