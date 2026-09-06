@@ -66,34 +66,41 @@ function parseBindingSummary(value: string): DeletedSimBindingSummary[] {
   try {
     const parsed = JSON.parse(value) as unknown;
     if (!Array.isArray(parsed)) return [];
-    return parsed.flatMap((item) => {
-      if (!item || typeof item !== "object") return [];
+
+    const result: DeletedSimBindingSummary[] = [];
+    for (const item of parsed) {
+      if (!item || typeof item !== "object") continue;
       const raw = item as Record<string, unknown>;
-      if (typeof raw.serviceName !== "string" || (raw.action !== "migrate" && raw.action !== "delete")) return [];
+      if (typeof raw.serviceName !== "string" || (raw.action !== "migrate" && raw.action !== "delete")) continue;
+
       if (raw.action === "delete") {
-        return [{ serviceName: raw.serviceName, action: "delete" as const }];
+        result.push({ serviceName: raw.serviceName, action: "delete" });
+        continue;
       }
 
       const target = raw.target;
       if (!target || typeof target !== "object") {
-        return [{ serviceName: raw.serviceName, action: "migrate" as const, target: null }];
+        result.push({ serviceName: raw.serviceName, action: "migrate", target: null });
+        continue;
       }
+
       const targetRecord = target as Record<string, unknown>;
       if (typeof targetRecord.label !== "string" || typeof targetRecord.carrierName !== "string") {
-        return [{ serviceName: raw.serviceName, action: "migrate" as const, target: null }];
+        result.push({ serviceName: raw.serviceName, action: "migrate", target: null });
+        continue;
       }
-      return [
-        {
-          serviceName: raw.serviceName,
-          action: "migrate" as const,
-          target: {
-            label: targetRecord.label,
-            phoneNumber: typeof targetRecord.phoneNumber === "string" ? targetRecord.phoneNumber : null,
-            carrierName: targetRecord.carrierName,
-          },
+
+      result.push({
+        serviceName: raw.serviceName,
+        action: "migrate",
+        target: {
+          label: targetRecord.label,
+          phoneNumber: typeof targetRecord.phoneNumber === "string" ? targetRecord.phoneNumber : null,
+          carrierName: targetRecord.carrierName,
         },
-      ];
-    });
+      });
+    }
+    return result;
   } catch {
     return [];
   }
