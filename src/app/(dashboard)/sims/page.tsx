@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, MapPin, Pencil, Plus, ReceiptText, Search, Smartphone, Trash2 } from "lucide-react";
+import { SimDeleteModal } from "@/components/sims/sim-delete-modal";
 import { SimEditorModal } from "@/components/sims/sim-editor-modal";
 import { SimOverviewModal } from "@/components/sims/sim-overview-modal";
 import { TariffModal } from "@/components/sims/tariff-modal";
@@ -104,6 +105,7 @@ export default function SimsPage() {
   const [editing, setEditing] = useState<SimRecord | null>(null);
   const [tariffSim, setTariffSim] = useState<SimRecord | null>(null);
   const [overviewSim, setOverviewSim] = useState<SimRecord | null>(null);
+  const [deletingSim, setDeletingSim] = useState<SimRecord | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -199,19 +201,6 @@ export default function SimsPage() {
   function openEdit(sim: SimRecord) {
     setEditing(sim);
     setEditorOpen(true);
-  }
-
-  async function remove(sim: SimRecord) {
-    if (!window.confirm(`确定删除“${sim.label}”吗？号码和对应资费资料将被永久移除。`)) return;
-    setError("");
-    try {
-      const response = await fetch(`/api/sims?id=${sim.id}`, { method: "DELETE" });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "删除失败");
-      await loadData();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "删除失败");
-    }
   }
 
   return (
@@ -398,7 +387,7 @@ export default function SimsPage() {
                         <button
                           onClick={(event) => {
                             event.stopPropagation();
-                            void remove(sim);
+                            setDeletingSim(sim);
                           }}
                           className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-rose-200 px-3 text-xs font-medium text-rose-600 transition hover:bg-rose-50"
                         >
@@ -444,6 +433,18 @@ export default function SimsPage() {
       ) : null}
 
       {tariffSim ? <TariffModal sim={tariffSim} onClose={() => setTariffSim(null)} onSaved={loadData} /> : null}
+
+      {deletingSim ? (
+        <SimDeleteModal
+          sim={deletingSim}
+          sims={sims}
+          onClose={() => setDeletingSim(null)}
+          onDeleted={async () => {
+            setDeletingSim(null);
+            await loadData();
+          }}
+        />
+      ) : null}
     </div>
   );
 }

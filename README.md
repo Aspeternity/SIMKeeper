@@ -2,12 +2,13 @@
 
 **SIMKeeper — Self-hosted SIM & eSIM lifecycle manager**
 
-当前版本：`v0.1.0-alpha.17`
+当前版本：`v0.1.0-alpha.18`
 
 当前已包含：
 
 - 运营商及 SIM / eSIM 号码管理，号码自动规范化为 E.164
 - 设备管理与号码存放位置：设备卡片、号码下拉分配、未分配状态、按位置筛选；删除设备会安全释放其中号码至“未分配”
+- 安全删除号码：如仍有“当前绑定”服务，必须逐项选择“迁移绑定”或“删除绑定”；全部处理完成后才允许删除，迁移、解绑与号码删除在同一事务中完成
 - eSIM 激活凭据归档：SM-DP+、Activation Code、Confirmation Code、LPA 字符串、配置状态、来源与重复激活策略
 - eSIM 二维码在浏览器本地自动解析，并可按已保存的 LPA 信息重新生成二维码；原始二维码可选加密保留
 - eSIM 激活凭据使用独立密钥 AES-256-GCM 加密后写入 SQLite，普通号码列表接口只返回是否已归档等摘要信息
@@ -111,7 +112,7 @@ curl http://HOST:3000/api/health
 {
   "status": "ok",
   "database": "connected",
-  "version": "0.1.0-alpha.17",
+  "version": "0.1.0-alpha.18",
   "revision": "<git-commit-sha>"
 }
 ```
@@ -155,6 +156,7 @@ docker compose up -d --force-recreate
 - [x] 运营商 CRUD
 - [x] SIM / eSIM CRUD 与 E.164 规范化
 - [x] 设备管理与号码存放位置
+- [x] 删除号码前绑定服务检查、迁移绑定与删除绑定
 - [x] eSIM 加密激活凭据、二维码本地解析与二维码重新生成
 - [x] 实名资料与资费档案
 - [x] 保号规则、活动历史与充值要求

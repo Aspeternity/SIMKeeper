@@ -1,0 +1,79 @@
+name: Verify Safe SIM Deletion
+
+on:
+  workflow_run:
+    workflows:
+      - Build and Publish Docker Image
+    types:
+      - completed
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  safe-sim-delete-smoke:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Pull verified image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="${{ github.event.workflow_run.head_sha }}"
+          echo "IMAGE=ghcr.io/aspeternity/simkeeper:sha-${sha:0:7}" >> "$GITHUB_ENV"
+          docker pull "ghcr.io/aspeternity/simkeeper:sha-${sha:0:7}"
+
+      - name: Verify safe deletion transaction
+        shell: bash
+        run: |
+          set -euo pipefail
+          container="simkeeper-safe-delete-smoke"
+          tmp="$(mktemp -d)"
+          base="http://127.0.0.1:18088"
+          cookies="$tmp/cookies.txt"
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true; rm -rf "$tmp"' EXIT
+          fail() { echo "::error::$1"; docker logs "$container" 2>&1 || true; exit 1; }
+
+          mkdir -p "$tmp/data"
+          docker run -d --name "$container" -p 18088:3000 -e SIMKEEPER_COOKIE_SECURE=false -v "$tmp/data:/app/data" "$IMAGE" >/dev/null || fail "container start failed"
+          for _ in $(seq 1 40); do curl -fsS "$base/api/health" >/dev/null 2>&1 && break; sleep 1; done
+          curl -fsS "$base/api/health" >/dev/null || fail "health check failed"
+
+          curl -fsS -c "$cookies" -o /dev/null -X POST --data-urlencode 'username=smokeadmin' --data-urlencode 'password=smoke-test-123' --data-urlencode 'confirmPassword=smoke-test-123' "$base/api/auth/setup" || fail "setup failed"
+          curl -fsS -b "$cookies" -H 'Content-Type: application/json' -d '{"name":"Delete Guard Carrier","countryCode":"PH","website":"","notes":""}' "$base/api/carriers" > "$tmp/carrier.json" || fail "carrier failed"
+          carrier_id="$(jq -r '.carrier.id' "$tmp/carrier.json")"
+
+          create_sim() {
+            jq -n --arg label "$1" --argjson carrierId "$carrier_id" '{label:$label,phoneNumber:"",carrierId:$carrierId,deviceId:null,simType:"physical",iccid:"",balance:null,currencyCode:"PHP",status:"active",activationDate:"",validUntil:"",identityStatus:"unknown",identityName:"",identityDocumentType:"",identityDocumentTypeCustom:"",identityDocumentNumber:"",identityCountryCode:"",identityNotes:"",notes:"",esimProfile:null}' > "$tmp/sim.json"
+            curl -fsS -b "$cookies" -H 'Content-Type: application/json' --data-binary @"$tmp/sim.json" "$base/api/sims" | jq -r '.sim.id'
+          }
+          target_id="$(create_sim target)"
+          source_id="$(create_sim source)"
+
+          create_binding() {
+            jq -n --argjson simId "$source_id" --arg name "$1" '{simId:$simId,serviceName:$name,category:"finance",bindingType:"verification",accountIdentifier:"smoke",importance:"critical",status:"active",website:"",boundAt:"",verifiedAt:"",notes:""}' > "$tmp/binding.json"
+            curl -fsS -b "$cookies" -H 'Content-Type: application/json' --data-binary @"$tmp/binding.json" "$base/api/services" | jq -r '.binding.id'
+          }
+          delete_id="$(create_binding delete-me)"
+          migrate_id="$(create_binding migrate-me)"
+
+          code="$(curl -sS -b "$cookies" -o "$tmp/direct.json" -w '%{http_code}' -X DELETE "$base/api/sims?id=$source_id")"
+          [ "$code" = "409" ] || fail "direct delete did not block active bindings"
+
+          jq -n --argjson simId "$source_id" --argjson deleteId "$delete_id" --argjson migrateId "$migrate_id" '{simId:$simId,bindings:[{id:$deleteId,action:"delete"},{id:$migrateId,action:"migrate",targetSimId:999999}]}' > "$tmp/bad.json"
+          code="$(curl -sS -b "$cookies" -o "$tmp/bad-result.json" -w '%{http_code}' -H 'Content-Type: application/json' --data-binary @"$tmp/bad.json" "$base/api/sims/delete")"
+          [ "$code" = "409" ] || fail "invalid migration did not fail"
+          curl -fsS -b "$cookies" "$base/api/services?simId=$source_id" > "$tmp/after-bad.json"
+          [ "$(jq '[.bindings[] | select(.status == "active")] | length' "$tmp/after-bad.json")" = "2" ] || fail "failed transaction did not roll back"
+
+          jq -n --argjson simId "$source_id" --argjson deleteId "$delete_id" --argjson migrateId "$migrate_id" --argjson targetId "$target_id" '{simId:$simId,bindings:[{id:$deleteId,action:"delete"},{id:$migrateId,action:"migrate",targetSimId:$targetId}]}' > "$tmp/good.json"
+          curl -fsS -b "$cookies" -H 'Content-Type: application/json' --data-binary @"$tmp/good.json" "$base/api/sims/delete" > "$tmp/good-result.json" || fail "safe delete failed"
+          [ "$(jq -r '.migratedBindings' "$tmp/good-result.json")" = "1" ] || fail "migration count wrong"
+          [ "$(jq -r '.deletedBindings' "$tmp/good-result.json")" = "1" ] || fail "delete count wrong"
+          curl -fsS -b "$cookies" "$base/api/services?simId=$target_id" > "$tmp/target-bindings.json"
+          [ "$(jq -r --argjson id "$migrate_id" '[.bindings[] | select(.id == $id and .status == "active")] | length' "$tmp/target-bindings.json")" = "1" ] || fail "binding was not migrated"
+
+          echo "Safe SIM deletion smoke test passed"

@@ -1,9 +1,9 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { parsePhoneNumberFromString, type CountryCode } from "libphonenumber-js";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db, sqlite } from "@/db";
-import { carriers, devices, simCards, simTariffs } from "@/db/schema";
+import { carriers, devices, simBoundServices, simCards, simTariffs } from "@/db/schema";
 import { getCurrentUser } from "@/lib/auth";
 import {
   deleteEsimProfile,
@@ -356,6 +356,18 @@ export async function DELETE(request: NextRequest) {
   const id = Number(request.nextUrl.searchParams.get("id"));
   if (!Number.isInteger(id) || id <= 0) {
     return NextResponse.json({ error: "无效的号码 ID" }, { status: 400 });
+  }
+
+  const activeBinding = db
+    .select({ id: simBoundServices.id })
+    .from(simBoundServices)
+    .where(and(eq(simBoundServices.simId, id), eq(simBoundServices.status, "active")))
+    .get();
+  if (activeBinding) {
+    return NextResponse.json(
+      { error: "该号码仍有当前绑定服务，请先处理绑定关系后再删除", requiresBindingResolution: true },
+      { status: 409 },
+    );
   }
 
   const deleted = db.delete(simCards).where(eq(simCards.id, id)).returning({ id: simCards.id }).get();
