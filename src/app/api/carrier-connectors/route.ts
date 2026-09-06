@@ -31,7 +31,7 @@ const mutationSchema = z.object({
     .refine((value) => allowedIntervals.has(value), "不支持的自动同步间隔"),
   simIds: z.array(z.coerce.number().int().positive()).max(500).default([]),
   providerConfig: z.record(z.string(), z.unknown()).optional().default({}),
-  credentials: z.record(z.string(), z.string().max(4000)).optional(),
+  credentials: z.record(z.string(), z.string().max(16000, "连接凭据内容过长")).optional(),
   clearCredentials: z.boolean().optional().default(false),
 });
 

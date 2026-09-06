@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { sqlite } from "@/db";
+import packageJson from "../../../../package.json";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const version = "0.1.0-alpha.1";
+const version = packageJson.version;
 
 export async function GET() {
   try {

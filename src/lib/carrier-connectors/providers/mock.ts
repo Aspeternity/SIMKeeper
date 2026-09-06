@@ -1,18 +1,15 @@
 import "server-only";
 
-import type {
-  CarrierConnectorProvider,
-  ConnectorAccountStatus,
-  NormalizedCarrierSyncResult,
+import {
+  CONNECTOR_ACCOUNT_STATUS_OPTIONS,
+  type CarrierConnectorProvider,
+  type ConnectorAccountStatus,
+  type NormalizedCarrierSyncResult,
 } from "@/lib/carrier-connectors/types";
 
-const ACCOUNT_STATUSES = new Set<ConnectorAccountStatus>([
-  "active",
-  "suspended",
-  "expired",
-  "closed",
-  "unknown",
-]);
+const ACCOUNT_STATUSES = new Set<ConnectorAccountStatus>(
+  CONNECTOR_ACCOUNT_STATUS_OPTIONS.map((item) => item.value),
+);
 
 function nullableNumber(value: unknown) {
   if (value === null || value === undefined || value === "") return null;
@@ -48,12 +45,50 @@ export const mockCarrierConnectorProvider: CarrierConnectorProvider = {
   id: "mock",
   label: "模拟数据源",
   description: "用于验证连接、同步、快照、过期判断和凭据加密框架，不会访问任何真实运营商。",
+  configFields: [
+    {
+      key: "balance",
+      label: "余额",
+      type: "number",
+      placeholder: "10.30",
+      defaultValue: 10,
+      description: "留空表示余额未知。",
+    },
+    {
+      key: "currencyCode",
+      label: "币种",
+      type: "text",
+      placeholder: "PHP",
+      defaultValue: "PHP",
+    },
+    {
+      key: "balanceValidUntil",
+      label: "余额有效期",
+      type: "date",
+      defaultValue: "",
+    },
+    {
+      key: "accountStatus",
+      label: "账户状态",
+      type: "select",
+      defaultValue: "active",
+      options: CONNECTOR_ACCOUNT_STATUS_OPTIONS,
+    },
+    {
+      key: "simulateFailure",
+      label: "模拟同步失败",
+      type: "checkbox",
+      defaultValue: false,
+      description: "用于验证错误状态、上次成功时间和旧快照保留。",
+    },
+  ],
   credentialFields: [
     {
       key: "testToken",
       label: "测试凭据",
       description: "可选。仅用于验证加密保存流程，模拟 Provider 不会实际使用。",
       required: false,
+      placeholder: "可选",
     },
   ],
   async authenticate() {

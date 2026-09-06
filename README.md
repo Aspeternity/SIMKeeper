@@ -2,12 +2,14 @@
 
 **SIMKeeper — Self-hosted SIM & eSIM lifecycle manager**
 
-当前版本：`v0.1.0-alpha.20`
+当前版本：`v0.1.0-alpha.21`
 
 当前已包含：
 
 - 运营商及 SIM / eSIM 号码管理，号码自动规范化为 E.164
-- 运营商自动同步框架：一个连接可关联多张 SIM，支持 Provider 适配器、AES-256-GCM 凭据加密、手动/定时同步、余额/余额有效期/账户状态标准化、数据新鲜度判断和历史快照；alpha.20 先提供模拟 Provider 验证完整链路
+- 运营商自动同步框架：一个连接可关联多张 SIM，支持 Provider 适配器、AES-256-GCM 凭据加密、手动/定时同步、余额/余额有效期/账户状态标准化、数据新鲜度判断和历史快照
+- 首个真实运营商适配器 `DITO MyDITO（实验）`：从用户已经登录的 `my.dito.ph` 会话中导入真实余额 JSON 请求，支持 GET/POST、号码模板、可配置 JSON 路径和加密鉴权请求头；只允许访问 HTTPS 的 `dito.ph` 官方域名，不跟随重定向，不硬编码未经确认的私有 API
+- 模拟 Provider 继续保留，用于离线验证连接、调度、加密、快照和错误恢复流程
 - 自动同步结果独立保存，不会覆盖号码中手工维护的余额与号码有效期；删除连接后最近同步快照仍作为已过期历史数据保留
 - 设备管理与号码存放位置：设备卡片、号码下拉分配、未分配状态、按位置筛选；删除设备会安全释放其中号码至“未分配”
 - 安全删除号码：如仍有“当前绑定”服务，必须逐项选择“迁移绑定”或“删除绑定”；全部处理完成后才允许删除，迁移、解绑与号码删除在同一事务中完成
@@ -32,8 +34,23 @@
 - 每日精确通知时间、提醒里程碑、渠道筛选和自定义通知模板
 - 完整 JSON 导出、本地备份、恢复前安全备份及保留策略；设备、删除概要、eSIM 凭据、运营商连接和同步快照均可随可移植备份跨实例恢复
 - 桌面与手机端响应式导航、页面标题、实时提醒数量和右上角提醒概览
-- SQLite 持久化、管理员登录、本地 Session Secret 和健康检查
+- SQLite 持久化、管理员登录、本地 Session Secret 和健康检查；健康接口版本号直接读取 `package.json`，避免发布版本与健康检查不一致
 - Docker 单容器运行及 GitHub Actions 验证后自动发布 GHCR 镜像
+
+## DITO MyDITO（实验）连接
+
+DITO 当前没有公开、稳定、面向第三方的账户余额 API。SIMKeeper 因此不会猜测并硬编码未知私有接口，而是复用你本人已经登录的 MyDITO 会话请求：
+
+1. 浏览器打开 `https://my.dito.ph` 并正常登录。
+2. F12 → Network，刷新账户首页，找到返回实时 Load Balance 的 JSON 请求。
+3. 在 SIMKeeper `设置与备份 → 运营商连接` 添加 `DITO MyDITO（实验）`。
+4. 填入该请求最终的 Request URL；把 Authorization、Cookie、x-* 等鉴权相关 Header 整理为 JSON 放入“加密凭据”。
+5. 首次可以让余额/币种/余额有效期/账户状态 JSON 路径保持空白，SIMKeeper 会尝试识别常见字段；如果无法识别，再按真实响应填写类似 `data.balance` 的路径。
+6. 保存后执行“立即同步”。若以后出现 401/403，只需重新登录 MyDITO 并更新鉴权请求头。
+
+安全限制：DITO Provider 只允许请求 `https://dito.ph` 及其子域名、只允许标准 HTTPS 端口、禁止在 URL 中嵌入账号密码、禁止 Host/Content-Length 等危险请求头、禁止自动跟随重定向，并限制响应大小和请求超时。MyDITO Token/Cookie 不会通过普通连接 API 回显。
+
+可用模板：`{{phoneNumber}}`、`{{e164}}`、`{{msisdn}}`、`{{localNumber}}`、`{{simLabel}}`。因此一个 DITO 连接仍可在接口结构允许时服务多张 DITO SIM。
 
 ## 推荐部署方式
 
@@ -115,7 +132,7 @@ curl http://HOST:3000/api/health
 {
   "status": "ok",
   "database": "connected",
-  "version": "0.1.0-alpha.20",
+  "version": "0.1.0-alpha.21",
   "revision": "<git-commit-sha>"
 }
 ```
@@ -158,7 +175,9 @@ docker compose up -d --force-recreate
 - [x] GHCR 自动发布
 - [x] 运营商 CRUD
 - [x] SIM / eSIM CRUD 与 E.164 规范化
-- [x] 运营商连接与自动同步框架（Mock Provider、加密凭据、调度、快照、数据新鲜度）
+- [x] 运营商连接与自动同步框架（加密凭据、调度、快照、数据新鲜度）
+- [x] Mock Provider
+- [x] DITO MyDITO 实验 Provider（会话请求导入、HTTPS/域名限制、JSON 映射）
 - [x] 设备管理与号码存放位置
 - [x] 删除号码前绑定服务检查、迁移绑定与删除绑定
 - [x] 删除号码时可选保留只读概要与独立删除记录

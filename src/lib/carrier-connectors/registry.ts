@@ -1,5 +1,6 @@
 import "server-only";
 
+import { ditoCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/dito";
 import { mockCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/mock";
 import type {
   CarrierConnectorProvider,
@@ -7,6 +8,7 @@ import type {
 } from "@/lib/carrier-connectors/types";
 
 const PROVIDERS: Record<string, CarrierConnectorProvider> = {
+  dito: ditoCarrierConnectorProvider,
   mock: mockCarrierConnectorProvider,
 };
 
@@ -19,6 +21,7 @@ export function listCarrierConnectorProviders(): CarrierConnectorProviderPublic[
     id: provider.id,
     label: provider.label,
     description: provider.description,
+    configFields: provider.configFields,
     credentialFields: provider.credentialFields,
   }));
 }

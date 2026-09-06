@@ -7,17 +7,35 @@ export type ConnectorAccountStatus =
   | "closed"
   | "unknown";
 
+export type ConnectorFieldOption = {
+  value: string;
+  label: string;
+};
+
+export type ConnectorConfigField = {
+  key: string;
+  label: string;
+  description?: string;
+  required?: boolean;
+  type?: "text" | "url" | "number" | "date" | "select" | "checkbox" | "textarea";
+  placeholder?: string;
+  defaultValue?: string | number | boolean;
+  options?: ConnectorFieldOption[];
+};
+
 export type ConnectorCredentialField = {
   key: string;
   label: string;
   description?: string;
   required?: boolean;
+  placeholder?: string;
 };
 
 export type CarrierConnectorProviderPublic = {
   id: string;
   label: string;
   description: string;
+  configFields: ConnectorConfigField[];
   credentialFields: ConnectorCredentialField[];
 };
 
