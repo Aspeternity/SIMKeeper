@@ -314,12 +314,13 @@ export const SimBalanceSourceEditor = forwardRef<
   ]);
 
   const sourceForSelectedProvider = source?.connector?.provider === selectedProvider?.id
-    ? source.connector
+    ? source?.connector ?? null
     : null;
-  const currentAutoBalance = sourceForSelectedProvider && source?.latest
-    ? source.latest.balance === null
+  const latestForSelectedProvider = sourceForSelectedProvider ? source?.latest ?? null : null;
+  const currentAutoBalance = latestForSelectedProvider
+    ? latestForSelectedProvider.balance === null
       ? "余额未知"
-      : `${source.latest.balance} ${source.latest.currencyCode || ""}`.trim()
+      : `${latestForSelectedProvider.balance} ${latestForSelectedProvider.currencyCode || ""}`.trim()
     : balance
       ? `${balance} ${currencyCode}`.trim()
       : "首次同步后自动填入";
@@ -498,9 +499,7 @@ export const SimBalanceSourceEditor = forwardRef<
 
           <div className="grid gap-4 sm:grid-cols-2">
             {selectedProvider.credentialFields.map((field) => {
-              const stored = Boolean(
-                sourceForSelectedProvider?.hasCredentials,
-              );
+              const stored = Boolean(sourceForSelectedProvider?.hasCredentials);
               return (
                 <label key={field.key} className="space-y-1.5 text-sm">
                   <span className="font-medium text-slate-700">{field.label}</span>
