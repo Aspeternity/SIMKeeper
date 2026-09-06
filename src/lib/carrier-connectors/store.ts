@@ -15,6 +15,8 @@ import type {
 const MAX_SNAPSHOTS_PER_SIM = 100;
 const SCHEDULER_SCAN_MS = 60_000;
 const SCHEDULER_INITIAL_DELAY_MS = 5_000;
+const MAX_TEMPORARY_RETRIES = 3;
+const MAX_TEMPORARY_RETRY_DELAY_MS = 30 * 60_000;
 
 type RawConnector = {
   id: number;
@@ -52,6 +54,18 @@ type RawSnapshot = {
   balance_valid_until: string | null;
   account_status: ConnectorAccountStatus;
   synced_at: string;
+};
+
+type RawRetryState = {
+  retry_at: string;
+  attempt_count: number;
+};
+
+type SyncError = {
+  simId: number;
+  simLabel: string;
+  error: string;
+  retryAfterMs: number | null;
 };
 
 export type CarrierConnectorMutationInput = {
@@ -119,6 +133,17 @@ export function ensureCarrierConnectorTables() {
       ON sim_sync_snapshots(sim_id, synced_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS idx_sim_sync_snapshots_connector
       ON sim_sync_snapshots(connector_id);
+
+    CREATE TABLE IF NOT EXISTS carrier_connector_retries (
+      connector_id INTEGER PRIMARY KEY,
+      retry_at TEXT NOT NULL,
+      attempt_count INTEGER NOT NULL DEFAULT 1,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (connector_id) REFERENCES carrier_connectors(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_carrier_connector_retries_at
+      ON carrier_connector_retries(retry_at);
   `);
 }
 
@@ -209,6 +234,70 @@ function getLatestSnapshotRow(simId: number) {
     .get(simId) as RawSnapshot | undefined;
 }
 
+function getConnectorRetryState(connectorId: number) {
+  return sqlite
+    .prepare(
+      `SELECT retry_at, attempt_count
+       FROM carrier_connector_retries
+       WHERE connector_id = ?`,
+    )
+    .get(connectorId) as RawRetryState | undefined;
+}
+
+function clearConnectorRetry(connectorId: number) {
+  sqlite.prepare("DELETE FROM carrier_connector_retries WHERE connector_id = ?").run(connectorId);
+}
+
+function scheduleConnectorRetry(connectorId: number, requestedDelayMs: number) {
+  const current = getConnectorRetryState(connectorId);
+  const attempt = (current?.attempt_count ?? 0) + 1;
+  if (attempt > MAX_TEMPORARY_RETRIES) {
+    clearConnectorRetry(connectorId);
+    return null;
+  }
+
+  const baseDelay = Math.max(60_000, Math.round(requestedDelayMs));
+  const delay = Math.min(
+    MAX_TEMPORARY_RETRY_DELAY_MS,
+    baseDelay * Math.pow(2, attempt - 1),
+  );
+  const retryAt = new Date(Date.now() + delay).toISOString();
+  const updatedAt = new Date().toISOString();
+
+  sqlite
+    .prepare(
+      `INSERT INTO carrier_connector_retries (connector_id, retry_at, attempt_count, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(connector_id) DO UPDATE SET
+         retry_at = excluded.retry_at,
+         attempt_count = excluded.attempt_count,
+         updated_at = excluded.updated_at`,
+    )
+    .run(connectorId, retryAt, attempt, updatedAt);
+
+  return { retryAt, attempt };
+}
+
+function retryDelayFromSyncError(provider: string, error: unknown) {
+  if (provider !== "dito") return null;
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  if (!/HTTP\s*417/i.test(message)) return null;
+
+  const minutes = message.match(/after\s+(\d+(?:\.\d+)?)\s+minutes?/i);
+  if (minutes) {
+    const value = Number(minutes[1]);
+    if (Number.isFinite(value) && value > 0) return value * 60_000;
+  }
+
+  const seconds = message.match(/after\s+(\d+(?:\.\d+)?)\s+seconds?/i);
+  if (seconds) {
+    const value = Number(seconds[1]);
+    if (Number.isFinite(value) && value > 0) return value * 1000;
+  }
+
+  return 3 * 60_000;
+}
+
 function staleAfterMinutes(syncIntervalMinutes: number) {
   if (syncIntervalMinutes <= 0) return 7 * 24 * 60;
   return Math.max(24 * 60, syncIntervalMinutes * 3);
@@ -258,6 +347,13 @@ function linkedSimsForConnector(row: RawConnector) {
 }
 
 function nextSyncAt(row: RawConnector) {
+  const retry = getConnectorRetryState(row.id);
+  if (retry) {
+    const retryTimestamp = Date.parse(retry.retry_at);
+    if (Number.isFinite(retryTimestamp)) return retry.retry_at;
+    clearConnectorRetry(row.id);
+  }
+
   if (row.sync_interval_minutes <= 0 || !row.last_synced_at) return null;
   const previous = Date.parse(row.last_synced_at);
   if (!Number.isFinite(previous)) return null;
@@ -406,6 +502,7 @@ export function updateCarrierConnector(id: number, input: CarrierConnectorMutati
         id,
       );
     replaceSimAssignments(id, input.simIds, now);
+    if (input.syncIntervalMinutes <= 0) clearConnectorRetry(id);
   })();
 
   return getCarrierConnector(id);
@@ -498,6 +595,7 @@ export type CarrierConnectorSyncRun = {
   synced: number;
   failed: number;
   lastSyncedAt: string;
+  retryAt: string | null;
   errors: Array<{ simId: number; simLabel: string; error: string }>;
 };
 
@@ -513,7 +611,7 @@ async function performCarrierConnectorSync(connectorId: number): Promise<Carrier
   const config = parseObject(connector.provider_config);
   const credentials = decryptCredentials(connector);
   const syncedAt = new Date().toISOString();
-  const errors: Array<{ simId: number; simLabel: string; error: string }> = [];
+  const errors: SyncError[] = [];
   let synced = 0;
 
   for (const sim of linkedSims) {
@@ -541,13 +639,37 @@ async function performCarrierConnectorSync(connectorId: number): Promise<Carrier
         simId: sim.id,
         simLabel: sim.label,
         error: error instanceof Error ? error.message : "同步失败",
+        retryAfterMs: retryDelayFromSyncError(connector.provider, error),
       });
     }
   }
 
   const ok = errors.length === 0;
-  const lastError = errors.length
-    ? errors.map((item) => `${item.simLabel}：${item.error}`).join("；").slice(0, 2000)
+  const retryable = Boolean(
+    !ok
+    && connector.sync_interval_minutes > 0
+    && errors.every((item) => item.retryAfterMs !== null),
+  );
+  const requestedRetryDelay = retryable
+    ? Math.max(...errors.map((item) => item.retryAfterMs as number))
+    : null;
+  const retryState = requestedRetryDelay !== null
+    ? scheduleConnectorRetry(connector.id, requestedRetryDelay)
+    : null;
+
+  if (ok || requestedRetryDelay === null) {
+    clearConnectorRetry(connector.id);
+  }
+
+  const displayErrors = errors.map((item) => ({
+    simId: item.simId,
+    simLabel: item.simLabel,
+    error: retryState
+      ? `${item.error}；SIMKeeper 已安排自动重试`
+      : item.error,
+  }));
+  const lastError = displayErrors.length
+    ? displayErrors.map((item) => `${item.simLabel}：${item.error}`).join("；").slice(0, 2000)
     : null;
   const now = new Date().toISOString();
 
@@ -572,7 +694,8 @@ async function performCarrierConnectorSync(connectorId: number): Promise<Carrier
     synced,
     failed: errors.length,
     lastSyncedAt: syncedAt,
-    errors,
+    retryAt: retryState?.retryAt ?? null,
+    errors: displayErrors,
   };
 }
 
@@ -675,6 +798,13 @@ export function listSimSyncHistory(simId: number, limit = 20) {
 }
 
 function connectorIsDue(row: RawConnector, now = Date.now()) {
+  const retry = getConnectorRetryState(row.id);
+  if (retry) {
+    const retryTimestamp = Date.parse(retry.retry_at);
+    if (Number.isFinite(retryTimestamp)) return now >= retryTimestamp;
+    clearConnectorRetry(row.id);
+  }
+
   if (row.sync_interval_minutes <= 0) return false;
   if (!row.last_synced_at) return true;
   const previous = Date.parse(row.last_synced_at);
