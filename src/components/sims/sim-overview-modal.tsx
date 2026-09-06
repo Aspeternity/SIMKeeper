@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { KeepAliveOverviewSection } from "@/components/keep-alive/keep-alive-overview-section";
 import { EsimProfileOverviewSection } from "@/components/sims/esim-profile-overview-section";
+import { SimBalanceDetail } from "@/components/sims/sim-balance-detail";
 import { Card } from "@/components/ui/card";
 import { ModalPortal } from "@/components/ui/modal-portal";
 import { COUNTRY_REGIONS } from "@/lib/countries";
@@ -236,7 +237,9 @@ function ruleValueText(rule: TariffRule, currencyCode: string | null | undefined
       rule.packageAllowanceAmount !== null && rule.packageAllowanceAmount !== undefined
         ? `含 ${rule.packageAllowanceAmount} ${getBillingUnitLabel(rule.packageAllowanceUnit)}`.trim()
         : "",
-      periodLabel(rule.validityValue, rule.validityUnit) ? `有效 ${periodLabel(rule.validityValue, rule.validityUnit)}` : "",
+      periodLabel(rule.validityValue, rule.validityUnit)
+        ? `有效 ${periodLabel(rule.validityValue, rule.validityUnit)}`
+        : "",
       rule.autoRenew === "yes" ? "自动续订" : rule.autoRenew === "no" ? "不自动续订" : "",
     ].filter(Boolean);
     return parts.join(" · ");
@@ -350,7 +353,11 @@ function RuleCard({ rule, index, currencyCode }: { rule: TariffRule; index: numb
         <span className="text-[11px] font-medium text-slate-600">{label}</span>
         <span className="flex items-center gap-1 text-right text-[11px] font-medium text-slate-700">
           {value}
-          {copied ? <Check className="h-3 w-3 shrink-0 text-emerald-600" /> : <Copy className="h-3 w-3 shrink-0 text-slate-300 opacity-0 transition group-hover:opacity-100" />}
+          {copied ? (
+            <Check className="h-3 w-3 shrink-0 text-emerald-600" />
+          ) : (
+            <Copy className="h-3 w-3 shrink-0 text-slate-300 opacity-0 transition group-hover:opacity-100" />
+          )}
         </span>
       </div>
       <div className="mt-1 text-[10px] leading-4 text-slate-400">{conditions}</div>
@@ -373,20 +380,35 @@ function RateGroup({ title, codes, tariff }: { title: string; codes: TariffServi
               <div className="flex items-start justify-between gap-4">
                 <div className="flex min-w-0 items-center gap-1.5">
                   <span className="text-xs text-slate-500">{service.label}</span>
-                  {rules.length ? <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[9px] font-medium text-indigo-600">{rules.length} 条规则</span> : null}
+                  {rules.length ? (
+                    <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[9px] font-medium text-indigo-600">{rules.length} 条规则</span>
+                  ) : null}
                 </div>
                 {rules.length ? hasBaseRate ? (
-                  <CopyValue value={`基础资费：${baseRateText(tariff, code)}`} align="right" className="max-w-[65%] text-xs font-medium text-slate-700" />
+                  <CopyValue
+                    value={`基础资费：${baseRateText(tariff, code)}`}
+                    align="right"
+                    className="max-w-[65%] text-xs font-medium text-slate-700"
+                  />
                 ) : (
                   <span className="rounded-md bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-700">按条件计费</span>
                 ) : (
-                  <CopyValue value={baseRateText(tariff, code)} align="right" className="max-w-[65%] text-xs font-medium text-slate-700" />
+                  <CopyValue
+                    value={baseRateText(tariff, code)}
+                    align="right"
+                    className="max-w-[65%] text-xs font-medium text-slate-700"
+                  />
                 )}
               </div>
               {rules.length ? (
                 <div className="mt-2 space-y-1.5 border-l-2 border-indigo-100 pl-2.5">
                   {rules.map((rule, index) => (
-                    <RuleCard key={rule.id ?? `${code}-${index}`} rule={rule} index={index} currencyCode={tariff?.currencyCode} />
+                    <RuleCard
+                      key={rule.id ?? `${code}-${index}`}
+                      rule={rule}
+                      index={index}
+                      currencyCode={tariff?.currencyCode}
+                    />
                   ))}
                 </div>
               ) : null}
@@ -441,7 +463,12 @@ function SectionHeader({
 }) {
   return (
     <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-      <button type="button" onClick={onToggle} className="group flex min-w-0 flex-1 items-start gap-2 text-left" title={open ? "收起" : "展开"}>
+      <button
+        type="button"
+        onClick={onToggle}
+        className="group flex min-w-0 flex-1 items-start gap-2 text-left"
+        title={open ? "收起" : "展开"}
+      >
         <ChevronDown className={`mt-0.5 h-4 w-4 shrink-0 text-slate-400 transition-transform ${open ? "" : "-rotate-90"}`} />
         <span className="mt-0.5 shrink-0 text-slate-400">{icon}</span>
         <span className="min-w-0">
@@ -519,7 +546,9 @@ export function SimOverviewModal({
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-2">
               <h3 className="text-xl font-semibold text-slate-900">{sim.label}</h3>
-              <span className={`rounded-md px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ${statusClass(sim.status)}`}>{getSimStatusLabel(sim.status)}</span>
+              <span className={`rounded-md px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ${statusClass(sim.status)}`}>
+                {getSimStatusLabel(sim.status)}
+              </span>
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400">
               <CopyValue value={sim.phoneNumber || ""} className="text-xs text-slate-400" />
@@ -528,7 +557,11 @@ export function SimOverviewModal({
               <CopyValue value={getSimTypeLabel(sim.simType)} className="text-xs text-slate-400" />
             </div>
           </div>
-          <button type="button" onClick={onClose} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+          >
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -541,7 +574,11 @@ export function SimOverviewModal({
               open={basicOpen}
               onToggle={() => setBasicOpen((value) => !value)}
               action={(
-                <button type="button" onClick={onEdit} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50">
+                <button
+                  type="button"
+                  onClick={onEdit}
+                  className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
+                >
                   <Pencil className="h-3.5 w-3.5" />编辑号码
                 </button>
               )}
@@ -555,7 +592,7 @@ export function SimOverviewModal({
                   <DetailItem label="SIM 类型" value={getSimTypeLabel(sim.simType)} />
                   <DetailItem label="存放位置" value={sim.deviceName || "未分配"} />
                   <DetailItem label="ICCID" value={sim.iccid || "未记录"} />
-                  <DetailItem label="余额" value={sim.balance === null ? "未记录" : `${sim.balance} ${sim.currencyCode || ""}`} />
+                  <SimBalanceDetail sim={sim} />
                   <DetailItem label="激活日期" value={sim.activationDate || "未记录"} />
                   <DetailItem label="有效期至" value={sim.validUntil || "未设置"} />
                   <DetailItem label="状态" value={getSimStatusLabel(sim.status)} />
@@ -577,7 +614,11 @@ export function SimOverviewModal({
               open={identityOpen}
               onToggle={() => setIdentityOpen((value) => !value)}
               action={(
-                <button type="button" onClick={onEdit} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50">
+                <button
+                  type="button"
+                  onClick={onEdit}
+                  className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
+                >
                   <Pencil className="h-3.5 w-3.5" />编辑实名信息
                 </button>
               )}
@@ -588,9 +629,15 @@ export function SimOverviewModal({
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                   <DetailItem label="实名状态" value={getIdentityStatusLabel(sim.identityStatus)} />
                   <DetailItem label="实名姓名 / 主体" value={sim.identityName || "未记录"} />
-                  <DetailItem label="证件 / 材料类型" value={getIdentityDocumentTypeLabel(sim.identityDocumentType, sim.identityDocumentTypeCustom)} />
+                  <DetailItem
+                    label="证件 / 材料类型"
+                    value={getIdentityDocumentTypeLabel(sim.identityDocumentType, sim.identityDocumentTypeCustom)}
+                  />
                   <DetailItem label="证件 / 材料编号" value={sim.identityDocumentNumber || "未记录"} />
-                  <DetailItem label="证件 / 材料国家 / 地区" value={sim.identityCountryCode ? countryLabel(sim.identityCountryCode) : "未记录"} />
+                  <DetailItem
+                    label="证件 / 材料国家 / 地区"
+                    value={sim.identityCountryCode ? countryLabel(sim.identityCountryCode) : "未记录"}
+                  />
                 </div>
                 {sim.identityNotes ? <CopyBlock label="实名备注" value={sim.identityNotes} /> : null}
               </>
@@ -607,7 +654,11 @@ export function SimOverviewModal({
               open={tariffOpen}
               onToggle={() => setTariffOpen((value) => !value)}
               action={(
-                <button type="button" onClick={onEditTariff} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50">
+                <button
+                  type="button"
+                  onClick={onEditTariff}
+                  className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
+                >
                   <ReceiptText className="h-3.5 w-3.5" />编辑资费
                 </button>
               )}
@@ -629,7 +680,10 @@ export function SimOverviewModal({
                   <DetailItem label="行政 / 附加费" value={formatMoney(tariff.administrationFee, tariff.currencyCode)} />
                   <DetailItem label="国际漫游" value={getRoamingAvailabilityLabel(tariff.roamingAvailable)} />
                   <DetailItem label="最后确认" value={tariff.verifiedAt || "未记录"} />
-                  <DetailItem label="续订" value={tariff.autoRenew === "yes" ? "自动续订" : tariff.autoRenew === "no" ? "不自动续订" : "未知"} />
+                  <DetailItem
+                    label="续订"
+                    value={tariff.autoRenew === "yes" ? "自动续订" : tariff.autoRenew === "no" ? "不自动续订" : "未知"}
+                  />
                 </div>
 
                 <div className="grid gap-3 lg:grid-cols-2">
@@ -645,12 +699,20 @@ export function SimOverviewModal({
                   <div className="flex flex-col gap-3 rounded-xl border border-slate-100 px-4 py-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0 flex-1">
                       <div className="mb-1 text-[11px] text-slate-400">资费备注</div>
-                      <CopyValue value={tariff.notes || "无额外资费备注"} className="text-xs leading-5 text-slate-500" />
+                      <CopyValue
+                        value={tariff.notes || "无额外资费备注"}
+                        className="text-xs leading-5 text-slate-500"
+                      />
                     </div>
                     {tariff.sourceUrl ? (
                       <div className="flex shrink-0 items-center gap-2">
                         <CopyValue value={tariff.sourceUrl} className="text-xs font-medium text-slate-500" />
-                        <a href={tariff.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs font-medium text-slate-700 hover:text-slate-950">
+                        <a
+                          href={tariff.sourceUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-xs font-medium text-slate-700 hover:text-slate-950"
+                        >
                           打开来源 <ExternalLink className="h-3.5 w-3.5" />
                         </a>
                       </div>
@@ -670,7 +732,13 @@ export function SimOverviewModal({
 
         <div className="flex shrink-0 items-center justify-between gap-3 border-t bg-white px-5 py-4 sm:px-6">
           <div className="text-xs text-slate-400">创建于 {sim.createdAt.slice(0, 10)} · 更新于 {sim.updatedAt.slice(0, 10)}</div>
-          <button type="button" onClick={onClose} className="h-9 rounded-lg border px-3 text-xs font-medium text-slate-600 transition hover:bg-slate-50">关闭</button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-9 rounded-lg border px-3 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
+          >
+            关闭
+          </button>
         </div>
       </Card>
     </ModalPortal>

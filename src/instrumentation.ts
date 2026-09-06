@@ -19,7 +19,9 @@ export async function register() {
       ensureCarrierConnectorTables,
       startCarrierConnectorScheduler,
     } = await import("@/lib/carrier-connectors/store");
+    const { ensureCarrierBalanceProjection } = await import("@/lib/carrier-connectors/balance-projection");
     ensureCarrierConnectorTables();
+    ensureCarrierBalanceProjection();
     startCarrierConnectorScheduler();
   }
 }
