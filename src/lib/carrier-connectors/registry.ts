@@ -23,5 +23,7 @@ export function listCarrierConnectorProviders(): CarrierConnectorProviderPublic[
     description: provider.description,
     configFields: provider.configFields,
     credentialFields: provider.credentialFields,
+    minLinkedSims: provider.minLinkedSims,
+    maxLinkedSims: provider.maxLinkedSims,
   }));
 }

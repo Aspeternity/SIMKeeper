@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getCurrentUser } from "@/lib/auth";
-import { listCarrierConnectorProviders } from "@/lib/carrier-connectors/registry";
+import {
+  getCarrierConnectorProvider,
+  listCarrierConnectorProviders,
+} from "@/lib/carrier-connectors/registry";
 import {
   createCarrierConnector,
   deleteCarrierConnector,
@@ -35,6 +38,8 @@ const mutationSchema = z.object({
   clearCredentials: z.boolean().optional().default(false),
 });
 
+type MutationData = z.infer<typeof mutationSchema>;
+
 async function requireUser() {
   const user = await getCurrentUser();
   if (!user) {
@@ -46,6 +51,28 @@ async function requireUser() {
 function positiveId(value: string | null) {
   const id = Number(value);
   return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+function validateProviderMutation(data: MutationData, creating: boolean) {
+  const provider = getCarrierConnectorProvider(data.provider);
+  if (!provider) throw new Error("不支持的运营商连接 Provider");
+
+  const uniqueSimIds = new Set(data.simIds);
+  if (uniqueSimIds.size !== data.simIds.length) throw new Error("关联号码不能重复");
+  if (provider.minLinkedSims !== undefined && data.simIds.length < provider.minLinkedSims) {
+    throw new Error(`${provider.label} 至少需要关联 ${provider.minLinkedSims} 张 SIM`);
+  }
+  if (provider.maxLinkedSims !== undefined && data.simIds.length > provider.maxLinkedSims) {
+    throw new Error(`${provider.label} 每个连接最多关联 ${provider.maxLinkedSims} 张 SIM`);
+  }
+
+  if (creating) {
+    for (const field of provider.credentialFields) {
+      if (!field.required) continue;
+      const value = data.credentials?.[field.key]?.trim();
+      if (!value) throw new Error(`请填写${field.label}`);
+    }
+  }
 }
 
 export async function GET(request: NextRequest) {
@@ -83,6 +110,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    validateProviderMutation(parsed.data, true);
     const connector = createCarrierConnector(parsed.data);
     rescheduleCarrierConnectorScheduler();
     return NextResponse.json({ connector }, { status: 201 });
@@ -116,6 +144,7 @@ export async function PATCH(request: NextRequest) {
     if (!getCarrierConnector(id)) {
       return NextResponse.json({ error: "运营商连接不存在" }, { status: 404 });
     }
+    validateProviderMutation(parsed.data, false);
     const connector = updateCarrierConnector(id, parsed.data);
     rescheduleCarrierConnectorScheduler();
     return NextResponse.json({ connector });

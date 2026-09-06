@@ -1,5 +1,6 @@
 import "server-only";
 
+import { createCipheriv, createHash } from "node:crypto";
 import type {
   CarrierConnectorProvider,
   CarrierConnectorSimContext,
@@ -7,445 +8,423 @@ import type {
   NormalizedCarrierSyncResult,
 } from "@/lib/carrier-connectors/types";
 
-const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
-const REQUEST_TIMEOUT_MS = 12_000;
-const FORBIDDEN_REQUEST_HEADERS = new Set([
-  "host",
-  "content-length",
-  "connection",
-  "transfer-encoding",
-  "upgrade",
-  "proxy-authorization",
-  "proxy-authenticate",
-]);
+const MYDITO_ORIGIN = "https://my.dito.ph";
+const ECARE_WEB_PREFIX = "/ecare/webs";
+const REQUEST_TIMEOUT_MS = 15_000;
+const MAX_RESPONSE_BYTES = 1024 * 1024;
+const SIGN_SUFFIX = "32BytesString";
+const PASSWORD_KEY = Buffer.from("4EGJ6D9CFFA2GG9A", "utf8");
+const PASSWORD_IV = Buffer.from("0102030405060708", "utf8");
 
-const BALANCE_KEYS = new Set([
-  "balance",
-  "loadbalance",
-  "mainbalance",
-  "availablebalance",
-  "currentbalance",
-  "remainingbalance",
-  "regularloadbalance",
-  "accountbalance",
-]);
+const blockedCredentialFingerprints = new Map<number, string>();
 
-const CURRENCY_KEYS = new Set(["currency", "currencycode", "ccy"]);
-const VALIDITY_KEYS = new Set([
-  "balancevaliduntil",
-  "loadbalancevaliduntil",
-  "loadbalancevalidity",
-  "balanceexpirydate",
-  "balanceexpirationdate",
-  "loadexpirydate",
-  "loadexpirationdate",
-]);
-const STATUS_KEYS = new Set(["accountstatus", "servicestatus", "subscriberstatus", "simstatus"]);
+type JsonObject = Record<string, unknown>;
+type CookieJar = Map<string, string>;
 
-type LocatedValue = {
-  value: unknown;
-  path: string;
+type RequestOptions = {
+  method?: "GET" | "POST";
+  body?: JsonObject;
+  authToken?: string;
+  cookies: CookieJar;
 };
 
-function normalizeKey(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+function isObject(value: unknown): value is JsonObject {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function stringConfig(config: Record<string, unknown>, key: string) {
-  return typeof config[key] === "string" ? config[key].trim() : "";
+function objectValue(value: unknown) {
+  return isObject(value) ? value : {};
 }
 
-function validateDitoUrl(raw: string) {
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    throw new Error("DITO 请求 URL 无效");
-  }
-
-  if (url.protocol !== "https:") {
-    throw new Error("DITO Provider 只允许访问 HTTPS 地址");
-  }
-  if (url.username || url.password) {
-    throw new Error("DITO 请求 URL 不能包含用户名或密码");
-  }
-  if (url.port && url.port !== "443") {
-    throw new Error("DITO Provider 只允许标准 HTTPS 端口");
-  }
-
-  const hostname = url.hostname.toLowerCase().replace(/\.$/, "");
-  if (hostname !== "dito.ph" && !hostname.endsWith(".dito.ph")) {
-    throw new Error("DITO Provider 只允许访问 dito.ph 官方域名");
-  }
-  return url;
+function stringValue(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
 }
 
-function interpolationVariables(sim: CarrierConnectorSimContext) {
-  const e164 = sim.phoneNumber || "";
-  const digits = e164.replace(/\D/g, "");
-  const localNumber = e164.startsWith("+63") ? `0${e164.slice(3)}` : e164;
-  return {
-    phoneNumber: e164,
-    e164,
-    msisdn: digits,
-    localNumber,
-    simLabel: sim.label,
-  };
-}
-
-function interpolate(value: string, sim: CarrierConnectorSimContext) {
-  const variables = interpolationVariables(sim);
-  return value.replace(/\{\{\s*(phoneNumber|e164|msisdn|localNumber|simLabel)\s*\}\}/g, (_match, key: keyof typeof variables) => variables[key]);
-}
-
-function parseRequestHeaders(raw: string, sim: CarrierConnectorSimContext) {
-  if (!raw.trim()) return new Headers();
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error("MyDITO 请求头必须是 JSON 对象，例如 {\"Authorization\":\"Bearer …\"}");
-  }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("MyDITO 请求头必须是 JSON 对象");
-  }
-
-  const headers = new Headers();
-  for (const [name, value] of Object.entries(parsed as Record<string, unknown>)) {
-    const normalizedName = name.trim().toLowerCase();
-    if (!normalizedName || normalizedName.startsWith(":")) continue;
-    if (FORBIDDEN_REQUEST_HEADERS.has(normalizedName)) continue;
-    if (typeof value !== "string") {
-      throw new Error(`MyDITO 请求头 ${name} 必须是字符串`);
-    }
-    headers.set(name, interpolate(value, sim));
-  }
-  return headers;
-}
-
-function readPath(root: unknown, path: string): unknown {
-  const normalized = path
-    .trim()
-    .replace(/^\$\.?/, "")
-    .replace(/\[(\d+)\]/g, ".$1")
-    .replace(/^\./, "");
-  if (!normalized) return root;
-
-  let current: unknown = root;
-  for (const segment of normalized.split(".").filter(Boolean)) {
-    if (Array.isArray(current)) {
-      const index = Number(segment);
-      if (!Number.isInteger(index) || index < 0 || index >= current.length) return undefined;
-      current = current[index];
-      continue;
-    }
-    if (!current || typeof current !== "object") return undefined;
-    current = (current as Record<string, unknown>)[segment];
-  }
-  return current;
-}
-
-function findCandidate(root: unknown, keys: Set<string>): LocatedValue | null {
-  const queue: Array<{ value: unknown; path: string; depth: number }> = [{ value: root, path: "", depth: 0 }];
-  const seen = new Set<object>();
-  let visited = 0;
-
-  while (queue.length && visited < 2500) {
-    const item = queue.shift()!;
-    visited += 1;
-    if (!item.value || typeof item.value !== "object" || item.depth > 12) continue;
-    if (seen.has(item.value as object)) continue;
-    seen.add(item.value as object);
-
-    const entries = Array.isArray(item.value)
-      ? item.value.map((value, index) => [String(index), value] as const)
-      : Object.entries(item.value as Record<string, unknown>);
-
-    for (const [key, value] of entries) {
-      const path = item.path ? `${item.path}.${key}` : key;
-      if (!Array.isArray(item.value) && keys.has(normalizeKey(key))) {
-        return { value, path };
-      }
-      if (value && typeof value === "object") {
-        queue.push({ value, path, depth: item.depth + 1 });
-      }
-    }
+function numberValue(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
 }
 
-function configuredOrCandidate(root: unknown, configuredPath: string, candidates: Set<string>) {
-  if (configuredPath) {
-    const value = readPath(root, configuredPath);
-    if (value === undefined) {
-      throw new Error(`DITO 响应中找不到 JSON 路径：${configuredPath}`);
-    }
-    return { value, path: configuredPath } satisfies LocatedValue;
-  }
-  return findCandidate(root, candidates);
+function credentialFingerprint(password: string) {
+  return createHash("sha256").update(password, "utf8").digest("hex");
 }
 
-function objectField(value: unknown, names: string[]) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  const record = value as Record<string, unknown>;
-  for (const [key, item] of Object.entries(record)) {
-    if (names.includes(normalizeKey(key))) return item;
+function normalizeDitoAccount(phoneNumber: string | null | undefined) {
+  let digits = String(phoneNumber ?? "").replace(/\D/g, "");
+  if (digits.startsWith("63") && digits.length === 12) digits = digits.slice(2);
+  if (digits.startsWith("0") && digits.length === 11) digits = digits.slice(1);
+  if (!/^9\d{9}$/.test(digits)) {
+    throw new Error("关联 SIM 缺少有效的菲律宾 DITO 手机号；请先在号码管理中填写 09xx xxx xxxx 或 +63 9xx xxx xxxx");
   }
-  return undefined;
+  return digits;
 }
 
-function parseBalance(value: unknown): number | null {
-  let candidate = value;
-  if (candidate && typeof candidate === "object") {
-    candidate = objectField(candidate, ["amount", "value", "balance", "loadbalance"]);
+function assertDitoSim(sim: CarrierConnectorSimContext) {
+  if (sim.countryCode.toUpperCase() !== "PH") {
+    throw new Error("DITO MyDITO 只能同步菲律宾号码");
   }
-  if (candidate === null || candidate === undefined || candidate === "") return null;
-  if (typeof candidate === "number") {
-    return Number.isFinite(candidate) && candidate >= 0 ? candidate : null;
+  if (!sim.carrierName.toLowerCase().includes("dito")) {
+    throw new Error("关联号码的运营商不是 DITO");
   }
-  if (typeof candidate !== "string") return null;
-  const cleaned = candidate.replace(/,/g, "").replace(/[^0-9.+-]/g, "");
-  const parsed = Number(cleaned);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
-function parseCurrency(value: unknown): string | null {
-  let candidate = value;
-  if (candidate && typeof candidate === "object") {
-    candidate = objectField(candidate, ["currency", "currencycode", "ccy"]);
+function encryptPassword(password: string) {
+  const cipher = createCipheriv("aes-128-cbc", PASSWORD_KEY, PASSWORD_IV);
+  cipher.setAutoPadding(true);
+  return cipher.update(password, "utf8", "base64") + cipher.final("base64");
+}
+
+function cleanPostBody(body: JsonObject) {
+  return JSON.stringify(body)
+    .replace(/[^a-zA-Z\d]/g, "")
+    .replace(/null/g, "");
+}
+
+function signedPath(path: string) {
+  if (!path.startsWith(`${ECARE_WEB_PREFIX}/`)) {
+    throw new Error("MyDITO 请求路径不受支持");
   }
-  if (typeof candidate !== "string") return null;
-  const normalized = candidate.trim().toUpperCase();
-  if (normalized === "₱" || normalized === "PESO" || normalized === "PESOS") return "PHP";
-  return /^[A-Z]{3}$/.test(normalized) ? normalized : null;
+  return path.slice(ECARE_WEB_PREFIX.length);
 }
 
-function parseDate(value: unknown): string | null {
-  if (value === null || value === undefined || value === "") return null;
-  if (typeof value === "number" && Number.isFinite(value)) {
-    const milliseconds = value > 10_000_000_000 ? value : value * 1000;
-    const date = new Date(milliseconds);
-    return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
-  }
-  if (typeof value !== "string") return null;
-  const text = value.trim();
-  const direct = text.match(/^(\d{4}-\d{2}-\d{2})/);
-  if (direct) return direct[1];
-  const parsed = Date.parse(text);
-  if (!Number.isFinite(parsed)) return null;
-  return new Date(parsed).toISOString().slice(0, 10);
-}
-
-function parseAccountStatus(value: unknown): ConnectorAccountStatus {
-  if (typeof value !== "string") return "unknown";
-  const normalized = normalizeKey(value);
-  if (["active", "registered", "enabled", "normal", "ok", "serviceable"].includes(normalized)) return "active";
-  if (["suspended", "suspend", "blocked", "restricted", "barred", "temporarydisconnected"].includes(normalized)) return "suspended";
-  if (["expired", "expiry", "inactive"].includes(normalized)) return "expired";
-  if (["closed", "terminated", "deactivated", "permanentlydisconnected", "disabled"].includes(normalized)) return "closed";
-  return "unknown";
-}
-
-async function requestJson(
-  requestUrl: string,
+function makeSigncode(
+  path: string,
   method: "GET" | "POST",
-  requestBody: string,
-  requestHeadersJson: string,
-  sim: CarrierConnectorSimContext,
+  body: JsonObject | undefined,
+  authToken: string,
 ) {
-  const url = validateDitoUrl(interpolate(requestUrl, sim));
-  const headers = parseRequestHeaders(requestHeadersJson, sim);
-  if (!headers.has("Accept")) headers.set("Accept", "application/json, text/plain, */*");
-  if (!headers.has("User-Agent")) headers.set("User-Agent", "SIMKeeper/DITO-connector");
+  const relative = signedPath(path);
+  const bodyPart = method === "POST" ? cleanPostBody(body ?? {}) : "";
+  const raw = `/${relative.replace(/^\//, "")}${bodyPart}${authToken}${SIGN_SUFFIX}`;
+  return createHash("sha256").update(raw, "utf8").digest("hex");
+}
 
-  const body = method === "POST" && requestBody ? interpolate(requestBody, sim) : undefined;
-  if (body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+function cookieHeader(cookies: CookieJar) {
+  return Array.from(cookies.entries())
+    .map(([name, value]) => `${name}=${value}`)
+    .join("; ");
+}
+
+function splitFallbackSetCookie(value: string) {
+  return value.split(/,(?=\s*[^;,\s]+=)/g).map((item) => item.trim()).filter(Boolean);
+}
+
+function rememberResponseCookies(headers: Headers, cookies: CookieJar) {
+  const extended = headers as Headers & { getSetCookie?: () => string[] };
+  const setCookies = typeof extended.getSetCookie === "function"
+    ? extended.getSetCookie()
+    : headers.get("set-cookie")
+      ? splitFallbackSetCookie(headers.get("set-cookie") as string)
+      : [];
+
+  for (const header of setCookies) {
+    const pair = header.split(";", 1)[0] ?? "";
+    const separator = pair.indexOf("=");
+    if (separator <= 0) continue;
+    const name = pair.slice(0, separator).trim();
+    const value = pair.slice(separator + 1).trim();
+    if (!name) continue;
+    if (!value) cookies.delete(name);
+    else cookies.set(name, value);
+  }
+}
+
+function safeRemoteMessage(payload: unknown) {
+  const root = objectValue(payload);
+  for (const key of ["errorMsg", "message", "description", "errorCode", "oriCode", "code"]) {
+    const value = root[key];
+    if (typeof value === "string" && value.trim()) return value.trim().slice(0, 300);
+    if (typeof value === "number") return String(value);
+  }
+  return "MyDITO 返回了错误响应";
+}
+
+async function requestMyDito(path: string, options: RequestOptions) {
+  const method = options.method ?? "GET";
+  const authToken = options.authToken ?? "";
+  const timestamp = String(Date.now());
+  const signcode = makeSigncode(path, method, options.body, authToken);
+  const headers: Record<string, string> = {
+    Accept: "application/json, text/plain, */*",
+    appversion: "",
+    "device-id": "",
+    "device-type": "web",
+    "Auth-Token": authToken,
+    authtoken: authToken,
+    "X-CSRF-TOKEN": authToken,
+    signcode,
+    timestamp,
+    Referer: `${MYDITO_ORIGIN}/`,
+  };
+
+  const cookies = cookieHeader(options.cookies);
+  if (cookies) headers.Cookie = cookies;
+  if (method === "POST") {
+    headers["Content-Type"] = "application/json";
+    headers.Origin = MYDITO_ORIGIN;
+  }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await fetch(`${MYDITO_ORIGIN}${path}`, {
       method,
       headers,
-      body,
+      body: method === "POST" ? JSON.stringify(options.body ?? {}) : undefined,
       redirect: "manual",
       cache: "no-store",
       signal: controller.signal,
     });
   } catch (error) {
-    if (controller.signal.aborted) throw new Error("MyDITO 请求超时");
-    throw new Error(error instanceof Error ? `MyDITO 请求失败：${error.message}` : "MyDITO 请求失败");
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("连接 MyDITO 超时，请稍后重试");
+    }
+    throw new Error("无法连接 MyDITO，请检查 SIMKeeper 服务器的网络访问");
   } finally {
-    clearTimeout(timer);
+    clearTimeout(timeout);
   }
+
+  rememberResponseCookies(response.headers, options.cookies);
 
   if (response.status >= 300 && response.status < 400) {
-    throw new Error("MyDITO 接口发生重定向；请在浏览器开发者工具中复制最终的余额请求 URL");
-  }
-  if (response.status === 401 || response.status === 403) {
-    throw new Error("MyDITO 会话已失效或无权限，请重新登录 my.dito.ph 并更新鉴权请求头");
-  }
-  if (!response.ok) {
-    throw new Error(`MyDITO 接口返回 HTTP ${response.status}`);
-  }
-
-  const contentLength = Number(response.headers.get("content-length") || 0);
-  if (Number.isFinite(contentLength) && contentLength > MAX_RESPONSE_BYTES) {
-    throw new Error("MyDITO 响应过大，已拒绝解析");
+    throw new Error("MyDITO 返回了意外跳转，接口可能已经变更");
   }
 
   const text = await response.text();
   if (Buffer.byteLength(text, "utf8") > MAX_RESPONSE_BYTES) {
-    throw new Error("MyDITO 响应过大，已拒绝解析");
+    throw new Error("MyDITO 响应过大，已停止解析");
   }
 
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    throw new Error("MyDITO 返回的不是 JSON；通常表示接口地址不正确或登录会话已失效");
+  let payload: unknown = {};
+  if (text.trim()) {
+    try {
+      payload = JSON.parse(text) as unknown;
+    } catch {
+      throw new Error("MyDITO 返回了无法解析的数据");
+    }
   }
+
+  if (!response.ok) {
+    throw new Error(`MyDITO 请求失败（HTTP ${response.status}）：${safeRemoteMessage(payload)}`);
+  }
+  return payload;
+}
+
+function extractObject(payload: unknown) {
+  const root = objectValue(payload);
+  return isObject(root.data) ? root.data : root;
+}
+
+async function ensurePasswordOnlyLogin(cookies: CookieJar) {
+  const payload = await requestMyDito(`${ECARE_WEB_PREFIX}/common/configParam`, {
+    method: "POST",
+    body: { configCode: "webs.ecare.otp.rule" },
+    cookies,
+  });
+  const config = extractObject(payload);
+  const pwdLogin = stringValue(config.pwdLogin).toUpperCase();
+  if (pwdLogin === "Y") {
+    throw new Error("MyDITO 当前要求密码登录附加短信验证码，自动同步已停止，请先在 MyDITO 完成人工验证后再试");
+  }
+  if (pwdLogin !== "N") {
+    throw new Error("无法确认 MyDITO 当前是否允许免短信验证码的密码登录，为避免触发账户风控，本次未尝试登录");
+  }
+}
+
+function accountStatusFromUserState(value: unknown): ConnectorAccountStatus {
+  const state = stringValue(value).toUpperCase();
+  if (state === "A" || state === "ACTIVE") return "active";
+  if (["S", "SUSPENDED", "BARRED", "B"].includes(state)) return "suspended";
+  if (["E", "EXPIRED"].includes(state)) return "expired";
+  if (["C", "D", "CLOSED", "DEACTIVATED"].includes(state)) return "closed";
+  return "unknown";
+}
+
+function validateReturnedNumber(value: unknown, expectedAccount: string) {
+  const raw = stringValue(value);
+  if (!raw) return;
+  let normalized: string;
+  try {
+    normalized = normalizeDitoAccount(raw);
+  } catch {
+    throw new Error("MyDITO 返回的登录号码格式异常，已停止同步");
+  }
+  if (normalized !== expectedAccount) {
+    throw new Error("MyDITO 登录账户与关联 SIM 不一致，已停止同步");
+  }
+}
+
+async function login(
+  connectorId: number,
+  account: string,
+  password: string,
+  cookies: CookieJar,
+) {
+  const fingerprint = credentialFingerprint(password);
+  if (blockedCredentialFingerprints.get(connectorId) === fingerprint) {
+    throw new Error("需要重新认证：上一次 MyDITO 密码登录失败。请编辑连接并重新填写正确密码后再同步");
+  }
+
+  const payload = await requestMyDito(`${ECARE_WEB_PREFIX}/user/login`, {
+    method: "POST",
+    body: {
+      account,
+      password: encryptPassword(password),
+      channelType: "2",
+      loginType: "1",
+      pwdType: "0",
+    },
+    cookies,
+  });
+  const result = objectValue(payload);
+  if (result.loginSuccess !== true) {
+    blockedCredentialFingerprints.set(connectorId, fingerprint);
+    throw new Error(`需要重新认证：MyDITO 密码登录失败（${safeRemoteMessage(result)}）。SIMKeeper 不会使用同一密码连续重试`);
+  }
+
+  const token = stringValue(result.token) || stringValue(result.loginToken);
+  if (!token) throw new Error("MyDITO 登录成功但未返回 Auth-Token");
+  const userData = objectValue(result.userData);
+  validateReturnedNumber(userData.mobile ?? userData.userName, account);
+  blockedCredentialFingerprints.delete(connectorId);
+
+  return {
+    token,
+    userId: numberValue(userData.userId),
+    subsId: numberValue(userData.subsId),
+    accountStatus: accountStatusFromUserState(userData.state),
+  };
+}
+
+async function discoverAccountId(
+  authToken: string,
+  account: string,
+  userId: number | null,
+  subsId: number | null,
+  cookies: CookieJar,
+) {
+  if (subsId !== null) {
+    try {
+      const payload = await requestMyDito(
+        `${ECARE_WEB_PREFIX}/subs/qrySubsDetail?prodInstIds=${encodeURIComponent(String(subsId))}`,
+        { authToken, cookies },
+      );
+      const detail = extractObject(payload);
+      const accountId = numberValue(detail.defaultAcctId ?? detail.acctId);
+      if (accountId !== null && accountId > 0) return accountId;
+    } catch {
+      // qrySubsDetail is the official web flow. qryUserInfo below is retained
+      // as a conservative fallback because it exposes the same account link.
+    }
+  }
+
+  if (userId !== null) {
+    const payload = await requestMyDito(
+      `${ECARE_WEB_PREFIX}/cust/qryUserInfo/${encodeURIComponent(String(userId))}`,
+      { authToken, cookies },
+    );
+    const info = extractObject(payload);
+    validateReturnedNumber(info.ditoNumber ?? info.name, account);
+    const accountId = numberValue(info.acctId);
+    if (accountId !== null && accountId > 0) return accountId;
+  }
+
+  throw new Error("MyDITO 已登录，但无法自动发现 Account ID；DITO 接口结构可能已经变更");
+}
+
+function parseBalanceValidity(value: unknown) {
+  const raw = stringValue(value);
+  if (!raw) return null;
+  if (/^\d{14}$/.test(raw) || /^\d{8}$/.test(raw)) {
+    const year = raw.slice(0, 4);
+    const month = raw.slice(4, 6);
+    const day = raw.slice(6, 8);
+    const normalized = `${year}-${month}-${day}`;
+    const timestamp = Date.parse(`${normalized}T00:00:00Z`);
+    return Number.isFinite(timestamp) ? normalized : null;
+  }
+  const timestamp = Date.parse(raw);
+  if (!Number.isFinite(timestamp)) return null;
+  return new Date(timestamp).toISOString().slice(0, 10);
+}
+
+function currencyFromBalance(payload: JsonObject) {
+  const symbol = stringValue(payload.currencySymbol);
+  const code = stringValue(payload.currencyCode ?? payload.currency).toUpperCase();
+  if (symbol === "₱" || code === "PHP") return "PHP";
+  return /^[A-Z]{3}$/.test(code) ? code : null;
+}
+
+async function readBalance(
+  authToken: string,
+  accountId: number,
+  cookies: CookieJar,
+  accountStatus: ConnectorAccountStatus,
+): Promise<NormalizedCarrierSyncResult> {
+  const payload = await requestMyDito(
+    `${ECARE_WEB_PREFIX}/account/${encodeURIComponent(String(accountId))}/balance`,
+    { authToken, cookies },
+  );
+  const balanceData = extractObject(payload);
+  const displayBalance = balanceData.displayBalance;
+  const balance = numberValue(displayBalance);
+  if (balance === null || balance < 0) {
+    throw new Error("MyDITO 余额响应缺少有效的 displayBalance");
+  }
+  const currencyCode = currencyFromBalance(balanceData);
+  if (!currencyCode) throw new Error("MyDITO 余额响应缺少可识别的币种");
+
+  return {
+    balance,
+    currencyCode,
+    balanceValidUntil: parseBalanceValidity(balanceData.expDate),
+    accountStatus,
+  };
 }
 
 export const ditoCarrierConnectorProvider: CarrierConnectorProvider = {
   id: "dito",
-  label: "DITO MyDITO（实验）",
-  description: "通过你在 my.dito.ph 已登录会话中的余额 JSON 请求读取数据。DITO 未公开稳定 API，因此需要从浏览器开发者工具复制真实请求 URL 与鉴权请求头；SIMKeeper 不会猜测或硬编码未知私有接口。",
-  configFields: [
-    {
-      key: "requestUrl",
-      label: "余额请求 URL",
-      type: "url",
-      required: true,
-      placeholder: "https://…dito.ph/…",
-      description: "必须是 https://dito.ph 或其子域名。可使用 {{phoneNumber}} / {{msisdn}} / {{localNumber}} 模板。",
-    },
-    {
-      key: "requestMethod",
-      label: "请求方法",
-      type: "select",
-      defaultValue: "GET",
-      options: [
-        { value: "GET", label: "GET" },
-        { value: "POST", label: "POST" },
-      ],
-    },
-    {
-      key: "requestBody",
-      label: "请求 Body",
-      type: "textarea",
-      defaultValue: "",
-      placeholder: "仅 POST 需要；可使用 {{phoneNumber}} / {{msisdn}} / {{localNumber}}",
-      description: "保持为空即可用于 GET；Body 不应包含密码、Cookie 或 Token。",
-    },
-    {
-      key: "balancePath",
-      label: "余额 JSON 路径",
-      type: "text",
-      defaultValue: "",
-      placeholder: "例如 data.balance",
-      description: "可留空让 SIMKeeper 尝试识别常见余额字段；识别失败时再填写。",
-    },
-    {
-      key: "currencyPath",
-      label: "币种 JSON 路径",
-      type: "text",
-      defaultValue: "",
-      placeholder: "例如 data.currencyCode",
-      description: "留空且已识别到余额时默认使用 PHP。",
-    },
-    {
-      key: "balanceValidUntilPath",
-      label: "余额有效期 JSON 路径",
-      type: "text",
-      defaultValue: "",
-      placeholder: "例如 data.balanceValidUntil",
-      description: "该字段只写入“余额有效期”，不会覆盖号码有效期。",
-    },
-    {
-      key: "accountStatusPath",
-      label: "账户状态 JSON 路径",
-      type: "text",
-      defaultValue: "",
-      placeholder: "例如 data.accountStatus",
-    },
-  ],
+  label: "DITO MyDITO",
+  description: "使用关联的菲律宾 DITO 号码和 MyDITO 密码临时登录官方 MyDITO，自动读取 Load Balance 与余额有效期。",
+  minLinkedSims: 1,
+  maxLinkedSims: 1,
+  configFields: [],
   credentialFields: [
     {
-      key: "requestHeadersJson",
-      label: "MyDITO 鉴权请求头（JSON）",
-      required: false,
-      placeholder: "{\"Authorization\":\"Bearer …\",\"Cookie\":\"…\"}",
-      description: "从余额请求中只复制鉴权相关请求头。该 JSON 会在服务端 AES-256-GCM 加密保存，普通 API 不回显；Host、Content-Length 等危险请求头会被忽略。",
+      key: "password",
+      label: "MyDITO 登录密码",
+      required: true,
+      placeholder: "输入 MyDITO 密码",
+      description: "密码使用 SIMKeeper 凭据加密存储；Auth-Token 仅在单次同步内存中使用，不会持久化。",
     },
   ],
-  async disconnect() {
-    return;
-  },
-  async sync(context): Promise<NormalizedCarrierSyncResult> {
-    if (context.sim.countryCode.toUpperCase() !== "PH" || !context.sim.carrierName.toLowerCase().includes("dito")) {
-      throw new Error("DITO Provider 只能关联菲律宾 DITO 号码");
+  async sync({ connectorId, credentials, sim }) {
+    assertDitoSim(sim);
+    const account = normalizeDitoAccount(sim.phoneNumber);
+    const password = stringValue(credentials.password);
+    if (!password) {
+      if (credentials.requestHeadersJson) {
+        throw new Error("此 DITO 连接仍使用 alpha.21 的旧会话凭据，请编辑连接并填写 MyDITO 登录密码");
+      }
+      throw new Error("未保存 MyDITO 登录密码，请编辑连接后重新填写");
     }
+    if (password.length < 6) throw new Error("MyDITO 登录密码格式无效");
 
-    const requestUrl = stringConfig(context.config, "requestUrl");
-    if (!requestUrl) throw new Error("请先填写 MyDITO 余额请求 URL");
-    const requestMethodRaw = stringConfig(context.config, "requestMethod").toUpperCase();
-    const requestMethod: "GET" | "POST" = requestMethodRaw === "POST" ? "POST" : "GET";
-    const requestBody = stringConfig(context.config, "requestBody");
-    const requestHeadersJson = context.credentials.requestHeadersJson || "";
-
-    const payload = await requestJson(
-      requestUrl,
-      requestMethod,
-      requestBody,
-      requestHeadersJson,
-      context.sim,
+    const cookies: CookieJar = new Map();
+    await ensurePasswordOnlyLogin(cookies);
+    const session = await login(connectorId, account, password, cookies);
+    const accountId = await discoverAccountId(
+      session.token,
+      account,
+      session.userId,
+      session.subsId,
+      cookies,
     );
-
-    const balanceLocated = configuredOrCandidate(
-      payload,
-      stringConfig(context.config, "balancePath"),
-      BALANCE_KEYS,
-    );
-    if (!balanceLocated) {
-      throw new Error("未能从 MyDITO 响应中识别余额，请在连接设置中填写“余额 JSON 路径”");
-    }
-    const balance = parseBalance(balanceLocated.value);
-    if (balance === null) {
-      throw new Error(`MyDITO 余额字段无法解析：${balanceLocated.path}`);
-    }
-
-    const currencyLocated = configuredOrCandidate(
-      payload,
-      stringConfig(context.config, "currencyPath"),
-      CURRENCY_KEYS,
-    );
-    const currencyFromBalance = parseCurrency(balanceLocated.value);
-    const currencyCode = parseCurrency(currencyLocated?.value) || currencyFromBalance || "PHP";
-
-    const validityLocated = configuredOrCandidate(
-      payload,
-      stringConfig(context.config, "balanceValidUntilPath"),
-      VALIDITY_KEYS,
-    );
-    const configuredValidityPath = stringConfig(context.config, "balanceValidUntilPath");
-    const balanceValidUntil = validityLocated ? parseDate(validityLocated.value) : null;
-    if (configuredValidityPath && validityLocated && balanceValidUntil === null) {
-      throw new Error(`MyDITO 余额有效期字段无法解析：${validityLocated.path}`);
-    }
-
-    const statusLocated = configuredOrCandidate(
-      payload,
-      stringConfig(context.config, "accountStatusPath"),
-      STATUS_KEYS,
-    );
-
-    return {
-      balance,
-      currencyCode,
-      balanceValidUntil,
-      accountStatus: parseAccountStatus(statusLocated?.value),
-    };
+    return readBalance(session.token, accountId, cookies, session.accountStatus);
   },
 };

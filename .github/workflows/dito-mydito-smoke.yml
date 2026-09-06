@@ -1,0 +1,187 @@
+name: Verify DITO MyDITO Provider
+
+on:
+  workflow_run:
+    workflows:
+      - Build and Publish Docker Image
+    types:
+      - completed
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  dito-mydio-smoke:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull verified SIMKeeper image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="${{ github.event.workflow_run.head_sha }}"
+          short="${sha:0:7}"
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          image="ghcr.io/${owner}/simkeeper:sha-${short}"
+          docker pull "$image"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Verify formal MyDITO metadata, link limits and credential encryption
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          container="simkeeper-dito-mydio-smoke"
+          tmp="$(mktemp -d)"
+          base="http://127.0.0.1:18090"
+          cookies="$tmp/cookies.txt"
+          secret="MYDITO-DUMMY-PASSWORD-7319"
+
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            rm -rf "$tmp" || true
+          }
+          trap cleanup EXIT
+
+          fail() {
+            echo "::error::$1"
+            docker logs "$container" 2>&1 || true
+            exit 1
+          }
+
+          mkdir -p "$tmp/data"
+          docker run -d \
+            --name "$container" \
+            -p 18090:3000 \
+            -e SIMKEEPER_COOKIE_SECURE=false \
+            -e PUID="$(id -u)" \
+            -e PGID="$(id -g)" \
+            -v "$tmp/data:/app/data" \
+            "$IMAGE" >/dev/null || fail "container start failed"
+
+          for _ in $(seq 1 40); do
+            curl -fsS "$base/api/health" >/dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -fsS "$base/api/health" > "$tmp/health.json" || fail "health check failed"
+          [ "$(jq -r '.version' "$tmp/health.json")" = "0.1.0-alpha.22" ] \
+            || fail "health version is not alpha.22"
+
+          curl -fsS -c "$cookies" -o /dev/null \
+            -X POST \
+            --data-urlencode 'username=smokeadmin' \
+            --data-urlencode 'password=smoke-test-123' \
+            --data-urlencode 'confirmPassword=smoke-test-123' \
+            "$base/api/auth/setup" || fail "setup failed"
+
+          curl -fsS -b "$cookies" "$base/api/carrier-connectors" > "$tmp/providers.json" \
+            || fail "provider list failed"
+          [ "$(jq -r '.providers[] | select(.id == "dito") | .label' "$tmp/providers.json")" = "DITO MyDITO" ] \
+            || fail "formal DITO provider label missing"
+          [ "$(jq -r '.providers[] | select(.id == "dito") | .minLinkedSims' "$tmp/providers.json")" = "1" ] \
+            || fail "DITO minimum linked SIM limit missing"
+          [ "$(jq -r '.providers[] | select(.id == "dito") | .maxLinkedSims' "$tmp/providers.json")" = "1" ] \
+            || fail "DITO maximum linked SIM limit missing"
+          [ "$(jq '.providers[] | select(.id == "dito") | .configFields | length' "$tmp/providers.json")" = "0" ] \
+            || fail "legacy DITO request-import fields are still exposed"
+          [ "$(jq '[.providers[] | select(.id == "dito") | .credentialFields[] | select(.key == "password" and .required == true)] | length' "$tmp/providers.json")" = "1" ] \
+            || fail "MyDITO password credential metadata missing"
+
+          curl -fsS -b "$cookies" -H 'Content-Type: application/json' \
+            -d '{"name":"DITO","countryCode":"PH","website":"https://dito.ph","notes":""}' \
+            "$base/api/carriers" > "$tmp/carrier.json" || fail "DITO carrier creation failed"
+          carrier_id="$(jq -r '.carrier.id' "$tmp/carrier.json")"
+
+          create_sim() {
+            label="$1"
+            phone="$2"
+            jq -n \
+              --arg label "$label" \
+              --arg phone "$phone" \
+              --argjson carrierId "$carrier_id" \
+              '{
+                label:$label,phoneNumber:$phone,carrierId:$carrierId,deviceId:null,
+                simType:"esim",iccid:"",balance:null,currencyCode:"PHP",
+                status:"active",activationDate:"",validUntil:"",
+                identityStatus:"unknown",identityName:"",identityDocumentType:"",
+                identityDocumentTypeCustom:"",identityDocumentNumber:"",
+                identityCountryCode:"",identityNotes:"",notes:"",esimProfile:null
+              }' > "$tmp/sim.json"
+            curl -fsS -b "$cookies" -H 'Content-Type: application/json' \
+              --data-binary @"$tmp/sim.json" "$base/api/sims" | jq -r '.sim.id'
+          }
+
+          sim_one="$(create_sim dito-one 09170000001)"
+          sim_two="$(create_sim dito-two 09170000002)"
+
+          jq -n \
+            --arg secret "$secret" \
+            --argjson first "$sim_one" \
+            --argjson second "$sim_two" \
+            '{
+              name:"DITO Limit Check",
+              provider:"dito",
+              syncIntervalMinutes:720,
+              simIds:[$first,$second],
+              providerConfig:{},
+              credentials:{password:$secret}
+            }' > "$tmp/too-many.json"
+
+          code="$(curl -sS -b "$cookies" -o "$tmp/too-many-result.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' \
+            --data-binary @"$tmp/too-many.json" "$base/api/carrier-connectors")"
+          [ "$code" = "400" ] || fail "DITO multi-SIM connector was not rejected"
+          grep -Fq '最多关联 1 张 SIM' "$tmp/too-many-result.json" \
+            || fail "DITO link-limit error message missing"
+
+          jq -n \
+            --arg secret "$secret" \
+            --argjson first "$sim_one" \
+            '{
+              name:"DITO MyDITO Smoke",
+              provider:"dito",
+              syncIntervalMinutes:720,
+              simIds:[$first],
+              providerConfig:{},
+              credentials:{password:$secret}
+            }' > "$tmp/connector.json"
+
+          code="$(curl -sS -b "$cookies" -o "$tmp/connector-result.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' \
+            --data-binary @"$tmp/connector.json" "$base/api/carrier-connectors")"
+          [ "$code" = "201" ] || fail "formal DITO connector creation returned HTTP $code"
+          connector_id="$(jq -r '.connector.id' "$tmp/connector-result.json")"
+          [ "$connector_id" -gt 0 ] || fail "DITO connector id missing"
+          [ "$(jq -r '.connector.providerLabel' "$tmp/connector-result.json")" = "DITO MyDITO" ] \
+            || fail "DITO connector label wrong"
+          [ "$(jq -r '.connector.hasCredentials' "$tmp/connector-result.json")" = "true" ] \
+            || fail "DITO credential summary flag missing"
+          [ "$(jq '.connector.providerConfig | length' "$tmp/connector-result.json")" = "0" ] \
+            || fail "DITO connector retained legacy provider config"
+          ! grep -Fq "$secret" "$tmp/connector-result.json" \
+            || fail "DITO connector response leaked password"
+
+          sync
+          for dbfile in "$tmp/data/simkeeper.db" "$tmp/data/simkeeper.db-wal" "$tmp/data/simkeeper.db-shm"; do
+            [ -f "$dbfile" ] || continue
+            ! grep -aFq "$secret" "$dbfile" || fail "SQLite persisted plaintext MyDITO password"
+          done
+
+          curl -fsS -b "$cookies" "$base/api/backups?export=1" > "$tmp/backup.json" \
+            || fail "backup export failed"
+          [ -n "$(jq -r '.tables.carrier_connectors[] | select(.id == '"$connector_id"') | .credentials_encrypted // empty' "$tmp/backup.json")" ] \
+            || fail "encrypted MyDITO credential missing from backup"
+          ! grep -Fq "$secret" "$tmp/backup.json" \
+            || fail "portable backup stored plaintext MyDITO password"
+
+          echo "DITO MyDITO provider smoke test passed"

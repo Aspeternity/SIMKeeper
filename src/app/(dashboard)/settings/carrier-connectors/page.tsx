@@ -11,6 +11,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  ShieldCheck,
   Trash2,
   X,
 } from "lucide-react";
@@ -90,6 +91,8 @@ type ProviderRecord = {
   description: string;
   configFields: ProviderConfigField[];
   credentialFields: ProviderCredentialField[];
+  minLinkedSims?: number;
+  maxLinkedSims?: number;
 };
 
 type SimRecord = {
@@ -157,7 +160,7 @@ function editorForProvider(provider: ProviderRecord | undefined): EditorState {
     id: null,
     name: providerId === "dito" ? "我的 DITO" : "",
     provider: providerId,
-    syncIntervalMinutes: providerId === "dito" ? 0 : 720,
+    syncIntervalMinutes: providerId === "dito" ? 720 : 720,
     simIds: [],
     config: configValues(provider),
     credentials: {},
@@ -168,6 +171,18 @@ function editorForProvider(provider: ProviderRecord | undefined): EditorState {
 function providerSupportsSim(providerId: string, sim: SimRecord) {
   if (providerId !== "dito") return true;
   return sim.countryCode.toUpperCase() === "PH" && sim.carrierName.toLowerCase().includes("dito");
+}
+
+function connectorIsLegacyDito(connector: ConnectorRecord | undefined) {
+  return Boolean(
+    connector
+    && connector.provider === "dito"
+    && Object.keys(connector.providerConfig ?? {}).length > 0,
+  );
+}
+
+function connectorNeedsReauth(connector: ConnectorRecord) {
+  return Boolean(connector.lastError?.startsWith("需要重新认证"));
 }
 
 export default function CarrierConnectorsPage() {
@@ -222,6 +237,16 @@ export default function CarrierConnectorsPage() {
   const editingConnector = editor?.id
     ? connectors.find((connector) => connector.id === editor.id)
     : undefined;
+  const editingLegacyDito = connectorIsLegacyDito(editingConnector);
+
+  const selectableSims = useMemo(() => {
+    if (!editor) return [];
+    return sims.filter((sim) => {
+      if (!providerSupportsSim(editor.provider, sim)) return false;
+      const assigned = assignedBySim.get(sim.id);
+      return !assigned || assigned === editor.id;
+    });
+  }, [assignedBySim, editor, sims]);
 
   function openCreate() {
     const preferred = providers.find((provider) => provider.id === "dito") || providers[0];
@@ -252,11 +277,11 @@ export default function CarrierConnectorsPage() {
       ...current,
       provider: providerId,
       name: current.name || (providerId === "dito" ? "我的 DITO" : ""),
-      syncIntervalMinutes: providerId === "dito" ? 0 : current.syncIntervalMinutes,
+      syncIntervalMinutes: providerId === "dito" ? 720 : current.syncIntervalMinutes,
       simIds: current.simIds.filter((id) => {
         const sim = sims.find((item) => item.id === id);
         return sim ? providerSupportsSim(providerId, sim) : false;
-      }),
+      }).slice(0, provider?.maxLinkedSims ?? Number.POSITIVE_INFINITY),
       config: configValues(provider),
       credentials: {},
       clearCredentials: false,
@@ -266,12 +291,17 @@ export default function CarrierConnectorsPage() {
   function toggleSim(id: number) {
     setEditor((current) => {
       if (!current) return current;
-      return {
-        ...current,
-        simIds: current.simIds.includes(id)
-          ? current.simIds.filter((simId) => simId !== id)
-          : [...current.simIds, id],
-      };
+      const provider = providers.find((item) => item.id === current.provider);
+      if (current.simIds.includes(id)) {
+        return { ...current, simIds: current.simIds.filter((simId) => simId !== id) };
+      }
+      if (provider?.maxLinkedSims === 1) {
+        return { ...current, simIds: [id] };
+      }
+      if (provider?.maxLinkedSims !== undefined && current.simIds.length >= provider.maxLinkedSims) {
+        return current;
+      }
+      return { ...current, simIds: [...current.simIds, id] };
     });
   }
 
@@ -329,10 +359,14 @@ export default function CarrierConnectorsPage() {
           providerConfig.currencyCode = currency;
         }
       }
-      if (editor.provider === "dito") {
-        const requestUrl = String(providerConfig.requestUrl || "");
-        if (!requestUrl.startsWith("https://")) throw new Error("DITO 请求 URL 必须使用 HTTPS");
-        if (!editor.simIds.length) throw new Error("DITO 连接至少需要关联一张 DITO 号码");
+
+      const minLinked = currentProvider.minLinkedSims ?? 0;
+      const maxLinked = currentProvider.maxLinkedSims;
+      if (editor.simIds.length < minLinked) {
+        throw new Error(`${currentProvider.label} 至少需要关联 ${minLinked} 张 SIM`);
+      }
+      if (maxLinked !== undefined && editor.simIds.length > maxLinked) {
+        throw new Error(`${currentProvider.label} 每个连接最多关联 ${maxLinked} 张 SIM`);
       }
 
       const credentials = Object.fromEntries(
@@ -340,8 +374,13 @@ export default function CarrierConnectorsPage() {
           .map(([key, value]) => [key, value.trim()] as const)
           .filter(([, value]) => Boolean(value)),
       );
+      const storedCredentialsUsable = Boolean(
+        editingConnector?.hasCredentials
+        && !editor.clearCredentials
+        && !(editor.provider === "dito" && editingLegacyDito),
+      );
       for (const field of currentProvider.credentialFields ?? []) {
-        if (field.required && !editingConnector?.hasCredentials && !credentials[field.key]) {
+        if (field.required && !storedCredentialsUsable && !credentials[field.key]) {
           throw new Error(`请填写${field.label}`);
         }
       }
@@ -367,8 +406,15 @@ export default function CarrierConnectorsPage() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "保存运营商连接失败");
+      const wasLegacyMigration = editingLegacyDito;
       setEditor(null);
-      setNotice(editor.id ? "运营商连接已更新。" : "运营商连接已创建，可以执行首次同步。");
+      setNotice(
+        wasLegacyMigration
+          ? "DITO 连接已迁移到 alpha.22 自动登录模式，请执行一次立即同步验证。"
+          : editor.id
+            ? "运营商连接已更新。"
+            : "运营商连接已创建，可以执行首次同步。",
+      );
       await loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "保存运营商连接失败");
@@ -475,13 +521,13 @@ export default function CarrierConnectorsPage() {
         <div>
           <div className="flex items-center gap-2 text-sm font-medium text-slate-500"><Cable className="h-4 w-4" />自动数据源</div>
           <h2 className="mt-2 text-2xl font-semibold tracking-tight">运营商连接</h2>
-          <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-500">一个连接可以关联多张 SIM。自动数据保存在独立快照中，不覆盖号码里手工维护的余额和号码有效期。</p>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-500">连接会把运营商自动数据保存为独立快照，不覆盖号码里手工维护的余额和号码有效期。每个 Provider 可以定义自己的关联数量和认证方式。</p>
         </div>
         <button type="button" onClick={openCreate} disabled={!providers.length && loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"><Plus className="h-4 w-4" />添加连接</button>
       </div>
 
       <div className="rounded-2xl border border-indigo-100 bg-indigo-50/60 px-4 py-3 text-sm leading-6 text-indigo-800">
-        <span className="font-medium">alpha.21：</span>已加入首个真实运营商适配器 <span className="font-medium">DITO MyDITO（实验）</span>。由于 DITO 没有公开稳定的账户余额 API，当前采用“导入已登录 MyDITO 余额请求”的方式，不硬编码猜测的私有接口；会话失效时只需要更新加密请求头。
+        <span className="font-medium">alpha.22：</span><span className="font-medium">DITO MyDITO</span> 已升级为正式自动同步。SIMKeeper 使用关联号码与加密保存的 MyDITO 密码，在每次同步时临时登录官方 MyDITO，自动发现 Account ID 并读取 Load Balance；Auth-Token 不会持久化。
       </div>
 
       {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
@@ -493,134 +539,194 @@ export default function CarrierConnectorsPage() {
         <Card className="flex min-h-64 flex-col items-center justify-center p-8 text-center">
           <Cable className="h-7 w-7 text-slate-300" />
           <div className="mt-3 text-sm font-medium text-slate-700">还没有运营商连接</div>
-          <p className="mt-1 max-w-xl text-xs leading-5 text-slate-400">如果你使用 DITO，可以直接添加“DITO MyDITO（实验）”；也可以继续用模拟数据源验证同步流程。</p>
+          <p className="mt-1 max-w-xl text-xs leading-5 text-slate-400">如果你使用菲律宾 DITO，可以直接添加“DITO MyDITO”，关联一个 DITO 号码并保存 MyDITO 密码；也可以继续用模拟数据源验证同步流程。</p>
         </Card>
       ) : (
         <div className="space-y-4">
-          {connectors.map((connector) => (
-            <Card key={connector.id} className="overflow-hidden">
-              <div className="flex flex-col gap-4 border-b p-5 lg:flex-row lg:items-start lg:justify-between">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="font-semibold text-slate-900">{connector.name}</h3>
-                    <span className={`rounded-md px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ${connector.status === "error" ? "bg-rose-50 text-rose-700 ring-rose-100" : connector.lastSuccessAt ? "bg-emerald-50 text-emerald-700 ring-emerald-100" : "bg-slate-100 text-slate-600 ring-slate-200"}`}>
-                      {connector.status === "error" ? "同步失败" : connector.lastSuccessAt ? "已连接" : "等待首次同步"}
-                    </span>
-                    {connector.provider === "dito" ? <span className="rounded-md bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700">实验 Provider</span> : null}
-                    {connector.stale && connector.lastSuccessAt ? <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">数据已过期</span> : null}
+          {connectors.map((connector) => {
+            const legacyDito = connectorIsLegacyDito(connector);
+            const needsReauth = connectorNeedsReauth(connector);
+            return (
+              <Card key={connector.id} className="overflow-hidden">
+                <div className="flex flex-col gap-4 border-b p-5 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="font-semibold text-slate-900">{connector.name}</h3>
+                      <span className={`rounded-md px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ${connector.status === "error" ? "bg-rose-50 text-rose-700 ring-rose-100" : connector.lastSuccessAt ? "bg-emerald-50 text-emerald-700 ring-emerald-100" : "bg-slate-100 text-slate-600 ring-slate-200"}`}>
+                        {connector.status === "error" ? "同步失败" : connector.lastSuccessAt ? "已连接" : "等待首次同步"}
+                      </span>
+                      {connector.provider === "dito" ? <span className="rounded-md bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700">MyDITO 自动登录</span> : null}
+                      {legacyDito ? <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">需要迁移凭据</span> : null}
+                      {needsReauth ? <span className="rounded-md bg-rose-50 px-2 py-0.5 text-[11px] font-medium text-rose-700">需要重新认证</span> : null}
+                      {connector.stale && connector.lastSuccessAt ? <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">数据已过期</span> : null}
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">
+                      <span>{connector.providerLabel}</span>
+                      <span>{getConnectorSyncIntervalLabel(connector.syncIntervalMinutes)}</span>
+                      <span>{connector.linkedSims.length} 个号码</span>
+                      <span>{connector.hasCredentials ? "凭据已加密保存" : "未保存凭据"}</span>
+                    </div>
+                    <div className="mt-2 flex items-center gap-1.5 text-xs text-slate-400"><Clock3 className="h-3.5 w-3.5" />最后成功：{formatDateTime(connector.lastSuccessAt)}{connector.nextSyncAt ? ` · 下次计划：${formatDateTime(connector.nextSyncAt)}` : ""}</div>
+                    {legacyDito ? <div className="mt-3 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">这是 alpha.21 的旧 DITO 会话导入连接。编辑连接并重新填写一次 MyDITO 密码，即可迁移到 alpha.22 自动登录模式。</div> : null}
+                    {connector.lastError ? <div className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-700">{connector.lastError}</div> : null}
                   </div>
-                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">
-                    <span>{connector.providerLabel}</span>
-                    <span>{getConnectorSyncIntervalLabel(connector.syncIntervalMinutes)}</span>
-                    <span>{connector.linkedSims.length} 个号码</span>
-                    <span>{connector.hasCredentials ? "凭据已加密保存" : "未保存凭据"}</span>
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    <button type="button" title={legacyDito ? "请先编辑并迁移旧 DITO 凭据" : undefined} onClick={() => void syncConnector(connector)} disabled={Boolean(busy) || !connector.linkedSims.length || legacyDito} className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">{busy === `sync:${connector.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}立即同步</button>
+                    <button type="button" onClick={() => openEdit(connector)} disabled={Boolean(busy)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"><Pencil className="h-3.5 w-3.5" />编辑</button>
+                    <button type="button" onClick={() => void deleteConnector(connector)} disabled={Boolean(busy)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-rose-100 px-3 text-xs font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-50">{busy === `delete:${connector.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}删除</button>
                   </div>
-                  <div className="mt-2 flex items-center gap-1.5 text-xs text-slate-400"><Clock3 className="h-3.5 w-3.5" />最后成功：{formatDateTime(connector.lastSuccessAt)}{connector.nextSyncAt ? ` · 下次计划：${formatDateTime(connector.nextSyncAt)}` : ""}</div>
-                  {connector.lastError ? <div className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-700">{connector.lastError}</div> : null}
                 </div>
-                <div className="flex shrink-0 flex-wrap gap-2">
-                  <button type="button" onClick={() => void syncConnector(connector)} disabled={Boolean(busy) || !connector.linkedSims.length} className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">{busy === `sync:${connector.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}立即同步</button>
-                  <button type="button" onClick={() => openEdit(connector)} disabled={Boolean(busy)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"><Pencil className="h-3.5 w-3.5" />编辑</button>
-                  <button type="button" onClick={() => void deleteConnector(connector)} disabled={Boolean(busy)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-rose-200 px-3 text-xs font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-50"><Trash2 className="h-3.5 w-3.5" />删除</button>
-                </div>
-              </div>
 
-              <div className="divide-y divide-slate-100">
-                {connector.linkedSims.length ? connector.linkedSims.map((sim) => (
-                  <div key={sim.id} className="grid gap-3 px-5 py-4 md:grid-cols-[minmax(0,1.4fr)_1fr_1fr_1fr_auto] md:items-center">
-                    <div className="min-w-0"><div className="truncate text-sm font-medium text-slate-700">{sim.label}</div><div className="mt-0.5 truncate text-[11px] text-slate-400">{sim.phoneNumber || "未记录号码"} · {sim.carrierName}</div></div>
-                    <div><div className="text-[10px] text-slate-400">自动余额</div><div className="mt-0.5 text-xs font-medium text-slate-700">{formatBalance(sim.latestSnapshot)}</div></div>
-                    <div><div className="text-[10px] text-slate-400">余额有效期</div><div className="mt-0.5 text-xs font-medium text-slate-700">{sim.latestSnapshot?.balanceValidUntil || "未知"}</div></div>
-                    <div><div className="text-[10px] text-slate-400">账户状态</div><div className="mt-0.5 text-xs font-medium text-slate-700">{getConnectorAccountStatusLabel(sim.latestSnapshot?.accountStatus)}</div></div>
-                    <div className="text-right text-[11px] text-slate-400">{sim.latestSnapshot ? (sim.latestSnapshot.stale ? "已过期" : formatDateTime(sim.latestSnapshot.syncedAt)) : "尚未同步"}</div>
-                  </div>
-                )) : <div className="px-5 py-7 text-center text-xs text-slate-400">当前没有关联号码。</div>}
-              </div>
-            </Card>
-          ))}
+                <div className="grid gap-3 p-5 md:grid-cols-2 xl:grid-cols-3">
+                  {connector.linkedSims.length ? connector.linkedSims.map((sim) => {
+                    const snapshot = sim.latestSnapshot;
+                    return (
+                      <div key={sim.id} className="rounded-xl border border-slate-100 bg-slate-50/70 p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-medium text-slate-800">{sim.label}</div>
+                            <div className="mt-0.5 text-xs text-slate-400">{sim.phoneNumber || "未填写号码"} · {sim.carrierName}</div>
+                          </div>
+                          {snapshot && !snapshot.stale ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" /> : <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />}
+                        </div>
+                        <div className="mt-4 grid grid-cols-2 gap-3 text-xs">
+                          <div><div className="text-slate-400">自动余额</div><div className="mt-1 font-medium text-slate-700">{formatBalance(snapshot)}</div></div>
+                          <div><div className="text-slate-400">余额有效期</div><div className="mt-1 font-medium text-slate-700">{snapshot?.balanceValidUntil || "未知"}</div></div>
+                          <div><div className="text-slate-400">账户状态</div><div className="mt-1 font-medium text-slate-700">{getConnectorAccountStatusLabel(snapshot?.accountStatus)}</div></div>
+                          <div><div className="text-slate-400">同步时间</div><div className="mt-1 font-medium text-slate-700">{snapshot ? formatDateTime(snapshot.syncedAt) : "尚未同步"}</div></div>
+                        </div>
+                      </div>
+                    );
+                  }) : <div className="text-xs text-slate-400">当前没有关联号码。</div>}
+                </div>
+              </Card>
+            );
+          })}
         </div>
       )}
 
-      {editor ? (
+      {editor && currentProvider ? (
         <ModalPortal onBackdropClick={() => !busy && setEditor(null)}>
-          <Card className="flex w-full max-w-4xl flex-col overflow-hidden shadow-2xl sm:max-h-[calc(100dvh-2rem)]">
+          <div className="my-4 w-full max-w-3xl overflow-hidden rounded-2xl bg-white shadow-2xl">
             <div className="flex items-start justify-between border-b px-5 py-4">
-              <div><div className="text-sm font-medium text-slate-500">运营商连接</div><h3 className="mt-1 text-lg font-semibold">{editor.id ? "编辑连接" : "添加连接"}</h3></div>
-              <button type="button" onClick={() => setEditor(null)} disabled={Boolean(busy)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100"><X className="h-4 w-4" /></button>
+              <div>
+                <div className="text-sm font-semibold text-slate-900">{editor.id ? "编辑运营商连接" : "添加运营商连接"}</div>
+                <div className="mt-1 text-xs leading-5 text-slate-400">{currentProvider.description}</div>
+              </div>
+              <button type="button" onClick={() => setEditor(null)} disabled={Boolean(busy)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><X className="h-4 w-4" /></button>
             </div>
 
-            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5">
+            <div className="max-h-[75dvh] space-y-5 overflow-y-auto p-5">
               <div className="grid gap-4 sm:grid-cols-2">
-                <label className="space-y-1.5"><span className="text-xs font-medium text-slate-600">连接名称</span><Input value={editor.name} onChange={(event) => setEditor({ ...editor, name: event.target.value })} placeholder="例如：我的 DITO" /></label>
-                <label className="space-y-1.5"><span className="text-xs font-medium text-slate-600">Provider</span><select value={editor.provider} disabled={Boolean(editor.id)} onChange={(event) => changeProvider(event.target.value)} className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none disabled:bg-slate-50">{providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}</select><div className="text-[11px] leading-5 text-slate-400">{currentProvider?.description}</div></label>
-                <label className="space-y-1.5"><span className="text-xs font-medium text-slate-600">同步频率</span><select value={editor.syncIntervalMinutes} onChange={(event) => setEditor({ ...editor, syncIntervalMinutes: Number(event.target.value) })} className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none">{CONNECTOR_SYNC_INTERVAL_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+                <label className="space-y-1.5">
+                  <span className="text-xs font-medium text-slate-600">连接名称 *</span>
+                  <Input value={editor.name} onChange={(event) => setEditor((current) => current ? { ...current, name: event.target.value } : current)} placeholder="例如：我的 DITO" />
+                </label>
+                <label className="space-y-1.5">
+                  <span className="text-xs font-medium text-slate-600">Provider *</span>
+                  <select value={editor.provider} disabled={Boolean(editor.id)} onChange={(event) => changeProvider(event.target.value)} className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none disabled:bg-slate-50 disabled:text-slate-400">
+                    {providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}
+                  </select>
+                  {editor.id ? <div className="text-[11px] text-slate-400">已创建的连接不能切换 Provider。</div> : null}
+                </label>
+                <label className="space-y-1.5 sm:col-span-2">
+                  <span className="text-xs font-medium text-slate-600">同步频率</span>
+                  <select value={editor.syncIntervalMinutes} onChange={(event) => setEditor((current) => current ? { ...current, syncIntervalMinutes: Number(event.target.value) } : current)} className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none">
+                    {CONNECTOR_SYNC_INTERVAL_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
+                </label>
               </div>
 
               {editor.provider === "dito" ? (
-                <div className="rounded-2xl border border-indigo-100 bg-indigo-50/50 p-4 text-xs leading-5 text-indigo-900">
-                  <div className="font-medium">如何获取 MyDITO 请求信息</div>
-                  <ol className="mt-2 list-decimal space-y-1 pl-4 text-indigo-800">
-                    <li>在浏览器打开 <span className="font-medium">my.dito.ph</span> 并正常登录。</li>
-                    <li>按 F12 打开开发者工具 → Network，刷新账户首页，找到返回实时 Load Balance 的 JSON 请求。</li>
-                    <li>把该请求的最终 Request URL 填入下方；鉴权相关 Header（例如 Authorization / Cookie / x-*）整理成 JSON，填入“鉴权请求头”。</li>
-                    <li>首次先保持 JSON 路径为空并点“立即同步”；如果自动识别失败，再按实际响应填写类似 <span className="font-mono">data.balance</span> 的路径。</li>
-                  </ol>
-                  <div className="mt-2 text-[11px] text-indigo-700">不要把密码或 OTP 填入配置。会话 Token / Cookie 只放在加密凭据字段中；SIMKeeper 只允许该 Provider 访问 HTTPS 的 dito.ph 官方域名，并禁止跟随重定向。</div>
-                </div>
-              ) : null}
-
-              {(currentProvider?.configFields?.length ?? 0) > 0 ? (
-                <div className="rounded-2xl border border-slate-200 p-4">
-                  <div className="text-sm font-medium text-slate-800">Provider 配置</div>
-                  <p className="mt-1 text-xs leading-5 text-slate-400">非敏感请求参数会随连接保存；密码、Token、Cookie 等请只放在下面的加密凭据区。</p>
-                  <div className="mt-4 grid gap-4 sm:grid-cols-2">{currentProvider?.configFields.map(renderConfigField)}</div>
-                </div>
-              ) : null}
-
-              {(currentProvider?.credentialFields?.length ?? 0) > 0 ? (
-                <div className="rounded-2xl border border-amber-100 bg-amber-50/40 p-4">
-                  <div className="flex items-center gap-2 text-sm font-medium text-slate-800"><KeyRound className="h-4 w-4 text-amber-600" />加密凭据</div>
-                  <p className="mt-1 text-xs leading-5 text-slate-400">仅在服务端同步时解密；普通 API、号码列表和连接列表都不会返回明文。</p>
-                  <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                    {currentProvider?.credentialFields.map((field) => (
-                      <label key={field.key} className="space-y-1.5 sm:col-span-2">
-                        <span className="text-xs font-medium text-slate-600">{field.label}{field.required ? " *" : ""}</span>
-                        <Input type="password" value={editor.credentials[field.key] || ""} onChange={(event) => setCredential(field.key, event.target.value)} placeholder={editor.id && editingConnector?.hasCredentials ? "留空保持现有加密凭据" : field.placeholder || "可选"} autoComplete="new-password" />
-                        {field.description ? <div className="text-[11px] leading-5 text-slate-400">{field.description}</div> : null}
-                      </label>
-                    ))}
+                <div className="rounded-2xl border border-indigo-100 bg-indigo-50/60 p-4 text-xs leading-5 text-indigo-900">
+                  <div className="flex items-center gap-2 font-semibold"><ShieldCheck className="h-4 w-4" />DITO MyDITO 自动登录</div>
+                  <div className="mt-2 space-y-1.5 text-indigo-800/90">
+                    <p>登录号码直接取自下方关联的 DITO SIM，不需要重复填写 Account ID、User ID 或接口地址。</p>
+                    <p>每次同步都会使用 MyDITO 密码临时登录，自动获取订阅信息与 Account ID，然后读取 Load Balance。Auth-Token 只存在于本次同步内存中。</p>
+                    <p>如果 DITO 日后把密码登录改为强制短信验证码，SIMKeeper 会在登录前停止自动同步，不会绕过 OTP。</p>
                   </div>
-                  {editor.id && editingConnector?.hasCredentials ? <label className="mt-3 flex items-center gap-2 text-[11px] text-slate-500"><input type="checkbox" checked={editor.clearCredentials} onChange={(event) => setEditor({ ...editor, clearCredentials: event.target.checked, credentials: event.target.checked ? {} : editor.credentials })} />清除当前已保存的全部连接凭据</label> : null}
+                  {editingLegacyDito ? <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800">检测到 alpha.21 旧会话导入配置。本次保存会清除旧 Request URL / Header 配置；请重新填写 MyDITO 密码完成一次性迁移。</div> : null}
                 </div>
               ) : null}
 
-              <div className="rounded-2xl border border-slate-200 p-4">
-                <div className="text-sm font-medium text-slate-800">关联号码</div>
-                <p className="mt-1 text-xs leading-5 text-slate-400">一个连接可以关联多张 SIM；一张 SIM 同一时间只允许一个自动数据源。DITO Provider 只允许选择菲律宾 DITO 号码。</p>
-                <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                  {sims.length ? sims.map((sim) => {
-                    const assigned = assignedBySim.get(sim.id);
-                    const occupied = assigned !== undefined && assigned !== editor.id;
-                    const unsupported = !providerSupportsSim(editor.provider, sim);
-                    const disabled = occupied || unsupported;
-                    return (
-                      <label key={sim.id} className={`flex items-start gap-3 rounded-xl border px-3 py-3 ${disabled ? "cursor-not-allowed bg-slate-50 opacity-60" : "cursor-pointer hover:bg-slate-50"}`}>
-                        <input type="checkbox" checked={editor.simIds.includes(sim.id)} disabled={disabled} onChange={() => toggleSim(sim.id)} className="mt-0.5" />
-                        <span className="min-w-0"><span className="block truncate text-sm font-medium text-slate-700">{sim.label}</span><span className="mt-0.5 block truncate text-[11px] text-slate-400">{sim.phoneNumber || "未记录号码"} · {sim.carrierName}{occupied ? " · 已关联其他连接" : unsupported ? " · 不适用于当前 Provider" : ""}</span></span>
-                      </label>
-                    );
-                  }) : <div className="col-span-full py-4 text-center text-xs text-slate-400">还没有可关联的号码。</div>}
+              {currentProvider.configFields.length ? (
+                <section className="space-y-3">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-800">Provider 配置</div>
+                    <div className="mt-0.5 text-xs text-slate-400">这些字段决定 Provider 如何读取运营商数据。</div>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2">{currentProvider.configFields.map(renderConfigField)}</div>
+                </section>
+              ) : null}
+
+              {currentProvider.credentialFields.length ? (
+                <section className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <KeyRound className="h-4 w-4 text-slate-400" />
+                    <div>
+                      <div className="text-sm font-semibold text-slate-800">认证凭据</div>
+                      <div className="mt-0.5 text-xs text-slate-400">凭据使用 SIMKeeper 的 AES-256-GCM 凭据存储加密保存，列表和 API 不回显明文。</div>
+                    </div>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    {currentProvider.credentialFields.map((field) => {
+                      const hasReusableStored = Boolean(editingConnector?.hasCredentials && !editingLegacyDito && !editor.clearCredentials);
+                      return (
+                        <label key={field.key} className="space-y-1.5 sm:col-span-2">
+                          <span className="text-xs font-medium text-slate-600">{field.label}{field.required ? " *" : ""}</span>
+                          <Input
+                            type="password"
+                            autoComplete="new-password"
+                            value={editor.credentials[field.key] || ""}
+                            onChange={(event) => setCredential(field.key, event.target.value)}
+                            placeholder={hasReusableStored ? "留空则保留当前已加密保存的凭据" : field.placeholder}
+                          />
+                          {field.description ? <div className="text-[11px] leading-5 text-slate-400">{field.description}</div> : null}
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {editingConnector?.hasCredentials && editor.provider !== "dito" ? (
+                    <label className="flex items-center gap-2 text-xs text-slate-500"><input type="checkbox" checked={editor.clearCredentials} onChange={(event) => setEditor((current) => current ? { ...current, clearCredentials: event.target.checked, credentials: event.target.checked ? {} : current.credentials } : current)} />清除当前已保存凭据</label>
+                  ) : null}
+                </section>
+              ) : null}
+
+              <section className="space-y-3">
+                <div>
+                  <div className="text-sm font-semibold text-slate-800">关联号码</div>
+                  <div className="mt-0.5 text-xs leading-5 text-slate-400">
+                    {currentProvider.maxLinkedSims === 1
+                      ? `${currentProvider.label} 每个连接必须且只能关联 1 张 SIM；选择另一张会自动替换当前选择。`
+                      : "每张 SIM 同一时间只能属于一个自动运营商连接。"}
+                  </div>
                 </div>
-              </div>
-
-              <div className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-2.5 text-xs leading-5 text-amber-800"><AlertTriangle className="mr-1 inline h-3.5 w-3.5" />自动同步值始终保存在独立快照中。即使 MyDITO 返回余额有效期，也不会覆盖号码管理里的“号码有效期”。</div>
+                {editor.provider === "dito" && !selectableSims.length ? (
+                  <div className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">没有可关联的菲律宾 DITO SIM。请先在号码管理中把运营商设为 DITO、国家/地区设为菲律宾，并填写手机号。</div>
+                ) : null}
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {selectableSims.map((sim) => {
+                    const selected = editor.simIds.includes(sim.id);
+                    return (
+                      <button key={sim.id} type="button" onClick={() => toggleSim(sim.id)} className={`flex items-center justify-between rounded-xl border px-3 py-3 text-left transition ${selected ? "border-slate-900 bg-slate-50" : "border-slate-200 hover:bg-slate-50"}`}>
+                        <span className="min-w-0">
+                          <span className="block truncate text-sm font-medium text-slate-800">{sim.label}</span>
+                          <span className="mt-0.5 block truncate text-xs text-slate-400">{sim.phoneNumber || "未填写号码"} · {sim.carrierName}</span>
+                        </span>
+                        <span className={`ml-3 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${selected ? "border-slate-900 bg-slate-900 text-white" : "border-slate-300 text-transparent"}`}><CheckCircle2 className="h-3.5 w-3.5" /></span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {!selectableSims.length && editor.provider !== "dito" ? <div className="text-xs text-slate-400">没有可关联号码。</div> : null}
+              </section>
             </div>
 
-            <div className="flex items-center justify-between gap-3 border-t px-5 py-4">
-              <div className="text-xs text-slate-400">{editor.id && editingConnector?.hasCredentials ? "现有凭据不会回显；留空即保持不变。" : "敏感凭据使用 AES-256-GCM 加密保存。"}</div>
-              <div className="flex gap-2"><button type="button" onClick={() => setEditor(null)} disabled={Boolean(busy)} className="h-9 rounded-lg border px-3 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50">取消</button><button type="button" onClick={() => void saveEditor()} disabled={Boolean(busy) || !editor.name.trim() || !currentProvider} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-slate-950 px-4 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50">{busy.startsWith("save:") || busy === "create" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}保存</button></div>
+            <div className="flex items-center justify-end gap-2 border-t bg-slate-50/70 px-5 py-4">
+              <button type="button" onClick={() => setEditor(null)} disabled={Boolean(busy)} className="h-10 rounded-xl border bg-white px-4 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50">取消</button>
+              <button type="button" onClick={() => void saveEditor()} disabled={Boolean(busy) || !editor.name.trim()} className="inline-flex h-10 items-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50">{busy.startsWith("save:") || busy === "create" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{editingLegacyDito ? "迁移并保存" : editor.id ? "保存修改" : "创建连接"}</button>
             </div>
-          </Card>
+          </div>
         </ModalPortal>
       ) : null}
     </div>

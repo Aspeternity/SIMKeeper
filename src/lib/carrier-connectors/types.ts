@@ -37,6 +37,8 @@ export type CarrierConnectorProviderPublic = {
   description: string;
   configFields: ConnectorConfigField[];
   credentialFields: ConnectorCredentialField[];
+  minLinkedSims?: number;
+  maxLinkedSims?: number;
 };
 
 export type CarrierConnectorSimContext = {
