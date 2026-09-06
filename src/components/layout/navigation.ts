@@ -17,7 +17,7 @@ export type NavigationItem = {
   icon: LucideIcon;
 };
 
-export const APP_VERSION = "0.1.0-alpha.19";
+export const APP_VERSION = "0.1.0-alpha.20";
 
 export const PRIMARY_NAV_ITEMS: NavigationItem[] = [
   { label: "概览", href: "/", icon: LayoutDashboard },
@@ -41,6 +41,7 @@ export function navigationItemIsActive(pathname: string, href: string) {
 }
 
 export function getPageTitle(pathname: string) {
+  if (pathname.startsWith("/settings/carrier-connectors")) return "运营商连接";
   const item = [...PRIMARY_NAV_ITEMS, SETTINGS_NAV_ITEM].find((candidate) => navigationItemIsActive(pathname, candidate.href));
   return item?.label ?? "SIMKeeper";
 }

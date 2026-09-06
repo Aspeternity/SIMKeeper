@@ -3,6 +3,7 @@ import "server-only";
 import fs from "node:fs";
 import path from "node:path";
 import { dataDir, sqlite } from "@/db";
+import { ensureCarrierConnectorTables } from "@/lib/carrier-connectors/store";
 import { exportCredentialSecret, importCredentialSecret } from "@/lib/credential-crypto";
 import { ensureEsimProfileTable } from "@/lib/esim-profiles";
 import { ensureNotificationTables } from "@/lib/notifications";
@@ -21,6 +22,9 @@ export const BACKUP_TABLES = [
   "carriers",
   "devices",
   "sim_cards",
+  "carrier_connectors",
+  "carrier_connector_sims",
+  "sim_sync_snapshots",
   "sim_deleted_records",
   "sim_esim_profiles",
   "sim_tariffs",
@@ -40,6 +44,7 @@ const DELETE_ORDER = [...BACKUP_TABLES].reverse();
 const backupDir = path.join(dataDir, "backups");
 
 function ensureBackupTables() {
+  ensureCarrierConnectorTables();
   ensureEsimProfileTable();
   ensureSimArchiveTable();
   ensureNotificationTables();
@@ -75,7 +80,9 @@ function quoteIdentifier(value: string) {
 
 function getAppVersion() {
   try {
-    const packageJson = JSON.parse(fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8")) as { version?: unknown };
+    const packageJson = JSON.parse(
+      fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8"),
+    ) as { version?: unknown };
     return typeof packageJson.version === "string" ? packageJson.version : "unknown";
   } catch {
     return "unknown";
@@ -83,21 +90,37 @@ function getAppVersion() {
 }
 
 function getCurrentColumns(table: BackupTableName) {
-  return (sqlite.prepare(`PRAGMA table_info(${quoteIdentifier(table)})`).all() as Array<{ name: string }>).map((column) => column.name);
+  return (
+    sqlite.prepare(`PRAGMA table_info(${quoteIdentifier(table)})`).all() as Array<{
+      name: string;
+    }>
+  ).map((column) => column.name);
 }
 
 export function getBackupRetention() {
-  const row = sqlite.prepare("SELECT value FROM settings WHERE key = ?").get("backup_retention") as { value?: string } | undefined;
+  const row = sqlite
+    .prepare("SELECT value FROM settings WHERE key = ?")
+    .get("backup_retention") as { value?: string } | undefined;
   const parsed = Number(row?.value);
-  if (!Number.isInteger(parsed) || parsed < MIN_BACKUP_RETENTION || parsed > MAX_BACKUP_RETENTION) {
+  if (
+    !Number.isInteger(parsed)
+    || parsed < MIN_BACKUP_RETENTION
+    || parsed > MAX_BACKUP_RETENTION
+  ) {
     return DEFAULT_BACKUP_RETENTION;
   }
   return parsed;
 }
 
 export function setBackupRetention(value: number) {
-  if (!Number.isInteger(value) || value < MIN_BACKUP_RETENTION || value > MAX_BACKUP_RETENTION) {
-    throw new Error(`本地备份保留数量需要在 ${MIN_BACKUP_RETENTION}-${MAX_BACKUP_RETENTION} 之间`);
+  if (
+    !Number.isInteger(value)
+    || value < MIN_BACKUP_RETENTION
+    || value > MAX_BACKUP_RETENTION
+  ) {
+    throw new Error(
+      `本地备份保留数量需要在 ${MIN_BACKUP_RETENTION}-${MAX_BACKUP_RETENTION} 之间`,
+    );
   }
 
   const now = new Date().toISOString();
@@ -116,7 +139,10 @@ export function setBackupRetention(value: number) {
 export function createBackupPayload(reason = "manual"): BackupPayload {
   ensureBackupTables();
   const tables = Object.fromEntries(
-    BACKUP_TABLES.map((table) => [table, sqlite.prepare(`SELECT * FROM ${quoteIdentifier(table)}`).all() as BackupRow[]]),
+    BACKUP_TABLES.map((table) => [
+      table,
+      sqlite.prepare(`SELECT * FROM ${quoteIdentifier(table)}`).all() as BackupRow[],
+    ]),
   ) as Record<BackupTableName, BackupRow[]>;
 
   return {
@@ -132,12 +158,17 @@ export function createBackupPayload(reason = "manual"): BackupPayload {
 
 function backupFilename(payload: BackupPayload) {
   const stamp = payload.createdAt.replace(/[-:]/g, "").replace(".", "-");
-  const reason = payload.reason.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 32) || "manual";
+  const reason =
+    payload.reason.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 32) || "manual";
   return `simkeeper-backup-${reason}-${stamp}.json`;
 }
 
 function resolveBackupPath(name: string) {
-  if (path.basename(name) !== name || !name.startsWith("simkeeper-backup-") || !name.endsWith(".json")) {
+  if (
+    path.basename(name) !== name
+    || !name.startsWith("simkeeper-backup-")
+    || !name.endsWith(".json")
+  ) {
     throw new Error("备份文件名不合法");
   }
   return path.join(backupDir, name);
@@ -160,35 +191,54 @@ export function parseBackupPayload(value: unknown): BackupPayload {
   if (!value || typeof value !== "object") throw new Error("备份文件格式不正确");
   const raw = value as Partial<BackupPayload> & { tables?: unknown };
   if (raw.format !== BACKUP_FORMAT) throw new Error("这不是 SIMKeeper 可移植备份文件");
-  if (!Number.isInteger(raw.formatVersion) || Number(raw.formatVersion) < 1) throw new Error("备份格式版本无效");
-  if (!raw.tables || typeof raw.tables !== "object" || Array.isArray(raw.tables)) throw new Error("备份数据表结构不正确");
+  if (!Number.isInteger(raw.formatVersion) || Number(raw.formatVersion) < 1) {
+    throw new Error("备份格式版本无效");
+  }
+  if (!raw.tables || typeof raw.tables !== "object" || Array.isArray(raw.tables)) {
+    throw new Error("备份数据表结构不正确");
+  }
 
   const rawTables = raw.tables as Record<string, unknown>;
   const users = rawTables.users;
-  if (!Array.isArray(users) || users.length === 0) throw new Error("完整备份必须包含至少一个管理员账户");
+  if (!Array.isArray(users) || users.length === 0) {
+    throw new Error("完整备份必须包含至少一个管理员账户");
+  }
 
   const tables = Object.fromEntries(
     BACKUP_TABLES.map((table) => {
       const rows = rawTables[table];
       if (rows === undefined) return [table, []];
-      if (!Array.isArray(rows) || rows.some((row) => !row || typeof row !== "object" || Array.isArray(row))) {
+      if (
+        !Array.isArray(rows)
+        || rows.some(
+          (row) => !row || typeof row !== "object" || Array.isArray(row),
+        )
+      ) {
         throw new Error(`备份中的 ${table} 数据不正确`);
       }
       return [table, rows as BackupRow[]];
     }),
   ) as Record<BackupTableName, BackupRow[]>;
 
-  if (tables.sim_esim_profiles.length && typeof raw.credentialSecret !== "string") {
-    throw new Error("备份包含 eSIM 激活凭据，但缺少对应的凭据密钥，无法安全恢复");
+  const connectorHasCredential = tables.carrier_connectors.some(
+    (row) => typeof row.credentials_encrypted === "string" && row.credentials_encrypted.length > 0,
+  );
+  if (
+    (tables.sim_esim_profiles.length || connectorHasCredential)
+    && typeof raw.credentialSecret !== "string"
+  ) {
+    throw new Error("备份包含加密凭据，但缺少对应的凭据密钥，无法安全恢复");
   }
 
   return {
     format: BACKUP_FORMAT,
     formatVersion: Number(raw.formatVersion),
     appVersion: typeof raw.appVersion === "string" ? raw.appVersion : "unknown",
-    createdAt: typeof raw.createdAt === "string" ? raw.createdAt : new Date(0).toISOString(),
+    createdAt:
+      typeof raw.createdAt === "string" ? raw.createdAt : new Date(0).toISOString(),
     reason: typeof raw.reason === "string" ? raw.reason : "imported",
-    credentialSecret: typeof raw.credentialSecret === "string" ? raw.credentialSecret : undefined,
+    credentialSecret:
+      typeof raw.credentialSecret === "string" ? raw.credentialSecret : undefined,
     tables,
   };
 }
@@ -204,7 +254,9 @@ export function listLocalBackups(): BackupListItem[] {
   fs.mkdirSync(backupDir, { recursive: true });
   return fs
     .readdirSync(backupDir)
-    .filter((name) => name.startsWith("simkeeper-backup-") && name.endsWith(".json"))
+    .filter(
+      (name) => name.startsWith("simkeeper-backup-") && name.endsWith(".json"),
+    )
     .flatMap((name) => {
       try {
         const filePath = resolveBackupPath(name);
@@ -216,7 +268,9 @@ export function listLocalBackups(): BackupListItem[] {
             appVersion: payload.appVersion,
             reason: payload.reason,
             size: fs.statSync(filePath).size,
-            counts: Object.fromEntries(BACKUP_TABLES.map((table) => [table, payload.tables[table].length])),
+            counts: Object.fromEntries(
+              BACKUP_TABLES.map((table) => [table, payload.tables[table].length]),
+            ),
           },
         ];
       } catch {
@@ -259,15 +313,22 @@ export function restoreBackupPayload(value: unknown) {
     for (const table of BACKUP_TABLES) {
       const allowedColumns = new Set(getCurrentColumns(table));
       for (const row of payload.tables[table]) {
-        const columns = Object.keys(row).filter((column) => allowedColumns.has(column));
+        const columns = Object.keys(row).filter((column) =>
+          allowedColumns.has(column),
+        );
         if (!columns.length) continue;
-        const sql = `INSERT INTO ${quoteIdentifier(table)} (${columns.map(quoteIdentifier).join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`;
+        const sql =
+          `INSERT INTO ${quoteIdentifier(table)} (${columns
+            .map(quoteIdentifier)
+            .join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`;
         sqlite.prepare(sql).run(...columns.map((column) => row[column] as never));
       }
     }
 
     const violations = sqlite.prepare("PRAGMA foreign_key_check").all();
-    if (violations.length) throw new Error("恢复后的数据未通过外键完整性检查，已自动回滚");
+    if (violations.length) {
+      throw new Error("恢复后的数据未通过外键完整性检查，已自动回滚");
+    }
   });
 
   try {
@@ -286,6 +347,8 @@ export function getBackupSummary(payload: BackupPayload) {
     appVersion: payload.appVersion,
     createdAt: payload.createdAt,
     reason: payload.reason,
-    counts: Object.fromEntries(BACKUP_TABLES.map((table) => [table, payload.tables[table].length])),
+    counts: Object.fromEntries(
+      BACKUP_TABLES.map((table) => [table, payload.tables[table].length]),
+    ),
   };
 }

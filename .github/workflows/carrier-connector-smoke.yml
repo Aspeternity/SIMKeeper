@@ -1,0 +1,272 @@
+name: Verify Carrier Connector Framework
+
+on:
+  workflow_run:
+    workflows:
+      - Build and Publish Docker Image
+    types:
+      - completed
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  carrier-connector-smoke:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull verified SIMKeeper image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="${{ github.event.workflow_run.head_sha }}"
+          short="${sha:0:7}"
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          image="ghcr.io/${owner}/simkeeper:sha-${short}"
+          docker pull "$image"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Verify connector encryption, snapshots, failure state and deletion
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          container="simkeeper-carrier-connector-smoke"
+          tmp="$(mktemp -d)"
+          base="http://127.0.0.1:18089"
+          cookies="$tmp/cookies.txt"
+          secret="CONNECTOR-SECRET-123"
+
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            rm -rf "$tmp" || true
+          }
+          trap cleanup EXIT
+
+          fail() {
+            echo "::error::$1"
+            docker logs "$container" 2>&1 || true
+            exit 1
+          }
+
+          mkdir -p "$tmp/data"
+          docker run -d \
+            --name "$container" \
+            -p 18089:3000 \
+            -e SIMKEEPER_COOKIE_SECURE=false \
+            -e PUID="$(id -u)" \
+            -e PGID="$(id -g)" \
+            -v "$tmp/data:/app/data" \
+            "$IMAGE" >/dev/null || fail "container start failed"
+
+          for _ in $(seq 1 40); do
+            curl -fsS "$base/api/health" >/dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -fsS "$base/api/health" >/dev/null || fail "health check failed"
+
+          curl -fsS -c "$cookies" -o /dev/null \
+            -X POST \
+            --data-urlencode 'username=smokeadmin' \
+            --data-urlencode 'password=smoke-test-123' \
+            --data-urlencode 'confirmPassword=smoke-test-123' \
+            "$base/api/auth/setup" || fail "setup failed"
+
+          curl -fsS -b "$cookies" -H 'Content-Type: application/json' \
+            -d '{"name":"Connector Smoke Carrier","countryCode":"PH","website":"","notes":""}' \
+            "$base/api/carriers" > "$tmp/carrier.json" || fail "carrier creation failed"
+          carrier_id="$(jq -r '.carrier.id' "$tmp/carrier.json")"
+
+          create_sim() {
+            label="$1"
+            balance="$2"
+            jq -n \
+              --arg label "$label" \
+              --argjson carrierId "$carrier_id" \
+              --argjson balance "$balance" \
+              '{
+                label:$label,phoneNumber:"",carrierId:$carrierId,deviceId:null,
+                simType:"physical",iccid:"",balance:$balance,currencyCode:"PHP",
+                status:"active",activationDate:"",validUntil:"",
+                identityStatus:"unknown",identityName:"",identityDocumentType:"",
+                identityDocumentTypeCustom:"",identityDocumentNumber:"",
+                identityCountryCode:"",identityNotes:"",notes:"",esimProfile:null
+              }' > "$tmp/sim.json"
+            curl -fsS -b "$cookies" -H 'Content-Type: application/json' \
+              --data-binary @"$tmp/sim.json" "$base/api/sims" | jq -r '.sim.id'
+          }
+
+          sim_one="$(create_sim sync-one 3)"
+          sim_two="$(create_sim sync-two 5)"
+
+          jq -n \
+            --arg secret "$secret" \
+            --argjson first "$sim_one" \
+            --argjson second "$sim_two" \
+            '{
+              name:"Mock Sync",
+              provider:"mock",
+              syncIntervalMinutes:0,
+              simIds:[$first,$second],
+              providerConfig:{
+                balance:42.5,
+                currencyCode:"PHP",
+                balanceValidUntil:"2027-08-30",
+                accountStatus:"active",
+                simulateFailure:false
+              },
+              credentials:{testToken:$secret}
+            }' > "$tmp/connector.json"
+
+          code="$(curl -sS -b "$cookies" -o "$tmp/connector-result.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' \
+            --data-binary @"$tmp/connector.json" "$base/api/carrier-connectors")"
+          [ "$code" = "201" ] || fail "connector creation returned HTTP $code"
+          connector_id="$(jq -r '.connector.id' "$tmp/connector-result.json")"
+          [ "$connector_id" -gt 0 ] || fail "connector id missing"
+          ! grep -Fq "$secret" "$tmp/connector-result.json" || fail "connector create response leaked credential"
+
+          curl -fsS -b "$cookies" "$base/api/carrier-connectors" > "$tmp/connectors.json" \
+            || fail "connector list failed"
+          [ "$(jq '.connectors | length' "$tmp/connectors.json")" = "1" ] \
+            || fail "connector list count wrong"
+          [ "$(jq '.connectors[0].linkedSims | length' "$tmp/connectors.json")" = "2" ] \
+            || fail "linked SIM count wrong"
+          [ "$(jq -r '.connectors[0].hasCredentials' "$tmp/connectors.json")" = "true" ] \
+            || fail "credential summary flag missing"
+          ! grep -Fq "$secret" "$tmp/connectors.json" || fail "connector list leaked credential"
+
+          sync
+          for dbfile in "$tmp/data/simkeeper.db" "$tmp/data/simkeeper.db-wal" "$tmp/data/simkeeper.db-shm"; do
+            [ -f "$dbfile" ] || continue
+            ! grep -aFq "$secret" "$dbfile" || fail "SQLite persisted plaintext connector credential"
+          done
+
+          code="$(curl -sS -b "$cookies" -o "$tmp/sync-result.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' \
+            -d "{\"connectorId\":$connector_id}" "$base/api/carrier-connectors/sync")"
+          [ "$code" = "200" ] || fail "mock sync returned HTTP $code"
+          [ "$(jq -r '.result.synced' "$tmp/sync-result.json")" = "2" ] \
+            || fail "mock sync count wrong"
+
+          curl -fsS -b "$cookies" "$base/api/carrier-connectors" > "$tmp/after-sync.json" \
+            || fail "connector list after sync failed"
+          [ "$(jq '[.connectors[0].linkedSims[] | select(.latestSnapshot.balance == 42.5 and .latestSnapshot.currencyCode == "PHP" and .latestSnapshot.balanceValidUntil == "2027-08-30" and .latestSnapshot.accountStatus == "active" and .latestSnapshot.stale == false)] | length' "$tmp/after-sync.json")" = "2" ] \
+            || fail "normalized snapshot data wrong"
+          [ "$(jq -r '.connectors[0].status' "$tmp/after-sync.json")" = "connected" ] \
+            || fail "connector did not remain connected"
+
+          curl -fsS -b "$cookies" "$base/api/carrier-connectors?simId=$sim_one&history=10" \
+            > "$tmp/sim-sync.json" || fail "SIM sync summary failed"
+          [ "$(jq -r '.sync.latest.balance' "$tmp/sim-sync.json")" = "42.5" ] \
+            || fail "SIM sync summary balance wrong"
+          [ "$(jq '.history | length' "$tmp/sim-sync.json")" = "1" ] \
+            || fail "SIM snapshot history missing"
+
+          curl -fsS -b "$cookies" "$base/api/sims" > "$tmp/sims.json" || fail "SIM list failed"
+          [ "$(jq -r --argjson id "$sim_one" '.sims[] | select(.id == $id) | .balance' "$tmp/sims.json")" = "3" ] \
+            || fail "automatic sync overwrote manual SIM balance"
+
+          curl -fsS -b "$cookies" "$base/api/backups?export=1" > "$tmp/backup.json" \
+            || fail "backup export failed"
+          [ "$(jq -r '.formatVersion' "$tmp/backup.json")" -ge 3 ] \
+            || fail "backup format regressed"
+          [ "$(jq '.tables.carrier_connectors | length' "$tmp/backup.json")" = "1" ] \
+            || fail "connector missing from backup"
+          [ "$(jq '.tables.carrier_connector_sims | length' "$tmp/backup.json")" = "2" ] \
+            || fail "connector SIM links missing from backup"
+          [ "$(jq '.tables.sim_sync_snapshots | length' "$tmp/backup.json")" = "2" ] \
+            || fail "sync snapshots missing from backup"
+          [ -n "$(jq -r '.tables.carrier_connectors[0].credentials_encrypted // empty' "$tmp/backup.json")" ] \
+            || fail "encrypted connector credential missing from backup"
+          ! grep -Fq "$secret" "$tmp/backup.json" || fail "portable backup stored plaintext connector credential"
+
+          jq -n \
+            --argjson id "$connector_id" \
+            --argjson first "$sim_one" \
+            --argjson second "$sim_two" \
+            '{
+              id:$id,
+              name:"Mock Sync",
+              provider:"mock",
+              syncIntervalMinutes:0,
+              simIds:[$first,$second],
+              providerConfig:{
+                balance:42.5,
+                currencyCode:"PHP",
+                balanceValidUntil:"2027-08-30",
+                accountStatus:"active",
+                simulateFailure:true
+              },
+              clearCredentials:false
+            }' > "$tmp/fail-config.json"
+          curl -fsS -b "$cookies" -X PATCH -H 'Content-Type: application/json' \
+            --data-binary @"$tmp/fail-config.json" "$base/api/carrier-connectors" \
+            > "$tmp/fail-config-result.json" || fail "failure config patch failed"
+
+          code="$(curl -sS -b "$cookies" -o "$tmp/fail-sync.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' \
+            -d "{\"connectorId\":$connector_id}" "$base/api/carrier-connectors/sync")"
+          [ "$code" = "502" ] || fail "simulated failure did not return HTTP 502"
+
+          curl -fsS -b "$cookies" "$base/api/carrier-connectors" > "$tmp/after-fail.json" \
+            || fail "connector list after failure failed"
+          [ "$(jq -r '.connectors[0].status' "$tmp/after-fail.json")" = "error" ] \
+            || fail "connector failure status missing"
+          [ "$(jq -r '.connectors[0].linkedSims[0].latestSnapshot.balance' "$tmp/after-fail.json")" = "42.5" ] \
+            || fail "failed sync discarded previous successful snapshot"
+
+          jq -n \
+            --argjson id "$connector_id" \
+            --argjson first "$sim_one" \
+            --argjson second "$sim_two" \
+            '{
+              id:$id,
+              name:"Mock Sync",
+              provider:"mock",
+              syncIntervalMinutes:0,
+              simIds:[$first,$second],
+              providerConfig:{
+                balance:43,
+                currencyCode:"PHP",
+                balanceValidUntil:"2027-08-30",
+                accountStatus:"active",
+                simulateFailure:false
+              },
+              clearCredentials:false
+            }' > "$tmp/recover-config.json"
+          curl -fsS -b "$cookies" -X PATCH -H 'Content-Type: application/json' \
+            --data-binary @"$tmp/recover-config.json" "$base/api/carrier-connectors" \
+            > "$tmp/recover-config-result.json" || fail "recovery config patch failed"
+          curl -fsS -b "$cookies" -X POST -H 'Content-Type: application/json' \
+            -d "{\"connectorId\":$connector_id}" "$base/api/carrier-connectors/sync" \
+            > "$tmp/recover-sync.json" || fail "recovery sync failed"
+
+          curl -fsS -b "$cookies" -X DELETE \
+            "$base/api/carrier-connectors?id=$connector_id" > "$tmp/delete.json" \
+            || fail "connector delete failed"
+
+          curl -fsS -b "$cookies" "$base/api/carrier-connectors?simId=$sim_one&history=10" \
+            > "$tmp/after-delete.json" || fail "SIM sync summary after delete failed"
+          [ "$(jq -r '.sync.connector == null' "$tmp/after-delete.json")" = "true" ] \
+            || fail "deleted connector still linked to SIM"
+          [ "$(jq -r '.sync.sourceDeleted' "$tmp/after-delete.json")" = "true" ] \
+            || fail "deleted source marker missing"
+          [ "$(jq -r '.sync.latest.sourceName' "$tmp/after-delete.json")" = "Mock Sync" ] \
+            || fail "snapshot source name was not preserved"
+          [ "$(jq -r '.sync.latest.balance' "$tmp/after-delete.json")" = "43" ] \
+            || fail "latest historical snapshot missing after connector delete"
+          [ "$(jq -r '.sync.latest.stale' "$tmp/after-delete.json")" = "true" ] \
+            || fail "deleted-source snapshot should be stale"
+
+          echo "Carrier connector framework smoke test passed"
