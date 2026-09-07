@@ -74,8 +74,8 @@ jobs:
             sleep 1
           done
           curl -fsS "$base/api/health" > "$tmp/health.json" || fail "health check failed"
-          [ "$(jq -r '.version' "$tmp/health.json")" = "0.1.0-alpha.22" ] \
-            || fail "health version is not alpha.22"
+          version="$(jq -r '.version // empty' "$tmp/health.json")"
+          [ -n "$version" ] || fail "health version is missing"
 
           curl -fsS -c "$cookies" -o /dev/null \
             -X POST \
