@@ -287,9 +287,19 @@ async function loginAndReadAccount(mobileNumber: string, password: string) {
   const loginStart = await requestPage("/login", cookies);
   await followSafeRedirects(loginStart, cookies, `${CSL_ORIGIN}/login`);
 
+  // Mirror the current csl browser password form exactly. Besides the visible
+  // mobile number/password fields, csl requires loginMethod=password and sends
+  // an empty otp field. Omitting those fields causes the site to return to the
+  // login page even when the password itself is correct.
+  const loginForm = new URLSearchParams();
+  loginForm.set("loginMethod", "password");
+  loginForm.set("msisdn", mobileNumber);
+  loginForm.set("otp", "");
+  loginForm.set("password", password);
+
   const login = await requestPage("/login_add", cookies, {
     method: "POST",
-    form: new URLSearchParams({ msisdn: mobileNumber, password }),
+    form: loginForm,
     referer: `${CSL_ORIGIN}/login`,
   });
   if (looksLikeBadCredentials(login.text)) {
