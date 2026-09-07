@@ -36,7 +36,7 @@ jobs:
           docker pull "$image"
           echo "IMAGE=$image" >> "$GITHUB_ENV"
 
-      - name: Verify GlobeOne metadata, SIM-centric configuration and encrypted PIN
+      - name: Verify GlobeOne metadata, runtime auth mode, SIM-centric configuration and encrypted PIN
         shell: bash
         run: |
           set -euo pipefail
@@ -46,6 +46,7 @@ jobs:
           base="http://127.0.0.1:18091"
           cookies="$tmp/cookies.txt"
           pin="731925"
+          app_token="globeone-smoke-app-token"
 
           cleanup() {
             docker rm -f "$container" >/dev/null 2>&1 || true
@@ -64,6 +65,7 @@ jobs:
             --name "$container" \
             -p 18091:3000 \
             -e SIMKEEPER_COOKIE_SECURE=false \
+            -e GLOBEONE_APP_ACCESS_TOKEN="$app_token" \
             -e PUID="$(id -u)" \
             -e PGID="$(id -g)" \
             -v "$tmp/data:/app/data" \
@@ -116,6 +118,12 @@ jobs:
             || fail "balance-source metadata failed"
           [ "$(jq '[.providers[] | select(.id == "globe")] | length' "$tmp/source-before.json")" = "1" ] \
             || fail "GlobeOne not exposed by SIM-centric balance source"
+          [ "$(jq -r '.providers[] | select(.id == "globe") | .runtimeReady' "$tmp/source-before.json")" = "true" ] \
+            || fail "GlobeOne temporary app token was not reported ready"
+          [ "$(jq -r '.providers[] | select(.id == "globe") | .runtimeMode' "$tmp/source-before.json")" = "static-token" ] \
+            || fail "GlobeOne temporary app token mode missing"
+          ! grep -Fq "$app_token" "$tmp/source-before.json" \
+            || fail "GlobeOne app access token leaked in API response"
 
           jq -n --argjson simId "$sim_id" '{
             simId:$simId,provider:"globe",syncIntervalMinutes:1440,
@@ -147,11 +155,14 @@ jobs:
           for dbfile in "$tmp/data/simkeeper.db" "$tmp/data/simkeeper.db-wal" "$tmp/data/simkeeper.db-shm"; do
             [ -f "$dbfile" ] || continue
             ! grep -aFq "$pin" "$dbfile" || fail "SQLite persisted plaintext GlobeOne PIN"
+            ! grep -aFq "$app_token" "$dbfile" || fail "SQLite persisted GlobeOne app access token"
           done
 
           curl -fsS -b "$cookies" "$base/api/backups?export=1" > "$tmp/backup.json" \
             || fail "backup export failed"
           ! grep -Fq "$pin" "$tmp/backup.json" \
             || fail "portable backup stored plaintext GlobeOne PIN"
+          ! grep -Fq "$app_token" "$tmp/backup.json" \
+            || fail "portable backup stored GlobeOne app access token"
 
           echo "GlobeOne provider smoke test passed"
