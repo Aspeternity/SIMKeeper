@@ -26,6 +26,10 @@ const providerMatchers: Record<string, {
   supportedCountryCodes: string[];
   carrierNameKeywords: string[];
 }> = {
+  csl: {
+    supportedCountryCodes: ["HK"],
+    carrierNameKeywords: ["csl", "one2free", "pccw"],
+  },
   dito: {
     supportedCountryCodes: ["PH"],
     carrierNameKeywords: ["dito"],
