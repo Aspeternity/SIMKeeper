@@ -85,11 +85,12 @@ function providerRuntimeState(providerId: string) {
     };
   }
   const state = globeOneRuntimeAuthStatus();
+  const availabilityNote = "GlobeOne 当前没有面向第三方自托管应用的公开消费者余额认证入口。SIMKeeper 不内置 GlobeOne App 的内部凭据；仅在管理员自行提供受授权的运行时认证后开放自动同步。";
   return {
     maturity: "experimental" as const,
-    availabilityNote: "GlobeOne 当前没有面向第三方自托管应用的公开消费者余额认证入口。SIMKeeper 不内置 GlobeOne App 的内部凭据；仅在管理员自行提供受授权的运行时认证后开放自动同步。",
+    availabilityNote,
     runtimeReady: state.configured,
-    runtimeMessage: state.message,
+    runtimeMessage: state.configured ? state.message : availabilityNote,
     runtimeWarning: state.warning,
     runtimeMode: state.mode,
     runtimeSource: state.source,
@@ -101,9 +102,16 @@ function listBalanceProviders() {
   return listCarrierConnectorProviders()
     .map((provider) => {
       const matcher = providerMatchers[provider.id];
-      return matcher
-        ? { ...provider, ...matcher, ...providerRuntimeState(provider.id) }
-        : null;
+      if (!matcher) return null;
+      const runtimeState = providerRuntimeState(provider.id);
+      return {
+        ...provider,
+        description: provider.id === "globe"
+          ? `实验性集成。${provider.description}`
+          : provider.description,
+        ...matcher,
+        ...runtimeState,
+      };
     })
     .filter((provider): provider is NonNullable<typeof provider> => Boolean(provider));
 }
