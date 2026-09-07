@@ -1,0 +1,157 @@
+name: Verify GlobeOne Provider
+
+on:
+  workflow_run:
+    workflows:
+      - Build and Publish Docker Image
+    types:
+      - completed
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  globeone-smoke:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull verified SIMKeeper image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="${{ github.event.workflow_run.head_sha }}"
+          short="${sha:0:7}"
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          image="ghcr.io/${owner}/simkeeper:sha-${short}"
+          docker pull "$image"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Verify GlobeOne metadata, SIM-centric configuration and encrypted PIN
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          container="simkeeper-globeone-smoke"
+          tmp="$(mktemp -d)"
+          base="http://127.0.0.1:18091"
+          cookies="$tmp/cookies.txt"
+          pin="731925"
+
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            rm -rf "$tmp" || true
+          }
+          trap cleanup EXIT
+
+          fail() {
+            echo "::error::$1"
+            docker logs "$container" 2>&1 || true
+            exit 1
+          }
+
+          mkdir -p "$tmp/data"
+          docker run -d \
+            --name "$container" \
+            -p 18091:3000 \
+            -e SIMKEEPER_COOKIE_SECURE=false \
+            -e PUID="$(id -u)" \
+            -e PGID="$(id -g)" \
+            -v "$tmp/data:/app/data" \
+            "$IMAGE" >/dev/null || fail "container start failed"
+
+          for _ in $(seq 1 40); do
+            curl -fsS "$base/api/health" >/dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -fsS "$base/api/health" >/dev/null || fail "health check failed"
+
+          curl -fsS -c "$cookies" -o /dev/null \
+            -X POST \
+            --data-urlencode 'username=smokeadmin' \
+            --data-urlencode 'password=smoke-test-123' \
+            --data-urlencode 'confirmPassword=smoke-test-123' \
+            "$base/api/auth/setup" || fail "setup failed"
+
+          curl -fsS -b "$cookies" "$base/api/carrier-connectors" > "$tmp/providers.json" \
+            || fail "provider list failed"
+          [ "$(jq -r '.providers[] | select(.id == "globe") | .label' "$tmp/providers.json")" = "GlobeOne" ] \
+            || fail "GlobeOne provider label missing"
+          [ "$(jq -r '.providers[] | select(.id == "globe") | .maxLinkedSims' "$tmp/providers.json")" = "1" ] \
+            || fail "GlobeOne single-SIM limit missing"
+          [ "$(jq '[.providers[] | select(.id == "globe") | .credentialFields[] | select(.key == "pin" and .required == true)] | length' "$tmp/providers.json")" = "1" ] \
+            || fail "GlobeOne PIN credential metadata missing"
+
+          curl -fsS -b "$cookies" -H 'Content-Type: application/json' \
+            -d '{"name":"Globe","countryCode":"PH","website":"https://www.globe.com.ph","notes":""}' \
+            "$base/api/carriers" > "$tmp/carrier.json" || fail "Globe carrier creation failed"
+          carrier_id="$(jq -r '.carrier.id' "$tmp/carrier.json")"
+
+          jq -n \
+            --argjson carrierId "$carrier_id" \
+            '{
+              label:"globe-smoke",phoneNumber:"09171234567",carrierId:$carrierId,deviceId:null,
+              simType:"esim",iccid:"",balance:null,currencyCode:"PHP",
+              status:"active",activationDate:"",validUntil:"",
+              identityStatus:"unknown",identityName:"",identityDocumentType:"",
+              identityDocumentTypeCustom:"",identityDocumentNumber:"",
+              identityCountryCode:"",identityNotes:"",notes:"",esimProfile:null
+            }' > "$tmp/sim.json"
+          curl -fsS -b "$cookies" -H 'Content-Type: application/json' \
+            --data-binary @"$tmp/sim.json" "$base/api/sims" > "$tmp/sim-result.json" \
+            || fail "Globe SIM creation failed"
+          sim_id="$(jq -r '.sim.id' "$tmp/sim-result.json")"
+          [ "$sim_id" -gt 0 ] || fail "Globe SIM id missing"
+
+          curl -fsS -b "$cookies" "$base/api/sims/balance-source?simId=$sim_id" > "$tmp/source-before.json" \
+            || fail "balance-source metadata failed"
+          [ "$(jq '[.providers[] | select(.id == "globe")] | length' "$tmp/source-before.json")" = "1" ] \
+            || fail "GlobeOne not exposed by SIM-centric balance source"
+
+          jq -n --argjson simId "$sim_id" '{
+            simId:$simId,provider:"globe",syncIntervalMinutes:1440,
+            providerConfig:{},credentials:{}
+          }' > "$tmp/missing-pin.json"
+          code="$(curl -sS -b "$cookies" -o "$tmp/missing-pin-result.json" -w '%{http_code}' \
+            -X PUT -H 'Content-Type: application/json' \
+            --data-binary @"$tmp/missing-pin.json" "$base/api/sims/balance-source")"
+          [ "$code" = "400" ] || fail "GlobeOne configuration without PIN was accepted"
+          grep -Fq 'GlobeOne 6 位 PIN' "$tmp/missing-pin-result.json" \
+            || fail "missing PIN validation message absent"
+
+          jq -n --argjson simId "$sim_id" --arg pin "$pin" '{
+            simId:$simId,provider:"globe",syncIntervalMinutes:1440,
+            providerConfig:{},credentials:{pin:$pin}
+          }' > "$tmp/configure.json"
+          curl -fsS -b "$cookies" -H 'Content-Type: application/json' \
+            -X PUT --data-binary @"$tmp/configure.json" \
+            "$base/api/sims/balance-source" > "$tmp/configure-result.json" \
+            || fail "GlobeOne SIM-centric configuration failed"
+          [ "$(jq -r '.source.connector.provider' "$tmp/configure-result.json")" = "globe" ] \
+            || fail "GlobeOne connector not attached to SIM"
+          [ "$(jq -r '.source.connector.hasCredentials' "$tmp/configure-result.json")" = "true" ] \
+            || fail "GlobeOne encrypted credential flag missing"
+          ! grep -Fq "$pin" "$tmp/configure-result.json" \
+            || fail "GlobeOne PIN leaked in API response"
+
+          sync
+          for dbfile in "$tmp/data/simkeeper.db" "$tmp/data/simkeeper.db-wal" "$tmp/data/simkeeper.db-shm"; do
+            [ -f "$dbfile" ] || continue
+            ! grep -aFq "$pin" "$dbfile" || fail "SQLite persisted plaintext GlobeOne PIN"
+          done
+
+          curl -fsS -b "$cookies" "$base/api/backups?export=1" > "$tmp/backup.json" \
+            || fail "backup export failed"
+          ! grep -Fq "$pin" "$tmp/backup.json" \
+            || fail "portable backup stored plaintext GlobeOne PIN"
+
+          echo "GlobeOne provider smoke test passed"
