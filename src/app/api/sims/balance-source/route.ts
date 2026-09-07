@@ -74,6 +74,8 @@ function positiveId(value: string | null) {
 function providerRuntimeState(providerId: string) {
   if (providerId !== "globe") {
     return {
+      maturity: "stable" as const,
+      availabilityNote: null as string | null,
       runtimeReady: true,
       runtimeMessage: null as string | null,
       runtimeWarning: null as string | null,
@@ -84,6 +86,8 @@ function providerRuntimeState(providerId: string) {
   }
   const state = globeOneRuntimeAuthStatus();
   return {
+    maturity: "experimental" as const,
+    availabilityNote: "GlobeOne 当前没有面向第三方自托管应用的公开消费者余额认证入口。SIMKeeper 不内置 GlobeOne App 的内部凭据；仅在管理员自行提供受授权的运行时认证后开放自动同步。",
     runtimeReady: state.configured,
     runtimeMessage: state.message,
     runtimeWarning: state.warning,
