@@ -7,7 +7,14 @@ import {
   useMemo,
   useState,
 } from "react";
-import { CheckCircle2, Cloud, Loader2, ShieldCheck } from "lucide-react";
+import {
+  CheckCircle2,
+  Cloud,
+  KeyRound,
+  Loader2,
+  RefreshCw,
+  ShieldCheck,
+} from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { CONNECTOR_SYNC_INTERVAL_OPTIONS } from "@/lib/carrier-connectors/types";
 import { CURRENCIES } from "@/lib/sim-options";
@@ -40,6 +47,8 @@ type BalanceProvider = {
   credentialFields: ProviderCredentialField[];
   supportedCountryCodes: string[];
   carrierNameKeywords: string[];
+  runtimeReady?: boolean;
+  runtimeMessage?: string | null;
 };
 
 type SourceConnector = {
@@ -114,6 +123,13 @@ function initialConfig(provider: BalanceProvider | undefined) {
   return result;
 }
 
+function globeOtpRequired(connector: SourceConnector | null | undefined) {
+  if (connector?.provider !== "globe" || connector.status !== "error") return false;
+  return /短信验证码重新认证|reauthentication\s+needed|device\s+not\s+recognized/i.test(
+    connector.lastError ?? "",
+  );
+}
+
 export const SimBalanceSourceEditor = forwardRef<
   SimBalanceSourceEditorHandle,
   {
@@ -146,6 +162,12 @@ export const SimBalanceSourceEditor = forwardRef<
   const [providerConfig, setProviderConfig] = useState<Record<string, string | boolean>>({});
   const [loading, setLoading] = useState(true);
   const [metadataError, setMetadataError] = useState("");
+  const [actionBusy, setActionBusy] = useState(false);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [otpSent, setOtpSent] = useState(false);
+  const [otpCode, setOtpCode] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [notice, setNotice] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -153,6 +175,10 @@ export const SimBalanceSourceEditor = forwardRef<
     async function load() {
       setLoading(true);
       setMetadataError("");
+      setActionError("");
+      setNotice("");
+      setOtpSent(false);
+      setOtpCode("");
       try {
         const query = editing ? `?simId=${editing.id}` : "";
         const response = await fetch(`/api/sims/balance-source${query}`, { cache: "no-store" });
@@ -216,6 +242,10 @@ export const SimBalanceSourceEditor = forwardRef<
     setProviderId(id);
     setProviderConfig(initialConfig(provider));
     setCredentials({});
+    setActionError("");
+    setNotice("");
+    setOtpSent(false);
+    setOtpCode("");
   }
 
   function validate() {
@@ -244,6 +274,56 @@ export const SimBalanceSourceEditor = forwardRef<
     }
   }
 
+  function cleanCredentials() {
+    return Object.fromEntries(
+      Object.entries(credentials)
+        .map(([key, value]) => [key, value.trim()] as const)
+        .filter(([, value]) => Boolean(value)),
+    );
+  }
+
+  async function persistAutoSource(simId: number) {
+    if (!selectedProvider) throw new Error("请选择自动同步来源");
+    const response = await fetch("/api/sims/balance-source", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        simId,
+        provider: selectedProvider.id,
+        syncIntervalMinutes,
+        providerConfig,
+        credentials: cleanCredentials(),
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "自动余额同步配置失败");
+    const nextSource = (data.source || null) as BalanceSource | null;
+    setSource(nextSource);
+    setCredentials({});
+    return nextSource;
+  }
+
+  async function reloadSource(simId: number) {
+    const response = await fetch(`/api/sims/balance-source?simId=${simId}`, { cache: "no-store" });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "余额同步状态加载失败");
+    const nextSource = (data.source || null) as BalanceSource | null;
+    setSource(nextSource);
+    return nextSource;
+  }
+
+  async function syncSource(simId: number) {
+    const response = await fetch("/api/sims/balance-source", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ simId }),
+    });
+    const data = await response.json();
+    if (data.source) setSource(data.source as BalanceSource);
+    if (!response.ok) throw new Error(data.error || "余额同步失败");
+    return data;
+  }
+
   async function saveForSim(simId: number) {
     validate();
 
@@ -258,48 +338,111 @@ export const SimBalanceSourceEditor = forwardRef<
       return;
     }
 
-    if (!selectedProvider) throw new Error("请选择自动同步来源");
-    const cleanCredentials = Object.fromEntries(
-      Object.entries(credentials)
-        .map(([key, value]) => [key, value.trim()] as const)
-        .filter(([, value]) => Boolean(value)),
-    );
     const hadExistingSource = Boolean(source?.connector);
-    const credentialChanged = Object.keys(cleanCredentials).length > 0;
+    const credentialChanged = Object.keys(cleanCredentials()).length > 0;
+    await persistAutoSource(simId);
 
-    const response = await fetch("/api/sims/balance-source", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        simId,
-        provider: selectedProvider.id,
-        syncIntervalMinutes,
-        providerConfig,
-        credentials: cleanCredentials,
-      }),
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || "自动余额同步配置失败");
-    setSource(data.source || null);
-
-    // A newly enabled source should become useful immediately. Existing sources
-    // only log in again when credentials changed; routine SIM edits do not cause
-    // an unnecessary carrier login. A failed first sync does not roll back the
-    // configuration because the scheduler (including temporary 417 retries)
-    // remains responsible for recovery.
     if (!hadExistingSource || credentialChanged) {
       try {
-        const syncResponse = await fetch("/api/sims/balance-source", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ simId }),
-        });
-        const syncData = await syncResponse.json();
-        if (syncData.source) setSource(syncData.source);
+        await syncSource(simId);
       } catch {
-        // Configuration is already safely stored. The regular scheduler will
-        // retry without turning a number save into a partial failure.
+        // Configuration is already safely stored. The regular scheduler remains
+        // responsible for recovery; interactive reconnect is also available in
+        // the editor for an existing SIM.
       }
+    }
+  }
+
+  async function connectNow() {
+    if (actionBusy || disabled) return;
+    setActionError("");
+    setNotice("");
+    setOtpSent(false);
+    setOtpCode("");
+
+    if (!editing?.id) {
+      setActionError("新号码需要先保存一次，SIMKeeper 才能建立运营商连接。保存后可直接在号码详情或再次编辑时立即同步。");
+      return;
+    }
+
+    try {
+      validate();
+      if (selectedProvider?.runtimeReady === false) {
+        throw new Error(selectedProvider.runtimeMessage || "运营商服务端认证尚未配置");
+      }
+      setActionBusy(true);
+      await persistAutoSource(editing.id);
+      await syncSource(editing.id);
+      setNotice(`${selectedProvider?.label || "运营商"} 已连接并同步`);
+      window.dispatchEvent(new CustomEvent("simkeeper:balance-synced", { detail: { simId: editing.id } }));
+    } catch (error) {
+      const nextMessage = error instanceof Error ? error.message : "运营商连接失败";
+      setActionError(nextMessage);
+      try {
+        await reloadSource(editing.id);
+      } catch {
+        // Keep the original connection error visible.
+      }
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function startGlobeOtp() {
+    if (!editing?.id || authBusy) return;
+    setActionError("");
+    setNotice("");
+    if (selectedProvider?.runtimeReady === false) {
+      setActionError(selectedProvider.runtimeMessage || "GlobeOne 服务端认证尚未配置");
+      return;
+    }
+
+    setAuthBusy(true);
+    try {
+      const response = await fetch("/api/sims/balance-source/globe-auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ simId: editing.id, action: "start" }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "GlobeOne 验证码发送失败");
+      setOtpSent(true);
+      setNotice(data.message || "GlobeOne 验证码已发送");
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "GlobeOne 验证码发送失败");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function verifyGlobeOtp() {
+    if (!editing?.id || authBusy) return;
+    const code = otpCode.trim();
+    if (!/^\d{4,8}$/.test(code)) {
+      setActionError("请输入短信中的 GlobeOne 验证码");
+      return;
+    }
+
+    setAuthBusy(true);
+    setActionError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/sims/balance-source/globe-auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ simId: editing.id, action: "verify", code }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "GlobeOne 验证失败");
+      setOtpSent(false);
+      setOtpCode("");
+      await reloadSource(editing.id);
+      setNotice(data.message || "GlobeOne 验证完成，余额已同步");
+      window.dispatchEvent(new CustomEvent("simkeeper:balance-synced", { detail: { simId: editing.id } }));
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "GlobeOne 验证失败");
+    } finally {
+      setAuthBusy(false);
     }
   }
 
@@ -324,6 +467,8 @@ export const SimBalanceSourceEditor = forwardRef<
     : balance
       ? `${balance} ${currencyCode}`.trim()
       : "首次同步后自动填入";
+  const needsGlobeOtp = globeOtpRequired(sourceForSelectedProvider);
+  const runtimeReady = selectedProvider?.runtimeReady !== false;
 
   return (
     <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50/50 p-4">
@@ -417,6 +562,13 @@ export const SimBalanceSourceEditor = forwardRef<
               <div className="mt-1 text-sm font-semibold text-slate-800">{currentAutoBalance}</div>
             </div>
           </div>
+
+          {!runtimeReady && selectedProvider.runtimeMessage ? (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-5 text-amber-800">
+              <div className="font-medium">{selectedProvider.label} 暂时不能建立连接</div>
+              <div className="mt-0.5 text-amber-700">{selectedProvider.runtimeMessage}</div>
+            </div>
+          ) : null}
 
           {supportedProviders.length > 1 ? (
             <label className="block space-y-1.5 text-sm">
@@ -517,11 +669,90 @@ export const SimBalanceSourceEditor = forwardRef<
             })}
           </div>
 
-          {sourceForSelectedProvider ? (
+          <div className="flex flex-wrap items-center gap-2">
+            {editing ? (
+              <button
+                type="button"
+                onClick={() => void connectNow()}
+                disabled={disabled || actionBusy || authBusy || !runtimeReady}
+                className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-slate-950 px-3 text-xs font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {actionBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                {actionBusy
+                  ? "连接中…"
+                  : sourceForSelectedProvider
+                    ? "保存配置并立即同步"
+                    : `连接 ${selectedProvider.label}`}
+              </button>
+            ) : (
+              <span className="text-xs leading-5 text-slate-400">
+                新号码保存后会自动建立连接并尝试首次同步。
+              </span>
+            )}
+            {notice ? <span className="text-xs font-medium text-emerald-600">{notice}</span> : null}
+          </div>
+
+          {needsGlobeOtp ? (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-5 text-amber-800">
+              <div className="flex items-start gap-2">
+                <KeyRound className="mt-0.5 h-4 w-4 shrink-0" />
+                <div className="flex-1">
+                  <div className="font-medium">GlobeOne 需要一次短信验证</div>
+                  <div className="mt-0.5 text-amber-700">验证成功后会保存加密会话，后续定时同步不需要反复输入验证码。</div>
+                </div>
+              </div>
+
+              {!otpSent ? (
+                <button
+                  type="button"
+                  onClick={() => void startGlobeOtp()}
+                  disabled={disabled || authBusy || !runtimeReady}
+                  className="mt-2 inline-flex h-8 items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-2.5 text-xs font-medium text-amber-800 transition hover:bg-amber-100 disabled:opacity-50"
+                >
+                  {authBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                  {authBusy ? "发送中…" : "发送验证码"}
+                </button>
+              ) : (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <input
+                    value={otpCode}
+                    onChange={(event) => setOtpCode(event.target.value.replace(/\D/g, "").slice(0, 8))}
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    placeholder="短信验证码"
+                    className="h-8 w-32 rounded-lg border border-amber-200 bg-white px-2.5 text-xs text-slate-700 outline-none focus:border-amber-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void verifyGlobeOtp()}
+                    disabled={disabled || authBusy || !otpCode.trim()}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-2.5 text-xs font-medium text-amber-800 transition hover:bg-amber-100 disabled:opacity-50"
+                  >
+                    {authBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                    {authBusy ? "验证中…" : "验证并同步"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void startGlobeOtp()}
+                    disabled={disabled || authBusy}
+                    className="h-8 px-1 text-xs text-amber-700 hover:text-amber-900 disabled:opacity-50"
+                  >
+                    重新发送
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : sourceForSelectedProvider ? (
             <div className={`rounded-xl px-3 py-2.5 text-xs leading-5 ${sourceForSelectedProvider.status === "error" ? "border border-rose-100 bg-rose-50 text-rose-700" : "border border-emerald-100 bg-emerald-50 text-emerald-700"}`}>
               {sourceForSelectedProvider.status === "error"
                 ? sourceForSelectedProvider.lastError || "最近一次同步失败"
                 : `已启用 · 上次成功 ${formatDateTime(sourceForSelectedProvider.lastSuccessAt)} · 下次计划 ${formatDateTime(sourceForSelectedProvider.nextSyncAt)}`}
+            </div>
+          ) : null}
+
+          {actionError ? (
+            <div className="rounded-xl border border-rose-100 bg-rose-50 px-3 py-2.5 text-xs leading-5 text-rose-700">
+              {actionError}
             </div>
           ) : null}
 
