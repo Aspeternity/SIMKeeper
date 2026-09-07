@@ -118,6 +118,10 @@ jobs:
             || fail "balance-source metadata failed"
           [ "$(jq '[.providers[] | select(.id == "globe")] | length' "$tmp/source-before.json")" = "1" ] \
             || fail "GlobeOne not exposed by SIM-centric balance source"
+          [ "$(jq -r '.providers[] | select(.id == "globe") | .maturity' "$tmp/source-before.json")" = "experimental" ] \
+            || fail "GlobeOne experimental maturity metadata missing"
+          [ -n "$(jq -r '.providers[] | select(.id == "globe") | .availabilityNote // empty' "$tmp/source-before.json")" ] \
+            || fail "GlobeOne experimental availability note missing"
           [ "$(jq -r '.providers[] | select(.id == "globe") | .runtimeReady' "$tmp/source-before.json")" = "true" ] \
             || fail "GlobeOne temporary app token was not reported ready"
           [ "$(jq -r '.providers[] | select(.id == "globe") | .runtimeMode' "$tmp/source-before.json")" = "static-token" ] \
