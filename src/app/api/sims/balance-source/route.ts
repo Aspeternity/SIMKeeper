@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { sqlite } from "@/db";
 import { getCurrentUser } from "@/lib/auth";
+import { globeOneRuntimeAuthStatus } from "@/lib/carrier-connectors/providers/globe-transport";
 import { listCarrierConnectorProviders } from "@/lib/carrier-connectors/registry";
 import {
   createCarrierConnector,
@@ -70,11 +71,24 @@ function positiveId(value: string | null) {
   return Number.isInteger(id) && id > 0 ? id : null;
 }
 
+function providerRuntimeState(providerId: string) {
+  if (providerId !== "globe") {
+    return { runtimeReady: true, runtimeMessage: null as string | null };
+  }
+  const state = globeOneRuntimeAuthStatus();
+  return {
+    runtimeReady: state.configured,
+    runtimeMessage: state.message,
+  };
+}
+
 function listBalanceProviders() {
   return listCarrierConnectorProviders()
     .map((provider) => {
       const matcher = providerMatchers[provider.id];
-      return matcher ? { ...provider, ...matcher } : null;
+      return matcher
+        ? { ...provider, ...matcher, ...providerRuntimeState(provider.id) }
+        : null;
     })
     .filter((provider): provider is NonNullable<typeof provider> => Boolean(provider));
 }
