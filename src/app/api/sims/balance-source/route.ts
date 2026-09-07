@@ -73,12 +73,23 @@ function positiveId(value: string | null) {
 
 function providerRuntimeState(providerId: string) {
   if (providerId !== "globe") {
-    return { runtimeReady: true, runtimeMessage: null as string | null };
+    return {
+      runtimeReady: true,
+      runtimeMessage: null as string | null,
+      runtimeWarning: null as string | null,
+      runtimeMode: null as "oauth" | "static-token" | null,
+      runtimeSource: null as string | null,
+      runtimeExpiresAt: null as string | null,
+    };
   }
   const state = globeOneRuntimeAuthStatus();
   return {
     runtimeReady: state.configured,
     runtimeMessage: state.message,
+    runtimeWarning: state.warning,
+    runtimeMode: state.mode,
+    runtimeSource: state.source,
+    runtimeExpiresAt: state.expiresAt,
   };
 }
 
