@@ -1,5 +1,6 @@
 import "server-only";
 
+import { projectCarrierReportedSimValidity } from "@/lib/carrier-connectors/sim-projection";
 import type {
   CarrierConnectorProvider,
   CarrierConnectorSimContext,
@@ -334,7 +335,7 @@ async function loginAndReadAccount(mobileNumber: string, password: string) {
 export const cslCarrierConnectorProvider: CarrierConnectorProvider = {
   id: "csl",
   label: "csl Prepaid",
-  description: "使用香港 csl Prepaid My Account 的手机号和 6 位密码登录官方 prepaid.hkcsl.com，并从 Card Information 同步余额、状态与有效日期。",
+  description: "使用香港 csl Prepaid My Account 的手机号和 6 位密码登录官方 prepaid.hkcsl.com，并从 Card Information 同步余额、账户状态和 SIM 卡有效期。",
   minLinkedSims: 1,
   maxLinkedSims: 1,
   configFields: [],
@@ -355,10 +356,16 @@ export const cslCarrierConnectorProvider: CarrierConnectorProvider = {
     if (!/^\d{6}$/.test(password)) throw new Error("csl Prepaid 密码必须为 6 位数字");
 
     const account = await loginAndReadAccount(mobileNumber, password);
+
+    // csl Card Information's Expiry Date is the SIM/card lifetime itself, not
+    // a balance expiry. Keep the two concepts separate: project the card expiry
+    // into sim_cards.valid_until and leave balanceValidUntil empty.
+    projectCarrierReportedSimValidity(sim.id, account.expiry);
+
     return {
       balance: account.balance,
       currencyCode: "HKD",
-      balanceValidUntil: account.expiry,
+      balanceValidUntil: null,
       accountStatus: account.accountStatus,
     };
   },
