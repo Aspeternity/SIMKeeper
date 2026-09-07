@@ -54,6 +54,18 @@ function normalizeStaticToken(value: string) {
   return value.replace(/^Bearer\s+/i, "").trim();
 }
 
+export function globeOneRuntimeAuthStatus() {
+  const staticToken = normalizeStaticToken(String(process.env.GLOBEONE_APP_ACCESS_TOKEN ?? "").trim());
+  const authorization = String(process.env.GLOBEONE_APP_AUTHORIZATION ?? "").trim();
+  const configured = Boolean(staticToken || authorization);
+  return {
+    configured,
+    message: configured
+      ? null
+      : "GlobeOne 服务端认证尚未配置。需要先为 SIMKeeper 注入 GlobeOne App 级认证后，才能登录、发送 OTP 或读取余额。",
+  };
+}
+
 function readDeviceId() {
   const configured = cleanSingleLineEnv("GLOBEONE_DEVICE_ID");
   if (configured) {
@@ -99,6 +111,14 @@ function remoteMessage(payload: unknown) {
   const root = isObject(payload) ? payload : {};
   const error = isObject(root.error) ? root.error : {};
   return stringValue(error.message ?? error.description ?? root.message ?? root.description) || "未知错误";
+}
+
+function localTransportErrorResponse(error: unknown) {
+  const message = error instanceof Error ? error.message : "GlobeOne App 级认证初始化失败";
+  return new Response(JSON.stringify({ error: { message } }), {
+    status: 503,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 async function requestOAuthToken(fetchImpl: typeof globalThis.fetch): Promise<TokenCache> {
@@ -245,14 +265,24 @@ async function globeFetch(
     return fetchImpl(next.input, next.init);
   };
 
-  let response = await send(false);
+  let response: Response;
+  try {
+    response = await send(false);
+  } catch (error) {
+    return localTransportErrorResponse(error);
+  }
+
   if ((response.status === 401 || response.status === 403) && cachedToken?.source !== "static") {
     try {
       await response.body?.cancel();
     } catch {
       // Best effort: release the first unauthorized response before retrying once.
     }
-    response = await send(true);
+    try {
+      response = await send(true);
+    } catch (error) {
+      return localTransportErrorResponse(error);
+    }
   }
   return response;
 }
