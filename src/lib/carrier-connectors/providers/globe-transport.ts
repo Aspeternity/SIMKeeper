@@ -30,6 +30,8 @@ type RuntimeSecret = {
   source: string | null;
 };
 
+type RuntimeAuthMode = "oauth" | "static-token" | null;
+
 let cachedToken: TokenCache | null = null;
 let tokenRequest: Promise<TokenCache> | null = null;
 let originalFetch: typeof globalThis.fetch | null = null;
@@ -110,22 +112,65 @@ function runtimeSecrets() {
   };
 }
 
+function decodeJwtExpiry(token: string) {
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8")) as unknown;
+    if (!isObject(payload)) return null;
+    const exp = numberValue(payload.exp);
+    if (!exp || exp <= 0) return null;
+    return Math.floor(exp * 1000);
+  } catch {
+    return null;
+  }
+}
+
+function runtimeMode(secrets: ReturnType<typeof runtimeSecrets>): RuntimeAuthMode {
+  if (secrets.staticToken.value) return "static-token";
+  if (secrets.authorization.value) return "oauth";
+  return null;
+}
+
 export function globeOneRuntimeAuthStatus() {
   try {
     const secrets = runtimeSecrets();
-    const configured = Boolean(secrets.staticToken.value || secrets.authorization.value);
+    const mode = runtimeMode(secrets);
     const source = secrets.staticToken.value ? secrets.staticToken.source : secrets.authorization.source;
+    const staticExpiryMs = secrets.staticToken.value ? decodeJwtExpiry(secrets.staticToken.value) : null;
+    const expired = Boolean(staticExpiryMs && staticExpiryMs <= Date.now());
+    const configured = Boolean(mode && !expired);
+    const expiresAt = staticExpiryMs ? new Date(staticExpiryMs).toISOString() : null;
+
+    let message: string | null = null;
+    let warning: string | null = null;
+    if (!mode) {
+      message = "GlobeOne 服务端认证尚未配置。长期模式请放置 globeone_app_authorization；真实联调也可以临时放置 globeone_app_access_token。";
+    } else if (expired) {
+      message = "GlobeOne 临时 App Access Token 已过期，请替换 secrets/globeone_app_access_token 后重新打开号码编辑页面。";
+    } else if (mode === "static-token") {
+      warning = staticExpiryMs
+        ? `当前为临时 App Access Token 联调模式；Token 预计于 ${new Date(staticExpiryMs).toISOString()} 过期，过期后需要替换文件。`
+        : "当前为临时 App Access Token 联调模式；无法从 Token 本身判断过期时间，若 GlobeOne 返回 401/403 请替换 Token。";
+    }
+
     return {
       configured,
       source,
-      message: configured
-        ? null
-        : "GlobeOne 服务端认证尚未配置。推荐把授权值放在宿主机 secrets/globeone_app_authorization，并只读挂载到 /run/secrets/globeone_app_authorization。",
+      mode,
+      expiresAt,
+      expired,
+      warning,
+      message,
     };
   } catch (error) {
     return {
       configured: false,
       source: null,
+      mode: null as RuntimeAuthMode,
+      expiresAt: null as string | null,
+      expired: false,
+      warning: null as string | null,
       message: error instanceof Error ? error.message : "GlobeOne 服务端认证配置读取失败",
     };
   }
@@ -189,9 +234,13 @@ function localTransportErrorResponse(error: unknown) {
 async function requestOAuthToken(fetchImpl: typeof globalThis.fetch): Promise<TokenCache> {
   const secrets = runtimeSecrets();
   if (secrets.staticToken.value) {
+    const expiresAt = decodeJwtExpiry(secrets.staticToken.value);
+    if (expiresAt && expiresAt <= Date.now()) {
+      throw new Error("GlobeOne 临时 App Access Token 已过期，请替换 secrets/globeone_app_access_token");
+    }
     return {
       token: secrets.staticToken.value,
-      expiresAt: Number.POSITIVE_INFINITY,
+      expiresAt: expiresAt ?? Number.POSITIVE_INFINITY,
       source: "static",
     };
   }
@@ -268,7 +317,7 @@ async function requestOAuthToken(fetchImpl: typeof globalThis.fetch): Promise<To
 
 async function getToken(fetchImpl: typeof globalThis.fetch) {
   if (cachedToken && Date.now() < cachedToken.expiresAt - TOKEN_REFRESH_SKEW_MS) return cachedToken;
-  if (cachedToken?.source === "static") return cachedToken;
+  if (cachedToken?.source === "static" && cachedToken.expiresAt === Number.POSITIVE_INFINITY) return cachedToken;
   if (tokenRequest) return tokenRequest;
 
   tokenRequest = requestOAuthToken(fetchImpl)
