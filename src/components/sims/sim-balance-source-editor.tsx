@@ -49,6 +49,10 @@ type BalanceProvider = {
   carrierNameKeywords: string[];
   runtimeReady?: boolean;
   runtimeMessage?: string | null;
+  runtimeWarning?: string | null;
+  runtimeMode?: "oauth" | "static-token" | null;
+  runtimeSource?: string | null;
+  runtimeExpiresAt?: string | null;
 };
 
 type SourceConnector = {
@@ -109,6 +113,19 @@ function formatDateTime(value: string | null | undefined) {
   }).format(date);
 }
 
+function formatFullDateTime(value: string | null | undefined) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
 function initialConfig(provider: BalanceProvider | undefined) {
   const result: Record<string, string | boolean> = {};
   for (const field of provider?.configFields ?? []) {
@@ -162,6 +179,7 @@ export const SimBalanceSourceEditor = forwardRef<
   const [providerConfig, setProviderConfig] = useState<Record<string, string | boolean>>({});
   const [loading, setLoading] = useState(true);
   const [metadataError, setMetadataError] = useState("");
+  const [runtimeCheckBusy, setRuntimeCheckBusy] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
   const [otpSent, setOtpSent] = useState(false);
@@ -246,6 +264,26 @@ export const SimBalanceSourceEditor = forwardRef<
     setNotice("");
     setOtpSent(false);
     setOtpCode("");
+  }
+
+  async function refreshRuntimeStatus() {
+    if (runtimeCheckBusy) return;
+    setRuntimeCheckBusy(true);
+    setMetadataError("");
+    setActionError("");
+    try {
+      const query = editing ? `?simId=${editing.id}` : "";
+      const response = await fetch(`/api/sims/balance-source${query}`, { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "服务端认证状态检测失败");
+      setProviders((data.providers || []) as BalanceProvider[]);
+      if (editing) setSource((data.source || null) as BalanceSource | null);
+      setNotice("已重新检测运营商认证状态");
+    } catch (error) {
+      setMetadataError(error instanceof Error ? error.message : "服务端认证状态检测失败");
+    } finally {
+      setRuntimeCheckBusy(false);
+    }
   }
 
   function validate() {
@@ -469,6 +507,7 @@ export const SimBalanceSourceEditor = forwardRef<
       : "首次同步后自动填入";
   const runtimeReady = selectedProvider?.runtimeReady !== false;
   const needsGlobeOtp = runtimeReady && globeOtpRequired(sourceForSelectedProvider);
+  const runtimeExpiryLabel = formatFullDateTime(selectedProvider?.runtimeExpiresAt);
 
   return (
     <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50/50 p-4">
@@ -567,6 +606,50 @@ export const SimBalanceSourceEditor = forwardRef<
             <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-5 text-amber-800">
               <div className="font-medium">{selectedProvider.label} 暂时不能建立连接</div>
               <div className="mt-0.5 text-amber-700">{selectedProvider.runtimeMessage}</div>
+              {selectedProvider.id === "globe" ? (
+                <button
+                  type="button"
+                  onClick={() => void refreshRuntimeStatus()}
+                  disabled={runtimeCheckBusy}
+                  className="mt-2 inline-flex h-8 items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-2.5 text-xs font-medium text-amber-800 transition hover:bg-amber-100 disabled:opacity-50"
+                >
+                  {runtimeCheckBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                  {runtimeCheckBusy ? "检测中…" : "重新检测认证状态"}
+                </button>
+              ) : null}
+            </div>
+          ) : selectedProvider.id === "globe" && runtimeReady ? (
+            <div className={`rounded-xl border px-3 py-2.5 text-xs leading-5 ${selectedProvider.runtimeMode === "static-token" ? "border-sky-200 bg-sky-50 text-sky-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <div className="font-medium">
+                    {selectedProvider.runtimeMode === "static-token"
+                      ? "GlobeOne 临时 App Access Token 联调模式已就绪"
+                      : "GlobeOne App 级认证已就绪"}
+                  </div>
+                  <div className={`mt-0.5 ${selectedProvider.runtimeMode === "static-token" ? "text-sky-700" : "text-emerald-700"}`}>
+                    {selectedProvider.runtimeWarning
+                      || (selectedProvider.runtimeMode === "oauth"
+                        ? "SIMKeeper 可以自动获取并刷新 App Access Token。"
+                        : "服务端认证已加载。")}
+                  </div>
+                  {selectedProvider.runtimeMode === "static-token" && runtimeExpiryLabel ? (
+                    <div className="mt-0.5 text-sky-700">检测到 Token 过期时间：{runtimeExpiryLabel}</div>
+                  ) : null}
+                  <div className="mt-0.5 opacity-70">
+                    {selectedProvider.runtimeSource?.startsWith("file:") ? "来源：只读 secret 文件" : "来源：运行时环境变量"}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void refreshRuntimeStatus()}
+                  disabled={runtimeCheckBusy}
+                  className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-current/20 bg-white/70 px-2.5 text-xs font-medium transition hover:bg-white disabled:opacity-50"
+                >
+                  {runtimeCheckBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                  {runtimeCheckBusy ? "检测中…" : "重新检测"}
+                </button>
+              </div>
             </div>
           ) : null}
 
