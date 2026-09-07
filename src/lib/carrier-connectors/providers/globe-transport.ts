@@ -12,6 +12,9 @@ const TOKEN_REFRESH_SKEW_MS = 60_000;
 const TOKEN_FALLBACK_TTL_MS = 10 * 60_000;
 const TOKEN_REQUEST_TIMEOUT_MS = 15_000;
 const MAX_TOKEN_RESPONSE_BYTES = 256 * 1024;
+const MAX_SECRET_BYTES = 64 * 1024;
+const DEFAULT_AUTHORIZATION_FILE = "/run/secrets/globeone_app_authorization";
+const DEFAULT_ACCESS_TOKEN_FILE = "/run/secrets/globeone_app_access_token";
 const DEVICE_ID_PATH = path.join(dataDir, ".globeone-device-id");
 
 type TokenCache = {
@@ -21,6 +24,11 @@ type TokenCache = {
 };
 
 type JsonObject = Record<string, unknown>;
+
+type RuntimeSecret = {
+  value: string;
+  source: string | null;
+};
 
 let cachedToken: TokenCache | null = null;
 let tokenRequest: Promise<TokenCache> | null = null;
@@ -43,27 +51,84 @@ function numberValue(value: unknown) {
   return null;
 }
 
+function cleanSingleLine(value: string, label: string) {
+  const cleaned = value.trim();
+  if (!cleaned) return "";
+  if (/\r|\n/.test(cleaned)) throw new Error(`${label} 不能包含多行内容`);
+  return cleaned;
+}
+
 function cleanSingleLineEnv(name: string) {
-  const value = String(process.env[name] ?? "").trim();
-  if (!value) return "";
-  if (/[\r\n]/.test(value)) throw new Error(`${name} 不能包含换行符`);
-  return value;
+  return cleanSingleLine(String(process.env[name] ?? ""), name);
+}
+
+function readSecretFile(filePath: string, label: string) {
+  if (!path.isAbsolute(filePath)) throw new Error(`${label} 文件路径必须是绝对路径`);
+  try {
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile()) throw new Error(`${label} 不是普通文件`);
+    if (stat.size > MAX_SECRET_BYTES) throw new Error(`${label} 文件过大`);
+    return cleanSingleLine(fs.readFileSync(filePath, "utf8"), label);
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error
+      ? String((error as { code?: unknown }).code)
+      : "";
+    if (code === "ENOENT") return "";
+    throw error;
+  }
+}
+
+function readRuntimeSecret(valueEnv: string, fileEnv: string, defaultFile: string): RuntimeSecret {
+  const direct = cleanSingleLineEnv(valueEnv);
+  if (direct) return { value: direct, source: `env:${valueEnv}` };
+
+  const configuredFile = cleanSingleLineEnv(fileEnv);
+  const filePath = configuredFile || defaultFile;
+  const fromFile = readSecretFile(filePath, fileEnv);
+  if (fromFile) return { value: fromFile, source: `file:${filePath}` };
+  return { value: "", source: null };
 }
 
 function normalizeStaticToken(value: string) {
   return value.replace(/^Bearer\s+/i, "").trim();
 }
 
-export function globeOneRuntimeAuthStatus() {
-  const staticToken = normalizeStaticToken(String(process.env.GLOBEONE_APP_ACCESS_TOKEN ?? "").trim());
-  const authorization = String(process.env.GLOBEONE_APP_AUTHORIZATION ?? "").trim();
-  const configured = Boolean(staticToken || authorization);
+function runtimeSecrets() {
+  const staticToken = readRuntimeSecret(
+    "GLOBEONE_APP_ACCESS_TOKEN",
+    "GLOBEONE_APP_ACCESS_TOKEN_FILE",
+    DEFAULT_ACCESS_TOKEN_FILE,
+  );
+  const authorization = readRuntimeSecret(
+    "GLOBEONE_APP_AUTHORIZATION",
+    "GLOBEONE_APP_AUTHORIZATION_FILE",
+    DEFAULT_AUTHORIZATION_FILE,
+  );
   return {
-    configured,
-    message: configured
-      ? null
-      : "GlobeOne 服务端认证尚未配置。需要先为 SIMKeeper 注入 GlobeOne App 级认证后，才能登录、发送 OTP 或读取余额。",
+    staticToken: { ...staticToken, value: normalizeStaticToken(staticToken.value) },
+    authorization,
   };
+}
+
+export function globeOneRuntimeAuthStatus() {
+  try {
+    const secrets = runtimeSecrets();
+    const configured = Boolean(secrets.staticToken.value || secrets.authorization.value);
+    const source = secrets.staticToken.value ? secrets.staticToken.source : secrets.authorization.source;
+    return {
+      configured,
+      source,
+      message: configured
+        ? null
+        : "GlobeOne 服务端认证尚未配置。推荐把授权值放在宿主机 secrets/globeone_app_authorization，并只读挂载到 /run/secrets/globeone_app_authorization。",
+    };
+  } catch (error) {
+    return {
+      configured: false,
+      source: null,
+      message: error instanceof Error ? error.message : "GlobeOne 服务端认证配置读取失败",
+    };
+  }
 }
 
 function readDeviceId() {
@@ -122,23 +187,23 @@ function localTransportErrorResponse(error: unknown) {
 }
 
 async function requestOAuthToken(fetchImpl: typeof globalThis.fetch): Promise<TokenCache> {
-  const staticToken = normalizeStaticToken(cleanSingleLineEnv("GLOBEONE_APP_ACCESS_TOKEN"));
-  if (staticToken) {
+  const secrets = runtimeSecrets();
+  if (secrets.staticToken.value) {
     return {
-      token: staticToken,
+      token: secrets.staticToken.value,
       expiresAt: Number.POSITIVE_INFINITY,
       source: "static",
     };
   }
 
-  const authorization = cleanSingleLineEnv("GLOBEONE_APP_AUTHORIZATION");
+  const authorization = secrets.authorization.value;
   if (!authorization) {
     throw new Error(
-      "GlobeOne App 级认证尚未配置；请在 SIMKeeper 容器中设置 GLOBEONE_APP_AUTHORIZATION。该值只从环境变量读取，不会写入 SQLite 或备份",
+      "GlobeOne App 级认证尚未配置；请通过 /run/secrets/globeone_app_authorization 或 GLOBEONE_APP_AUTHORIZATION 注入授权值。该值不会写入 SQLite 或便携备份",
     );
   }
   if (!/^Basic\s+\S+/i.test(authorization)) {
-    throw new Error("GLOBEONE_APP_AUTHORIZATION 必须是完整的 Basic Authorization 值");
+    throw new Error("GlobeOne App 授权值必须是完整的 Basic Authorization 值");
   }
 
   const controller = new AbortController();
