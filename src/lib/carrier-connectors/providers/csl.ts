@@ -157,6 +157,39 @@ async function requestPage(
   };
 }
 
+function sameOriginPath(location: string | null) {
+  if (!location) return null;
+  try {
+    const url = new URL(location, CSL_ORIGIN);
+    if (url.origin !== CSL_ORIGIN) return null;
+    return `${url.pathname}${url.search}`;
+  } catch {
+    return null;
+  }
+}
+
+async function followSafeRedirects(
+  initial: PageResponse,
+  cookies: CookieJar,
+  referer: string,
+  maxRedirects = 5,
+) {
+  const pages: PageResponse[] = [initial];
+  const seen = new Set<string>();
+  let current = initial;
+  let currentReferer = referer;
+
+  for (let index = 0; index < maxRedirects; index += 1) {
+    const path = sameOriginPath(current.location);
+    if (!path || seen.has(path)) break;
+    seen.add(path);
+    current = await requestPage(path, cookies, { referer: currentReferer });
+    pages.push(current);
+    currentReferer = `${CSL_ORIGIN}${path}`;
+  }
+  return pages;
+}
+
 function looksLikeLoginPage(html: string) {
   const text = htmlToText(html).toLowerCase();
   return (
@@ -221,10 +254,6 @@ function fieldValue(lines: string[], label: RegExp) {
 
 function parseCardInformation(html: string) {
   const lines = normalizedLines(html);
-  if (!lines.some((line) => /^Card Information$/i.test(line))) {
-    throw new Error("csl Prepaid 已登录，但未进入 Card Information 页面");
-  }
-
   const balanceRaw = fieldValue(lines, /^Balance\b/i);
   const expiryRaw = fieldValue(lines, /^Expiry Date\b/i);
   const statusRaw = fieldValue(lines, /^Status\b/i);
@@ -254,7 +283,9 @@ function parseCardInformation(html: string) {
 
 async function loginAndReadAccount(mobileNumber: string, password: string) {
   const cookies: CookieJar = new Map();
-  await requestPage("/login", cookies);
+
+  const loginStart = await requestPage("/login", cookies);
+  await followSafeRedirects(loginStart, cookies, `${CSL_ORIGIN}/login`);
 
   const login = await requestPage("/login_add", cookies, {
     method: "POST",
@@ -265,12 +296,24 @@ async function loginAndReadAccount(mobileNumber: string, password: string) {
     throw new Error("csl Prepaid 手机号或 6 位密码不正确");
   }
 
-  // Real csl My Account exposes the authoritative balance, SIM status and
-  // expiry on /cardinformation. Read that page directly instead of inferring
-  // values from /usage or unrelated account pages.
-  const cardInformation = await requestPage("/cardinformation?lang=EN", cookies, {
+  const loginPages = await followSafeRedirects(login, cookies, `${CSL_ORIGIN}/login`);
+  if (loginPages.some((page) => looksLikeBadCredentials(page.text))) {
+    throw new Error("csl Prepaid 手机号或 6 位密码不正确");
+  }
+
+  // The real browser flow lands on Card Information after authentication.
+  // Follow csl's same-origin redirects because the site uses redirect responses
+  // to complete session/language setup before rendering the account page.
+  const cardStart = await requestPage("/cardinformation?lang=EN", cookies, {
     referer: `${CSL_ORIGIN}/login`,
   });
+  const cardPages = await followSafeRedirects(
+    cardStart,
+    cookies,
+    `${CSL_ORIGIN}/cardinformation?lang=EN`,
+  );
+  const cardInformation = cardPages[cardPages.length - 1];
+
   if (looksLikeLoginPage(cardInformation.text)) {
     throw new Error("csl Prepaid 登录失败；请确认手机号与 6 位密码，必要时可使用该号码拨 *111# 重设密码");
   }
