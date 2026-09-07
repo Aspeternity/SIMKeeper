@@ -8,5 +8,6 @@ data/*.db
 data/*.db-*
 data/.session-secret
 data/.credential-secret
+data/.globeone-device-id
 data/backups/*
 !data/backups/.gitkeep
