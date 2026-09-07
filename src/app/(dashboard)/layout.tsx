@@ -3,6 +3,7 @@ import { LogIn, ShieldCheck, Smartphone } from "lucide-react";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
 import { Card } from "@/components/ui/card";
+import { buildAttentionItems } from "@/lib/attention-items";
 import { getCurrentUser, hasAdmin } from "@/lib/auth";
 import { getCurrentReminderItems } from "@/lib/notifications";
 
@@ -41,21 +42,18 @@ function AuthGate({ mode }: { mode: "setup" | "login" }) {
 }
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  if (!hasAdmin()) {
-    return <AuthGate mode="setup" />;
-  }
+  if (!hasAdmin()) return <AuthGate mode="setup" />;
 
   const user = await getCurrentUser();
-  if (!user) {
-    return <AuthGate mode="login" />;
-  }
-  const reminders = getCurrentReminderItems();
+  if (!user) return <AuthGate mode="login" />;
+
+  const attentionItems = buildAttentionItems(getCurrentReminderItems());
 
   return (
     <div className="flex min-h-screen bg-slate-50">
       <Sidebar />
       <div className="min-w-0 flex-1">
-        <Topbar username={user.username} reminders={reminders} />
+        <Topbar username={user.username} items={attentionItems} />
         <main className="p-5 sm:p-8">{children}</main>
       </div>
     </div>
