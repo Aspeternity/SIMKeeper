@@ -1,6 +1,9 @@
 export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs" || process.env.SIMKEEPER_BUILD_TIME === "true") return;
 
+  const { installGlobeOneFetchAuth } = await import("@/lib/carrier-connectors/providers/globe-transport");
+  installGlobeOneFetchAuth();
+
   const globalState = globalThis as typeof globalThis & {
     __simkeeperNotificationSchedulerStarted?: boolean;
     __simkeeperCarrierConnectorSchedulerStarted?: boolean;
