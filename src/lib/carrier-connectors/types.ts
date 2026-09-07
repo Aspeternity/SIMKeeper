@@ -35,6 +35,8 @@ export type CarrierConnectorProviderPublic = {
   id: string;
   label: string;
   description: string;
+  maturity?: "stable" | "experimental";
+  availabilityNote?: string;
   configFields: ConnectorConfigField[];
   credentialFields: ConnectorCredentialField[];
   minLinkedSims?: number;
