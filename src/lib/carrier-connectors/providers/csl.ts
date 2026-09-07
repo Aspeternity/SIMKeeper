@@ -92,8 +92,11 @@ function htmlToText(html: string) {
       .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
       .replace(/<br\s*\/?\s*>/gi, "\n")
       .replace(/<\/p\s*>/gi, "\n")
+      .replace(/<\/div\s*>/gi, "\n")
+      .replace(/<\/li\s*>/gi, "\n")
       .replace(/<\/tr\s*>/gi, "\n")
       .replace(/<\/td\s*>/gi, " | ")
+      .replace(/<\/th\s*>/gi, " | ")
       .replace(/<[^>]+>/g, " "),
   )
     .replace(/\r/g, "")
@@ -166,6 +169,61 @@ async function requestPage(
   };
 }
 
+function sameOriginPath(location: string | null) {
+  if (!location) return null;
+  try {
+    const url = new URL(location, CSL_ORIGIN);
+    if (url.origin !== CSL_ORIGIN) return null;
+    return `${url.pathname}${url.search}`;
+  } catch {
+    return null;
+  }
+}
+
+async function followSafeRedirects(
+  initial: PageResponse,
+  cookies: CookieJar,
+  referer: string,
+  maxRedirects = 3,
+) {
+  const pages: PageResponse[] = [initial];
+  const seen = new Set<string>();
+  let current = initial;
+  let currentReferer = referer;
+
+  for (let index = 0; index < maxRedirects; index += 1) {
+    const path = sameOriginPath(current.location);
+    if (!path || seen.has(path)) break;
+    seen.add(path);
+    current = await requestPage(path, cookies, { referer: currentReferer });
+    pages.push(current);
+    currentReferer = `${CSL_ORIGIN}${path}`;
+  }
+  return pages;
+}
+
+function linkedAccountPaths(html: string) {
+  const paths = new Set<string>();
+  const hrefPattern = /href\s*=\s*["']([^"']+)["']/gi;
+  let match: RegExpExecArray | null;
+  while ((match = hrefPattern.exec(html)) !== null) {
+    const raw = decodeHtmlEntities(match[1] ?? "").trim();
+    if (!raw || raw.startsWith("#") || /^javascript:/i.test(raw)) continue;
+    try {
+      const url = new URL(raw, CSL_ORIGIN);
+      if (url.origin !== CSL_ORIGIN) continue;
+      const path = `${url.pathname}${url.search}`;
+      if (!/(?:account|summary|overview|home|usage|balance)/i.test(path)) continue;
+      if (/(?:login|logout|topup|recharge|password|subscribe|payment)/i.test(path)) continue;
+      paths.add(path);
+      if (paths.size >= 4) break;
+    } catch {
+      // Ignore malformed links from the remote page.
+    }
+  }
+  return Array.from(paths);
+}
+
 function looksLikeLoginPage(html: string) {
   const text = htmlToText(html).toLowerCase();
   return (
@@ -182,38 +240,59 @@ function looksLikeBadCredentials(html: string) {
 
 function normalizeMoney(raw: string) {
   const value = Number(raw.replace(/,/g, ""));
-  return Number.isFinite(value) && value >= 0 ? value : null;
+  return Number.isFinite(value) && value >= 0 && value <= 5000 ? value : null;
+}
+
+const balanceLabel = /stored[-\s]*value|store[-\s]*value|main\s*(?:account\s*)?balance|account\s*balance|current\s*balance|remaining\s*balance|prepaid\s*(?:card\s*)?balance|儲值額|储值额|賬戶餘額|账户余额|目前餘額|当前余额|餘額|余额/i;
+
+function extractMoneyAfterLabel(segment: string) {
+  const labelMatch = segment.match(balanceLabel);
+  if (!labelMatch || labelMatch.index === undefined) return null;
+  if (/maximum\s+stored|max(?:imum)?\s+balance|最高儲值|最高储值/i.test(segment)) return null;
+
+  const after = segment.slice(labelMatch.index + labelMatch[0].length, labelMatch.index + labelMatch[0].length + 160);
+  const currency = after.match(/(?:HK\$|HKD|\$)\s*([0-9][0-9,]*(?:\.\d+)?)/i)
+    ?? after.match(/([0-9][0-9,]*(?:\.\d+)?)\s*(?:HKD|HK\$)/i);
+  if (currency) return normalizeMoney(currency[1]);
+
+  const numericPattern = /([0-9][0-9,]*(?:\.\d+)?)/g;
+  let numeric: RegExpExecArray | null;
+  while ((numeric = numericPattern.exec(after)) !== null) {
+    const raw = numeric[1];
+    const value = normalizeMoney(raw);
+    if (value === null) continue;
+    if (raw.replace(/[,\.]/g, "").length >= 6) continue;
+
+    const before = after.slice(Math.max(0, numeric.index - 28), numeric.index);
+    const suffix = after.slice(numeric.index + raw.length, numeric.index + raw.length + 24);
+    if (/expiry|expiration|valid|date|有效|到期/i.test(before)) continue;
+    if (/^\s*(?:GB|MB|KB|TB|day|days|hour|hours|min|mins|minute|minutes|SMS|%)/i.test(suffix)) continue;
+    return value;
+  }
+  return null;
 }
 
 function extractBalance(html: string) {
   const rows = rowsFromHtml(html);
-  const preferredLabels = [
-    /stored\s*value/i,
-    /main\s*(?:account|balance)/i,
-    /account\s*balance/i,
-    /remaining\s*balance/i,
-    /儲值額|储值额|賬戶餘額|账户余额|餘額|余额/i,
-  ];
-
-  for (const label of preferredLabels) {
-    for (const row of rows) {
-      if (!label.test(row)) continue;
-      if (/local\s*data|roaming\s*data|voice|minute|sms/i.test(row)) continue;
-      const money = row.match(/(?:HK\$|HKD|\$)\s*([0-9][0-9,]*(?:\.\d+)?)/i)
-        ?? row.match(/([0-9][0-9,]*(?:\.\d+)?)\s*(?:HKD|HK\$)/i);
-      if (money) {
-        const parsed = normalizeMoney(money[1]);
-        if (parsed !== null) return parsed;
-      }
-    }
+  for (const row of rows) {
+    if (!balanceLabel.test(row)) continue;
+    const parsed = extractMoneyAfterLabel(row);
+    if (parsed !== null) return parsed;
   }
 
-  const text = htmlToText(html);
+  const lines = htmlToText(html).split("\n").filter(Boolean);
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!balanceLabel.test(lines[index])) continue;
+    const segment = [lines[index], lines[index + 1], lines[index + 2]].filter(Boolean).join(" | ");
+    const parsed = extractMoneyAfterLabel(segment);
+    if (parsed !== null) return parsed;
+  }
+
   for (const pattern of [
-    /(?:stored\s*value|main\s*(?:account|balance)|account\s*balance|remaining\s*balance)[\s\S]{0,100}?(?:HK\$|HKD|\$)\s*([0-9][0-9,]*(?:\.\d+)?)/i,
-    /(?:儲值額|储值额|賬戶餘額|账户余额|餘額|余额)[\s\S]{0,80}?(?:HK\$|HKD|\$)?\s*([0-9][0-9,]*(?:\.\d+)?)/i,
+    /["']?(?:storedValue|stored_value|mainBalance|main_balance|accountBalance|account_balance|balance)["']?\s*[:=]\s*["']?(?:HK\$|HKD|\$)?\s*([0-9][0-9,]*(?:\.\d+)?)/i,
+    /data-(?:balance|stored-value)\s*=\s*["'](?:HK\$|HKD|\$)?\s*([0-9][0-9,]*(?:\.\d+)?)["']/i,
   ]) {
-    const match = text.match(pattern);
+    const match = html.match(pattern);
     if (!match) continue;
     const parsed = normalizeMoney(match[1]);
     if (parsed !== null) return parsed;
@@ -238,10 +317,16 @@ function parseDateValue(value: string) {
   match = value.match(/\b(\d{1,2})[-\/.](\d{1,2})[-\/.](20\d{2})\b/);
   if (match) return isoDate(Number(match[3]), Number(match[2]), Number(match[1]));
 
-  match = value.match(/\b(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(20\d{2})\b/i);
+  match = value.match(/\b(\d{1,2})[\s-]+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s,-]+(20\d{2})\b/i);
   if (match) {
     const months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
     return isoDate(Number(match[3]), months.indexOf(match[2].slice(0, 3).toLowerCase()) + 1, Number(match[1]));
+  }
+
+  match = value.match(/\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s-]+(\d{1,2}),?[\s-]+(20\d{2})\b/i);
+  if (match) {
+    const months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+    return isoDate(Number(match[3]), months.indexOf(match[1].slice(0, 3).toLowerCase()) + 1, Number(match[2]));
   }
   return null;
 }
@@ -259,7 +344,7 @@ function extractExpiry(html: string) {
   const lines = text.split("\n");
   for (let index = 0; index < lines.length; index += 1) {
     if (!label.test(lines[index])) continue;
-    const date = parseDateValue(`${lines[index]} ${lines[index + 1] ?? ""}`);
+    const date = parseDateValue(`${lines[index]} ${lines[index + 1] ?? ""} ${lines[index + 2] ?? ""}`);
     if (date) return date;
   }
   return null;
@@ -288,17 +373,47 @@ async function loginAndReadAccount(mobileNumber: string, password: string) {
     throw new Error("csl Prepaid 手机号或 6 位密码不正确");
   }
 
+  const pages = await followSafeRedirects(login, cookies, `${CSL_ORIGIN}/login`);
+  if (pages.some((page) => looksLikeBadCredentials(page.text))) {
+    throw new Error("csl Prepaid 手机号或 6 位密码不正确");
+  }
+  if (pages.some((page) => looksLikeLoginPage(page.text))) {
+    throw new Error("csl Prepaid 登录失败；请确认手机号与 6 位密码，必要时可使用该号码拨 *111# 重设密码");
+  }
+
   const usage = await requestPage("/usage?lang=EN", cookies, {
     referer: `${CSL_ORIGIN}/login`,
   });
   if (looksLikeLoginPage(usage.text)) {
     throw new Error("csl Prepaid 登录失败；请确认手机号与 6 位密码，必要时可使用该号码拨 *111# 重设密码");
   }
+  pages.push(usage);
 
-  const balance = extractBalance(usage.text);
-  const expiry = extractExpiry(usage.text);
+  const visited = new Set<string>(["/usage?lang=EN"]);
+  const discoveredPaths = pages.flatMap((page) => linkedAccountPaths(page.text));
+  for (const path of discoveredPaths) {
+    if (visited.has(path)) continue;
+    visited.add(path);
+    try {
+      const page = await requestPage(path, cookies, { referer: `${CSL_ORIGIN}/usage?lang=EN` });
+      if (!looksLikeLoginPage(page.text)) pages.push(page);
+    } catch {
+      // Optional account links are only fallbacks. A single stale link must not
+      // turn an otherwise valid csl session into a failed sync.
+    }
+    if (visited.size >= 5) break;
+  }
+
+  let balance: number | null = null;
+  let expiry: string | null = null;
+  for (const page of pages) {
+    if (balance === null) balance = extractBalance(page.text);
+    if (expiry === null) expiry = extractExpiry(page.text);
+    if (balance !== null && expiry !== null) break;
+  }
+
   if (balance === null) {
-    throw new Error("csl Prepaid 已登录，但当前页面未识别到余额字段；网页结构可能已经变化，请把错误反馈给 SIMKeeper");
+    throw new Error("csl Prepaid 已登录，但账户概览和使用量页面仍未识别到储值余额；登录本身正常，SIMKeeper 需要继续适配当前网页字段");
   }
 
   return {
