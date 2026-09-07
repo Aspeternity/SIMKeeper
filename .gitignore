@@ -11,3 +11,5 @@ data/.credential-secret
 data/.globeone-device-id
 data/backups/*
 !data/backups/.gitkeep
+secrets/*
+!secrets/.gitkeep
