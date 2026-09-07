@@ -9,6 +9,10 @@ services:
       PGID: 1000
       # 直接通过 HTTP :3000 访问时保持 false；经 HTTPS 反代后可改为 true。
       SIMKEEPER_COOKIE_SECURE: "false"
+      # GlobeOne App 级 OAuth 凭据只从宿主机环境/.env 注入，绝不写入仓库、SQLite 或便携备份。
+      GLOBEONE_APP_AUTHORIZATION: "${GLOBEONE_APP_AUTHORIZATION:-}"
+      # 可选：固定 GlobeOne DeviceId；留空时 SIMKeeper 会在 data 中生成并持久化随机 UUID。
+      GLOBEONE_DEVICE_ID: "${GLOBEONE_DEVICE_ID:-}"
     volumes:
       - ./data:/app/data
     restart: unless-stopped
