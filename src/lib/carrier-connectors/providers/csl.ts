@@ -243,7 +243,7 @@ function normalizeMoney(raw: string) {
   return Number.isFinite(value) && value >= 0 && value <= 5000 ? value : null;
 }
 
-const balanceLabel = /stored[-\s]*value|store[-\s]*value|main\s*(?:account\s*)?balance|account\s*balance|current\s*balance|remaining\s*balance|prepaid\s*(?:card\s*)?balance|儲值額|储值额|賬戶餘額|账户余额|目前餘額|当前余额|餘額|余额/i;
+const balanceLabel = /stored[-\s]*value|store[-\s]*value|main\s*(?:account\s*)?balance|account\s*balance|current\s*balance|remaining\s*balance|available\s*(?:credit|balance)|credit\s*balance|cash\s*balance|remaining\s*value|account\s*value|prepaid\s*(?:card\s*)?balance|儲值額|储值额|賬戶餘額|账户余额|目前餘額|当前余额|可用餘額|可用余额|餘額|余额/i;
 
 function extractMoneyAfterLabel(segment: string) {
   const labelMatch = segment.match(balanceLabel);
@@ -289,8 +289,8 @@ function extractBalance(html: string) {
   }
 
   for (const pattern of [
-    /["']?(?:storedValue|stored_value|mainBalance|main_balance|accountBalance|account_balance|balance)["']?\s*[:=]\s*["']?(?:HK\$|HKD|\$)?\s*([0-9][0-9,]*(?:\.\d+)?)/i,
-    /data-(?:balance|stored-value)\s*=\s*["'](?:HK\$|HKD|\$)?\s*([0-9][0-9,]*(?:\.\d+)?)["']/i,
+    /["']?(?:storedValue|stored_value|mainBalance|main_balance|accountBalance|account_balance|availableBalance|available_balance|creditBalance|credit_balance|balance)["']?\s*[:=]\s*["']?(?:HK\$|HKD|\$)?\s*([0-9][0-9,]*(?:\.\d+)?)/i,
+    /data-(?:balance|stored-value|available-balance)\s*=\s*["'](?:HK\$|HKD|\$)?\s*([0-9][0-9,]*(?:\.\d+)?)["']/i,
   ]) {
     const match = html.match(pattern);
     if (!match) continue;
@@ -356,6 +356,18 @@ function statusFromExpiry(expiry: string | null): ConnectorAccountStatus {
   return Number.isFinite(endOfDay) && Date.now() > endOfDay ? "expired" : "active";
 }
 
+function safePageDiagnostics(pages: PageResponse[]) {
+  return pages.map((page, index) => {
+    const text = htmlToText(page.text);
+    const balanceHint = balanceLabel.test(text) ? 1 : 0;
+    const hkdHint = /HK\$|HKD/i.test(text) ? 1 : 0;
+    const expiryHint = /expiry|expiration|validity|valid\s*(?:until|thru|through)|有效|到期/i.test(text) ? 1 : 0;
+    const localDataHint = /local\s*data/i.test(text) ? 1 : 0;
+    const moneyCount = (text.match(/(?:HK\$|HKD|\$)\s*[0-9][0-9,]*(?:\.\d+)?/gi) ?? []).length;
+    return `P${index + 1}[balance=${balanceHint},hkd=${hkdHint},expiry=${expiryHint},localData=${localDataHint},money=${moneyCount}]`;
+  }).join(" ");
+}
+
 async function loginAndReadAccount(mobileNumber: string, password: string) {
   const cookies: CookieJar = new Map();
   const loginPage = await requestPage("/login?lang=EN", cookies);
@@ -377,10 +389,10 @@ async function loginAndReadAccount(mobileNumber: string, password: string) {
   if (pages.some((page) => looksLikeBadCredentials(page.text))) {
     throw new Error("csl Prepaid 手机号或 6 位密码不正确");
   }
-  if (pages.some((page) => looksLikeLoginPage(page.text))) {
-    throw new Error("csl Prepaid 登录失败；请确认手机号与 6 位密码，必要时可使用该号码拨 *111# 重设密码");
-  }
 
+  // The authenticated account shell can still contain the public login widget.
+  // Do not treat every redirect page that contains login wording as an auth failure.
+  // /usage is the authoritative session check because it requires the authenticated cookie.
   const usage = await requestPage("/usage?lang=EN", cookies, {
     referer: `${CSL_ORIGIN}/login`,
   });
@@ -413,7 +425,7 @@ async function loginAndReadAccount(mobileNumber: string, password: string) {
   }
 
   if (balance === null) {
-    throw new Error("csl Prepaid 已登录，但账户概览和使用量页面仍未识别到储值余额；登录本身正常，SIMKeeper 需要继续适配当前网页字段");
+    throw new Error(`csl Prepaid 已登录，但账户页面仍未识别到储值余额；${safePageDiagnostics(pages)}`);
   }
 
   return {
