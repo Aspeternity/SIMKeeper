@@ -508,6 +508,14 @@ export const SimBalanceSourceEditor = forwardRef<
   const runtimeReady = selectedProvider?.runtimeReady !== false;
   const needsGlobeOtp = runtimeReady && globeOtpRequired(sourceForSelectedProvider);
   const runtimeExpiryLabel = formatFullDateTime(selectedProvider?.runtimeExpiresAt);
+  const showStoredConnectorStatus = Boolean(
+    runtimeReady
+    && sourceForSelectedProvider
+    && (
+      sourceForSelectedProvider.status !== "error"
+      || sourceForSelectedProvider.lastError
+    ),
+  );
 
   return (
     <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50/50 p-4">
@@ -825,10 +833,10 @@ export const SimBalanceSourceEditor = forwardRef<
                 </div>
               )}
             </div>
-          ) : runtimeReady && sourceForSelectedProvider ? (
+          ) : showStoredConnectorStatus && sourceForSelectedProvider ? (
             <div className={`rounded-xl px-3 py-2.5 text-xs leading-5 ${sourceForSelectedProvider.status === "error" ? "border border-rose-100 bg-rose-50 text-rose-700" : "border border-emerald-100 bg-emerald-50 text-emerald-700"}`}>
               {sourceForSelectedProvider.status === "error"
-                ? sourceForSelectedProvider.lastError || "最近一次同步失败"
+                ? sourceForSelectedProvider.lastError
                 : `已启用 · 上次成功 ${formatDateTime(sourceForSelectedProvider.lastSuccessAt)} · 下次计划 ${formatDateTime(sourceForSelectedProvider.nextSyncAt)}`}
             </div>
           ) : null}
