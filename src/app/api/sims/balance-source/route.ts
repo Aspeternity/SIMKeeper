@@ -29,6 +29,10 @@ const providerMatchers: Record<string, {
     supportedCountryCodes: ["PH"],
     carrierNameKeywords: ["dito"],
   },
+  globe: {
+    supportedCountryCodes: ["PH"],
+    carrierNameKeywords: ["globe", "tm", "touch mobile"],
+  },
 };
 
 const configureSchema = z.object({
