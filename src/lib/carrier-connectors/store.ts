@@ -433,7 +433,7 @@ function connectorHealthStatus(row: RawConnector): CarrierConnectorHealthStatus 
     if (errorType === "authentication") return "authentication";
     return "error";
   }
-  if (connectorDataIsStale(row)) return row.last_success_at ? "stale" : "pending";
+  if (connectorDataIsStale(row)) return "stale";
   if (!row.last_success_at) return "pending";
   return "healthy";
 }
