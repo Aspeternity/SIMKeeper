@@ -1,6 +1,7 @@
 import "server-only";
 
 import { sqlite } from "@/db";
+import { ensureCarrierConnectorTables } from "@/lib/carrier-connectors/store";
 import type { ReminderItem } from "@/lib/reminders";
 
 export type ConditionEpisodeStatus = "open" | "resolved";
@@ -43,6 +44,7 @@ type LowBalanceSimRow = {
   balance_updated_at: string | null;
   low_balance_enabled: number;
   low_balance_threshold: number | null;
+  auto_balance_eligible: number;
   carrier_name: string;
   country: string;
 };
@@ -217,11 +219,30 @@ function formatBalanceUpdatedAt(value: string | null) {
 
 export function getLowBalanceReminderItems(): ReminderItem[] {
   ensureConditionEpisodeTables();
+  ensureCarrierConnectorTables();
   const observedAt = new Date().toISOString();
   const sims = sqlite
     .prepare(
       `SELECT s.id, s.label, s.phone_number, s.status, s.balance, s.currency_code,
               s.balance_updated_at, s.low_balance_enabled, s.low_balance_threshold,
+              CASE WHEN EXISTS (
+                SELECT 1
+                FROM carrier_connector_sims l
+                JOIN carrier_connectors cc ON cc.id = l.connector_id
+                WHERE l.sim_id = s.id
+                  AND cc.provider <> 'mock'
+                  AND cc.sync_interval_minutes > 0
+                  AND cc.last_success_at IS NOT NULL
+                  AND (
+                    SELECT ss.balance
+                    FROM sim_sync_snapshots ss
+                    WHERE ss.sim_id = s.id
+                      AND ss.connector_id = cc.id
+                      AND ss.source_provider <> 'mock'
+                    ORDER BY ss.synced_at DESC, ss.id DESC
+                    LIMIT 1
+                  ) IS NOT NULL
+              ) THEN 1 ELSE 0 END AS auto_balance_eligible,
               c.name AS carrier_name, c.country
        FROM sim_cards s
        JOIN carriers c ON c.id = s.carrier_id
@@ -235,7 +256,17 @@ export function getLowBalanceReminderItems(): ReminderItem[] {
     for (const sim of sims) {
       const conditionKey = lowBalanceConditionKey(sim.id);
       const currentEpisode = getOpenEpisode(conditionKey);
-      const enabled = Boolean(sim.low_balance_enabled)
+      const autoBalanceEligible = Boolean(sim.auto_balance_eligible);
+
+      if (!autoBalanceEligible && sim.low_balance_enabled) {
+        sqlite
+          .prepare("UPDATE sim_cards SET low_balance_enabled = 0, updated_at = ? WHERE id = ?")
+          .run(observedAt, sim.id);
+        sim.low_balance_enabled = 0;
+      }
+
+      const enabled = autoBalanceEligible
+        && Boolean(sim.low_balance_enabled)
         && sim.low_balance_threshold !== null
         && Number.isFinite(sim.low_balance_threshold)
         && sim.low_balance_threshold >= 0
