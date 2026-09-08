@@ -1,3 +1,9 @@
+import {
+  daysBetweenLifecycleDates,
+  evaluateLifecycleDeadline,
+  getLifecycleToday,
+} from "@/lib/lifecycle-engine";
+
 export const KEEP_ALIVE_INTERVAL_UNITS = [
   { value: "day", label: "天" },
   { value: "month", label: "个月" },
@@ -146,16 +152,11 @@ export function addKeepAliveInterval(dateString: string, value: number, unit: st
 }
 
 export function localDateString(date = new Date()) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return getLifecycleToday(date);
 }
 
 export function daysBetweenDates(from: string, to: string) {
-  const start = new Date(`${from}T00:00:00Z`).getTime();
-  const end = new Date(`${to}T00:00:00Z`).getTime();
-  return Math.round((end - start) / 86400000);
+  return daysBetweenLifecycleDates(from, to);
 }
 
 export function getKeepAliveRuleStatus({
@@ -171,14 +172,20 @@ export function getKeepAliveRuleStatus({
   gracePeriodDays: number;
   today?: string;
 }): { status: KeepAliveRuleStatus; days: number | null } {
-  if (!enabled) return { status: "disabled", days: null };
-  if (!nextDueDate) return { status: "unscheduled", days: null };
+  const evaluation = evaluateLifecycleDeadline({
+    enabled,
+    dueDate: nextDueDate,
+    warningDays,
+    gracePeriodDays,
+    today,
+  });
 
-  const days = daysBetweenDates(today, nextDueDate);
-  if (days < -Math.max(0, gracePeriodDays)) return { status: "overdue", days };
-  if (days < 0) return { status: "grace", days };
-  if (days <= Math.max(0, warningDays)) return { status: "due_soon", days };
-  return { status: "ok", days };
+  if (evaluation.state === "disabled") return { status: "disabled", days: null };
+  if (evaluation.state === "unscheduled") return { status: "unscheduled", days: null };
+  if (evaluation.state === "healthy") return { status: "ok", days: evaluation.days };
+  if (evaluation.state === "grace") return { status: "grace", days: evaluation.days };
+  if (evaluation.state === "overdue") return { status: "overdue", days: evaluation.days };
+  return { status: "due_soon", days: evaluation.days };
 }
 
 export function getKeepAliveRuleStatusLabel(status: KeepAliveRuleStatus) {
