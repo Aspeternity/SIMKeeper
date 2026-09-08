@@ -3,6 +3,7 @@ import "server-only";
 import { getLowBalanceReminderItems } from "@/lib/condition-episodes";
 import { getLifecycleToday } from "@/lib/lifecycle-engine";
 import { getRawCurrentReminderItems as getRawLifecycleReminderItems } from "@/lib/notifications";
+import { formatPhoneNumber } from "@/lib/phone-format";
 import { filterReminderItems } from "@/lib/reminder-actions";
 import type { ReminderItem, ReminderStatus } from "@/lib/reminders";
 
@@ -26,11 +27,18 @@ function sortUnifiedReminders(items: ReminderItem[]) {
   });
 }
 
+function normalizeReminderDisplay(item: ReminderItem): ReminderItem {
+  return {
+    ...item,
+    phoneNumber: item.phoneNumber ? formatPhoneNumber(item.phoneNumber, item.phoneNumber) : null,
+  };
+}
+
 export function getRawUnifiedReminderItems(today = getLifecycleToday()) {
   return sortUnifiedReminders([
     ...getRawLifecycleReminderItems(today),
     ...getLowBalanceReminderItems(),
-  ]);
+  ].map(normalizeReminderDisplay));
 }
 
 export function getUnifiedReminderItems(today = getLifecycleToday()) {
