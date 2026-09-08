@@ -2,11 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import {
   createBackupPayload,
+  createEncryptedPortableBackup,
   createLocalBackup,
   deleteLocalBackup,
   getBackupSummary,
   listLocalBackups,
+  parseBackupInput,
   readLocalBackup,
+  restoreBackupInput,
   restoreBackupPayload,
 } from "@/lib/backups";
 
@@ -43,6 +46,7 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  // Kept for compatibility with older clients. The alpha.40 UI uses encrypted POST export.
   if (request.nextUrl.searchParams.get("export") === "1") {
     const payload = createBackupPayload("export");
     const stamp = payload.createdAt.replace(/[-:]/g, "").replace(".", "-");
@@ -57,7 +61,12 @@ export async function POST(request: NextRequest) {
   const unauthorized = await requireUser();
   if (unauthorized) return unauthorized;
 
-  const body = await request.json().catch(() => null) as { action?: unknown; name?: unknown; backup?: unknown } | null;
+  const body = await request.json().catch(() => null) as {
+    action?: unknown;
+    name?: unknown;
+    backup?: unknown;
+    passphrase?: unknown;
+  } | null;
   if (!body || typeof body.action !== "string") {
     return NextResponse.json({ error: "缺少备份操作" }, { status: 400 });
   }
@@ -65,18 +74,67 @@ export async function POST(request: NextRequest) {
   try {
     if (body.action === "create") {
       const created = createLocalBackup("manual");
-      return NextResponse.json({ ok: true, backup: { name: created.name, ...getBackupSummary(created.payload), size: created.size } }, { status: 201 });
+      return NextResponse.json({
+        ok: true,
+        backup: {
+          name: created.name,
+          ...getBackupSummary(created.payload),
+          size: created.size,
+        },
+      }, { status: 201 });
+    }
+
+    if (body.action === "exportEncrypted") {
+      if (typeof body.passphrase !== "string") {
+        return NextResponse.json({ error: "请输入备份口令" }, { status: 400 });
+      }
+      const created = createEncryptedPortableBackup(body.passphrase);
+      return jsonDownload(created.encrypted, created.name);
+    }
+
+    if (body.action === "inspectLocal") {
+      if (typeof body.name !== "string") {
+        return NextResponse.json({ error: "请选择要验证的备份" }, { status: 400 });
+      }
+      return NextResponse.json({
+        ok: true,
+        summary: getBackupSummary(readLocalBackup(body.name)),
+      });
+    }
+
+    if (body.action === "inspectImported") {
+      const parsed = parseBackupInput(
+        body.backup,
+        typeof body.passphrase === "string" ? body.passphrase : undefined,
+      );
+      return NextResponse.json({
+        ok: true,
+        summary: getBackupSummary(parsed.payload, parsed.encrypted),
+      });
     }
 
     if (body.action === "restoreLocal") {
-      if (typeof body.name !== "string") return NextResponse.json({ error: "请选择要恢复的备份" }, { status: 400 });
+      if (typeof body.name !== "string") {
+        return NextResponse.json({ error: "请选择要恢复的备份" }, { status: 400 });
+      }
       const restored = restoreBackupPayload(readLocalBackup(body.name));
-      return NextResponse.json({ ok: true, restored: getBackupSummary(restored.payload), safetyBackup: restored.safetyBackup });
+      return NextResponse.json({
+        ok: true,
+        restored: getBackupSummary(restored.payload),
+        safetyBackup: restored.safetyBackup,
+      });
     }
 
     if (body.action === "restoreImported") {
-      const restored = restoreBackupPayload(body.backup);
-      return NextResponse.json({ ok: true, restored: getBackupSummary(restored.payload), safetyBackup: restored.safetyBackup });
+      const restored = restoreBackupInput(
+        body.backup,
+        typeof body.passphrase === "string" ? body.passphrase : undefined,
+      );
+      return NextResponse.json({
+        ok: true,
+        restored: getBackupSummary(restored.payload, restored.encrypted),
+        safetyBackup: restored.safetyBackup,
+      });
     }
 
     return NextResponse.json({ error: "不支持的备份操作" }, { status: 400 });
