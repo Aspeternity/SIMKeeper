@@ -4,6 +4,11 @@ export async function register() {
   const { installGlobeOneFetchAuth } = await import("@/lib/carrier-connectors/providers/globe-transport");
   installGlobeOneFetchAuth();
 
+  const { ensureBalanceTimestampTriggers } = await import("@/lib/balance-timestamps");
+  const { ensureConditionEpisodeTables } = await import("@/lib/condition-episodes");
+  ensureBalanceTimestampTriggers();
+  ensureConditionEpisodeTables();
+
   const globalState = globalThis as typeof globalThis & {
     __simkeeperNotificationSchedulerStarted?: boolean;
     __simkeeperCarrierConnectorSchedulerStarted?: boolean;
