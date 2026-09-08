@@ -11,15 +11,57 @@ import { db, dataDir } from "@/db";
 import { users } from "@/db/schema";
 
 export const SESSION_COOKIE_NAME = "simkeeper_session";
-const SESSION_MAX_AGE = 60 * 60 * 24 * 30;
+export const SESSION_MAX_AGE_DAYS = 30;
+const SESSION_MAX_AGE = 60 * 60 * 24 * SESSION_MAX_AGE_DAYS;
+const SESSION_SECRET_BYTES = 48;
+const PASSWORD_MIN_CHARACTERS = 10;
+const PASSWORD_MAX_BYTES = 72;
 const secretPath = path.join(dataDir, ".session-secret");
 
-function getSecret() {
-  if (!fs.existsSync(secretPath)) {
-    fs.writeFileSync(secretPath, crypto.randomBytes(48).toString("base64url"), { mode: 0o600 });
+function writeSessionSecret(value: string) {
+  const temporaryPath = `${secretPath}.tmp-${process.pid}-${crypto.randomBytes(6).toString("hex")}`;
+  fs.writeFileSync(temporaryPath, value, { mode: 0o600 });
+  fs.renameSync(temporaryPath, secretPath);
+  try {
+    fs.chmodSync(secretPath, 0o600);
+  } catch {
+    // Some mounted filesystems do not support chmod. The session secret still remains inside dataDir.
   }
+}
 
+function generateSessionSecret() {
+  return crypto.randomBytes(SESSION_SECRET_BYTES).toString("base64url");
+}
+
+function getSecret() {
+  if (!fs.existsSync(secretPath)) writeSessionSecret(generateSessionSecret());
   return new TextEncoder().encode(fs.readFileSync(secretPath, "utf8").trim());
+}
+
+export function rotateSessionSecret() {
+  writeSessionSecret(generateSessionSecret());
+}
+
+export function validateUsername(username: string) {
+  const cleanUsername = username.trim();
+  const length = Array.from(cleanUsername).length;
+  if (length < 3 || length > 32) {
+    throw new Error("用户名长度需要在 3 到 32 个字符之间");
+  }
+  if (/[\u0000-\u001f\u007f]/.test(cleanUsername)) {
+    throw new Error("用户名不能包含控制字符");
+  }
+  return cleanUsername;
+}
+
+export function validatePassword(password: string) {
+  if (Array.from(password).length < PASSWORD_MIN_CHARACTERS) {
+    throw new Error(`密码至少需要 ${PASSWORD_MIN_CHARACTERS} 个字符`);
+  }
+  if (Buffer.byteLength(password, "utf8") > PASSWORD_MAX_BYTES) {
+    throw new Error(`密码不能超过 ${PASSWORD_MAX_BYTES} 个 UTF-8 字节`);
+  }
+  return password;
 }
 
 export function hasAdmin() {
@@ -31,13 +73,8 @@ export async function createAdmin(username: string, password: string) {
     throw new Error("管理员账户已经存在");
   }
 
-  const cleanUsername = username.trim();
-  if (cleanUsername.length < 3 || cleanUsername.length > 32) {
-    throw new Error("用户名长度需要在 3 到 32 个字符之间");
-  }
-  if (password.length < 8) {
-    throw new Error("密码至少需要 8 个字符");
-  }
+  const cleanUsername = validateUsername(username);
+  validatePassword(password);
 
   const now = new Date().toISOString();
   const passwordHash = await bcrypt.hash(password, 12);
@@ -47,6 +84,70 @@ export async function createAdmin(username: string, password: string) {
     .values({ username: cleanUsername, passwordHash, createdAt: now, updatedAt: now })
     .returning({ id: users.id, username: users.username })
     .get();
+}
+
+export function getAdminAccount(userId: number) {
+  return (
+    db
+      .select({
+        id: users.id,
+        username: users.username,
+        createdAt: users.createdAt,
+        updatedAt: users.updatedAt,
+      })
+      .from(users)
+      .where(eq(users.id, userId))
+      .get() ?? null
+  );
+}
+
+export async function verifyUserPassword(userId: number, password: string) {
+  const user = db
+    .select({ passwordHash: users.passwordHash })
+    .from(users)
+    .where(eq(users.id, userId))
+    .get();
+  if (!user) return false;
+  return bcrypt.compare(password, user.passwordHash);
+}
+
+export async function updateAdminUsername(userId: number, username: string) {
+  const cleanUsername = validateUsername(username);
+  const current = getAdminAccount(userId);
+  if (!current) throw new Error("管理员账户不存在");
+  if (current.username === cleanUsername) throw new Error("新用户名与当前用户名相同");
+
+  db.update(users)
+    .set({ username: cleanUsername, updatedAt: new Date().toISOString() })
+    .where(eq(users.id, userId))
+    .run();
+
+  const updated = getAdminAccount(userId);
+  if (!updated) throw new Error("管理员账户更新失败");
+  return updated;
+}
+
+export async function updateAdminPassword(userId: number, password: string) {
+  validatePassword(password);
+  const existing = db
+    .select({ passwordHash: users.passwordHash })
+    .from(users)
+    .where(eq(users.id, userId))
+    .get();
+  if (!existing) throw new Error("管理员账户不存在");
+  if (await bcrypt.compare(password, existing.passwordHash)) {
+    throw new Error("新密码不能与当前密码相同");
+  }
+
+  const passwordHash = await bcrypt.hash(password, 12);
+  db.update(users)
+    .set({ passwordHash, updatedAt: new Date().toISOString() })
+    .where(eq(users.id, userId))
+    .run();
+
+  const updated = getAdminAccount(userId);
+  if (!updated) throw new Error("管理员账户更新失败");
+  return updated;
 }
 
 export async function authenticate(username: string, password: string) {
@@ -64,15 +165,19 @@ export async function createSessionToken(user: { id: number; username: string })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(String(user.id))
     .setIssuedAt()
-    .setExpirationTime("30d")
+    .setExpirationTime(`${SESSION_MAX_AGE_DAYS}d`)
     .sign(getSecret());
+}
+
+export function isSessionCookieSecure() {
+  return process.env.SIMKEEPER_COOKIE_SECURE === "true";
 }
 
 export function getSessionCookieOptions() {
   return {
     httpOnly: true,
     sameSite: "lax" as const,
-    secure: process.env.SIMKEEPER_COOKIE_SECURE === "true",
+    secure: isSessionCookieSecure(),
     path: "/",
     maxAge: SESSION_MAX_AGE,
   };

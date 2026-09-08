@@ -1,0 +1,147 @@
+name: Verify Account Security
+
+on:
+  workflow_run:
+    workflows:
+      - Build and Publish Docker Image
+    types:
+      - completed
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  account-security-smoke:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Pull verified image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="${{ github.event.workflow_run.head_sha }}"
+          echo "IMAGE=ghcr.io/aspeternity/simkeeper:sha-${sha:0:7}" >> "$GITHUB_ENV"
+          docker pull "ghcr.io/aspeternity/simkeeper:sha-${sha:0:7}"
+
+      - name: Verify account changes and session revocation
+        shell: bash
+        run: |
+          set -euo pipefail
+          container="simkeeper-account-security-smoke"
+          tmp="$(mktemp -d)"
+          base="http://127.0.0.1:18094"
+          primary="$tmp/primary.cookies"
+          secondary="$tmp/secondary.cookies"
+          logincheck="$tmp/logincheck.cookies"
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            rm -rf "$tmp" || true
+          }
+          trap cleanup EXIT
+          fail() { echo "::error::$1"; docker logs "$container" 2>&1 || true; exit 1; }
+
+          mkdir -p "$tmp/data"
+          docker run -d \
+            --name "$container" \
+            -p 18094:3000 \
+            -e SIMKEEPER_COOKIE_SECURE=false \
+            -e PUID="$(id -u)" \
+            -e PGID="$(id -g)" \
+            -v "$tmp/data:/app/data" \
+            "$IMAGE" >/dev/null || fail "container start failed"
+
+          for _ in $(seq 1 40); do curl -fsS "$base/api/health" >/dev/null 2>&1 && break; sleep 1; done
+          curl -fsS "$base/api/health" >/dev/null || fail "health check failed"
+
+          curl -fsS -c "$primary" -o /dev/null -X POST \
+            --data-urlencode 'username=alpha42admin' \
+            --data-urlencode 'password=account-smoke-123' \
+            --data-urlencode 'confirmPassword=account-smoke-123' \
+            "$base/api/auth/setup" || fail "setup failed"
+
+          curl -fsS -b "$primary" "$base/api/account" > "$tmp/account.json" || fail "account endpoint failed"
+          [ "$(jq -r '.account.username' "$tmp/account.json")" = "alpha42admin" ] || fail "initial username mismatch"
+          [ "$(jq -r '.security.sessionMaxAgeDays' "$tmp/account.json")" = "30" ] || fail "session max age mismatch"
+          [ "$(jq -r '.security.passwordMinimumCharacters' "$tmp/account.json")" = "10" ] || fail "password minimum mismatch"
+          [ "$(jq -r '.security.passwordMaximumBytes' "$tmp/account.json")" = "72" ] || fail "password byte cap mismatch"
+
+          curl -fsS -c "$secondary" -o /dev/null -X POST \
+            --data-urlencode 'username=alpha42admin' \
+            --data-urlencode 'password=account-smoke-123' \
+            "$base/api/auth/login" || fail "secondary login failed"
+          curl -fsS -b "$secondary" "$base/api/account" >/dev/null || fail "secondary session was not established"
+
+          wrong_code="$(curl -sS -b "$primary" -o "$tmp/wrong.json" -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            -d '{"action":"updateUsername","username":"secureadmin","currentPassword":"wrong-password"}' \
+            "$base/api/account")"
+          [ "$wrong_code" = "400" ] || fail "wrong current password was not rejected"
+
+          short_code="$(curl -sS -b "$primary" -o "$tmp/short.json" -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            -d '{"action":"updatePassword","currentPassword":"account-smoke-123","password":"short","confirmPassword":"short"}' \
+            "$base/api/account")"
+          [ "$short_code" = "400" ] || fail "short new password was not rejected"
+
+          curl -fsS -b "$primary" -c "$primary" -H 'Content-Type: application/json' \
+            -d '{"action":"updateUsername","username":"secureadmin","currentPassword":"account-smoke-123"}' \
+            "$base/api/account" > "$tmp/rename.json" || fail "username update failed"
+          [ "$(jq -r '.account.username' "$tmp/rename.json")" = "secureadmin" ] || fail "username was not updated"
+          [ "$(jq -r '.otherSessionsRevoked' "$tmp/rename.json")" = "true" ] || fail "username update did not revoke old sessions"
+          curl -fsS -b "$primary" "$base/api/account" >/dev/null || fail "primary session was not refreshed after username update"
+
+          stale_code="$(curl -sS -b "$secondary" -o /dev/null -w '%{http_code}' "$base/api/account")"
+          [ "$stale_code" = "401" ] || fail "secondary session survived username update"
+
+          rm -f "$logincheck"
+          curl -sS -c "$logincheck" -o /dev/null -X POST \
+            --data-urlencode 'username=alpha42admin' \
+            --data-urlencode 'password=account-smoke-123' \
+            "$base/api/auth/login" >/dev/null
+          old_name_code="$(curl -sS -b "$logincheck" -o /dev/null -w '%{http_code}' "$base/api/account")"
+          [ "$old_name_code" = "401" ] || fail "old username still authenticated"
+
+          rm -f "$logincheck"
+          curl -fsS -c "$logincheck" -o /dev/null -X POST \
+            --data-urlencode 'username=secureadmin' \
+            --data-urlencode 'password=account-smoke-123' \
+            "$base/api/auth/login" || fail "new username login request failed"
+          curl -fsS -b "$logincheck" "$base/api/account" >/dev/null || fail "new username could not authenticate"
+
+          curl -fsS -b "$primary" -c "$primary" -H 'Content-Type: application/json' \
+            -d '{"action":"updatePassword","currentPassword":"account-smoke-123","password":"account-smoke-456","confirmPassword":"account-smoke-456"}' \
+            "$base/api/account" > "$tmp/password.json" || fail "password update failed"
+          [ "$(jq -r '.otherSessionsRevoked' "$tmp/password.json")" = "true" ] || fail "password update did not revoke old sessions"
+          curl -fsS -b "$primary" "$base/api/account" >/dev/null || fail "primary session was not refreshed after password update"
+
+          stale_after_password="$(curl -sS -b "$logincheck" -o /dev/null -w '%{http_code}' "$base/api/account")"
+          [ "$stale_after_password" = "401" ] || fail "pre-password-change session survived password update"
+
+          rm -f "$logincheck"
+          curl -sS -c "$logincheck" -o /dev/null -X POST \
+            --data-urlencode 'username=secureadmin' \
+            --data-urlencode 'password=account-smoke-123' \
+            "$base/api/auth/login" >/dev/null
+          old_password_code="$(curl -sS -b "$logincheck" -o /dev/null -w '%{http_code}' "$base/api/account")"
+          [ "$old_password_code" = "401" ] || fail "old password still authenticated"
+
+          rm -f "$secondary"
+          curl -fsS -c "$secondary" -o /dev/null -X POST \
+            --data-urlencode 'username=secureadmin' \
+            --data-urlencode 'password=account-smoke-456' \
+            "$base/api/auth/login" || fail "new password secondary login request failed"
+          curl -fsS -b "$secondary" "$base/api/account" >/dev/null || fail "new password could not authenticate"
+
+          curl -fsS -b "$primary" -c "$primary" -H 'Content-Type: application/json' \
+            -d '{"action":"revokeOtherSessions","currentPassword":"account-smoke-456"}' \
+            "$base/api/account" > "$tmp/revoke.json" || fail "session revocation failed"
+          [ "$(jq -r '.otherSessionsRevoked' "$tmp/revoke.json")" = "true" ] || fail "revocation response mismatch"
+          curl -fsS -b "$primary" "$base/api/account" >/dev/null || fail "current browser was logged out by revoke-other-sessions"
+
+          revoked_code="$(curl -sS -b "$secondary" -o /dev/null -w '%{http_code}' "$base/api/account")"
+          [ "$revoked_code" = "401" ] || fail "secondary session survived revoke-other-sessions"
+
+          curl -fsS -b "$primary" "$base/security" | grep -q '账号与安全' || fail "account security page did not render"

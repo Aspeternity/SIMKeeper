@@ -66,11 +66,12 @@ export default async function SetupPage({
                 </label>
                 <label className="block space-y-2">
                   <span className="text-sm font-medium">密码</span>
-                  <Input name="password" type="password" autoComplete="new-password" placeholder="至少 8 个字符" minLength={8} required />
+                  <Input name="password" type="password" autoComplete="new-password" placeholder="至少 10 个字符" minLength={10} required />
+                  <span className="block text-xs leading-5 text-slate-400">新密码限制在 72 个 UTF-8 字节以内，避免 bcrypt 超长密码被静默截断。</span>
                 </label>
                 <label className="block space-y-2">
                   <span className="text-sm font-medium">确认密码</span>
-                  <Input name="confirmPassword" type="password" autoComplete="new-password" minLength={8} required />
+                  <Input name="confirmPassword" type="password" autoComplete="new-password" minLength={10} required />
                 </label>
                 <Button className="mt-2 w-full" type="submit">创建管理员</Button>
               </form>

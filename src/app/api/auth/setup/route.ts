@@ -28,8 +28,6 @@ export async function POST(request: NextRequest) {
   const password = String(formData.get("password") ?? "");
   const confirmPassword = String(formData.get("confirmPassword") ?? "");
 
-  if (username.length < 3 || username.length > 32) return redirectTo("/setup", "用户名长度需要在 3 到 32 个字符之间");
-  if (password.length < 8) return redirectTo("/setup", "密码至少需要 8 个字符");
   if (password !== confirmPassword) return redirectTo("/setup", "两次输入的密码不一致");
 
   try {
