@@ -106,7 +106,6 @@ function mapEpisode(row: RawEpisode): ConditionEpisodeRecord {
 }
 
 function getOpenEpisode(conditionKey: string) {
-  ensureConditionEpisodeTables();
   const row = sqlite
     .prepare(
       `SELECT id, condition_key, condition_type, subject_type, subject_id, episode_no,
@@ -166,13 +165,17 @@ function openEpisode(input: {
 }
 
 function observeEpisode(episode: ConditionEpisodeRecord, snapshot: Record<string, unknown>, observedAt: string) {
+  const previousSnapshot = JSON.stringify(episode.snapshot);
+  const nextSnapshot = JSON.stringify(snapshot);
+  if (previousSnapshot === nextSnapshot) return episode;
+
   sqlite
     .prepare(
       `UPDATE condition_episodes
        SET last_observed_at = ?, snapshot_json = ?, updated_at = ?
        WHERE id = ? AND status = 'open'`,
     )
-    .run(observedAt, JSON.stringify(snapshot), observedAt, episode.id);
+    .run(observedAt, nextSnapshot, observedAt, episode.id);
   return { ...episode, lastObservedAt: observedAt, snapshot };
 }
 
@@ -196,6 +199,20 @@ function balanceConditionEligibleStatus(status: string) {
 
 function formatAmount(value: number) {
   return Number(value).toLocaleString("zh-CN", { maximumFractionDigits: 6 });
+}
+
+function formatBalanceUpdatedAt(value: string | null) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
 }
 
 export function getLowBalanceReminderItems(): ReminderItem[] {
@@ -252,6 +269,7 @@ export function getLowBalanceReminderItems(): ReminderItem[] {
           });
       const balanceLabel = `${formatAmount(sim.balance as number)}${currencyCode ? ` ${currencyCode}` : ""}`;
       const thresholdLabel = `${formatAmount(sim.low_balance_threshold as number)}${currencyCode ? ` ${currencyCode}` : ""}`;
+      const updatedLabel = formatBalanceUpdatedAt(sim.balance_updated_at);
 
       activeItems.push({
         key: `low-balance-${sim.id}-episode-${episode.episodeNo}`,
@@ -266,7 +284,7 @@ export function getLowBalanceReminderItems(): ReminderItem[] {
         status: "condition",
         days: null,
         href: "/sims",
-        detail: `当前余额 ${balanceLabel} · 提醒阈值 ${thresholdLabel}${sim.balance_updated_at ? ` · 余额更新时间 ${sim.balance_updated_at}` : ""}`,
+        detail: `当前余额 ${balanceLabel} · 提醒阈值 ${thresholdLabel}${updatedLabel ? ` · 余额更新 ${updatedLabel}` : ""}`,
         requirement: `余额需高于 ${thresholdLabel}`,
       });
     }
