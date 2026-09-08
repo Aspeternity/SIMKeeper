@@ -5,12 +5,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Archive, Loader2, MapPin, Pencil, Plus, ReceiptText, Search, Smartphone, Trash2 } from "lucide-react";
 import { SimDeleteModal } from "@/components/sims/sim-delete-modal";
 import { SimEditorModal } from "@/components/sims/sim-editor-modal";
+import { SimHealthBadge } from "@/components/sims/sim-health-badge";
 import { SimOverviewModal } from "@/components/sims/sim-overview-modal";
 import { TariffModal } from "@/components/sims/tariff-modal";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import type { DeviceRecord } from "@/lib/device-types";
 import { formatPhoneNumber } from "@/lib/phone-format";
+import type { SimHealthItem } from "@/lib/sim-health-types";
 import { getSimStatusLabel, getSimTypeLabel, SIM_STATUSES } from "@/lib/sim-options";
 import type { CarrierRecord, SimRecord } from "@/lib/sim-types";
 import { getRoamingAvailabilityLabel, getSmsReceivePolicyLabel } from "@/lib/tariff-options";
@@ -91,15 +93,25 @@ function countryFlag(countryCode: string) {
   return String.fromCodePoint(...Array.from(code).map((char) => 127397 + char.charCodeAt(0)));
 }
 
+function healthMatchesFilter(health: SimHealthItem | undefined, filter: string) {
+  if (filter === "all") return true;
+  if (!health) return false;
+  if (filter === "needs_attention") return health.healthStatus === "attention" || health.healthStatus === "setup";
+  if (filter === "paused_inactive") return health.healthStatus === "paused" || health.healthStatus === "inactive";
+  return health.healthStatus === filter;
+}
+
 export default function SimsPage() {
   const [sims, setSims] = useState<SimRecord[]>([]);
   const [carriers, setCarriers] = useState<CarrierRecord[]>([]);
   const [devices, setDevices] = useState<DeviceRecord[]>([]);
+  const [healthItems, setHealthItems] = useState<SimHealthItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [countryFilter, setCountryFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [healthFilter, setHealthFilter] = useState("all");
   const [carrierFilter, setCarrierFilter] = useState("all");
   const [deviceFilter, setDeviceFilter] = useState("all");
   const [editorOpen, setEditorOpen] = useState(false);
@@ -112,22 +124,26 @@ export default function SimsPage() {
     setLoading(true);
     setError("");
     try {
-      const [simsResponse, carriersResponse, devicesResponse] = await Promise.all([
+      const [simsResponse, carriersResponse, devicesResponse, healthResponse] = await Promise.all([
         fetch("/api/sims", { cache: "no-store" }),
         fetch("/api/carriers", { cache: "no-store" }),
         fetch("/api/devices", { cache: "no-store" }),
+        fetch("/api/sim-health", { cache: "no-store" }),
       ]);
-      const [simsData, carriersData, devicesData] = await Promise.all([
+      const [simsData, carriersData, devicesData, healthData] = await Promise.all([
         simsResponse.json(),
         carriersResponse.json(),
         devicesResponse.json(),
+        healthResponse.json(),
       ]);
       if (!simsResponse.ok) throw new Error(simsData.error || "号码数据加载失败");
       if (!carriersResponse.ok) throw new Error(carriersData.error || "运营商数据加载失败");
       if (!devicesResponse.ok) throw new Error(devicesData.error || "设备数据加载失败");
+      if (!healthResponse.ok) throw new Error(healthData.error || "号码健康状态加载失败");
       setSims(simsData.sims || []);
       setCarriers(carriersData.carriers || []);
       setDevices(devicesData.devices || []);
+      setHealthItems(healthData.items || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "号码数据加载失败");
     } finally {
@@ -138,6 +154,18 @@ export default function SimsPage() {
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  const healthBySim = useMemo(
+    () => new Map(healthItems.map((item) => [item.simId, item])),
+    [healthItems],
+  );
+
+  const healthSummary = useMemo(() => ({
+    healthy: healthItems.filter((item) => item.healthStatus === "healthy").length,
+    needsAttention: healthItems.filter((item) => item.healthStatus === "attention" || item.healthStatus === "setup").length,
+    critical: healthItems.filter((item) => item.healthStatus === "critical").length,
+    pausedInactive: healthItems.filter((item) => item.healthStatus === "paused" || item.healthStatus === "inactive").length,
+  }), [healthItems]);
 
   const countryOptions = useMemo(() => {
     const countries = new Map<string, { code: string; name: string; count: number }>();
@@ -167,6 +195,7 @@ export default function SimsPage() {
   const filtered = useMemo(() => {
     const value = query.trim().toLowerCase();
     return sims.filter((sim) => {
+      const health = healthBySim.get(sim.id);
       const matchesQuery =
         !value ||
         [
@@ -180,16 +209,20 @@ export default function SimsPage() {
           sim.notes || "",
           sim.tariffPlanName || "",
           sim.tariffUsageSummary || "",
+          health?.healthLabel || "",
+          health?.summary || "",
+          health?.primaryReason?.detail || "",
         ].some((field) => field.toLowerCase().includes(value));
       const matchesCountry = countryFilter === "all" || sim.countryCode.toUpperCase() === countryFilter;
       const matchesStatus = statusFilter === "all" || sim.status === statusFilter;
+      const matchesHealth = healthMatchesFilter(health, healthFilter);
       const matchesCarrier = carrierFilter === "all" || sim.carrierId === Number(carrierFilter);
       const matchesDevice =
         deviceFilter === "all" ||
         (deviceFilter === "unassigned" ? sim.deviceId === null : sim.deviceId === Number(deviceFilter));
-      return matchesQuery && matchesCountry && matchesStatus && matchesCarrier && matchesDevice;
+      return matchesQuery && matchesCountry && matchesStatus && matchesHealth && matchesCarrier && matchesDevice;
     });
-  }, [carrierFilter, countryFilter, deviceFilter, query, sims, statusFilter]);
+  }, [carrierFilter, countryFilter, deviceFilter, healthBySim, healthFilter, query, sims, statusFilter]);
 
   const tariffCount = useMemo(() => sims.filter((sim) => Boolean(sim.tariffId)).length, [sims]);
 
@@ -213,7 +246,7 @@ export default function SimsPage() {
             生命周期
           </div>
           <h2 className="mt-2 text-2xl font-semibold tracking-tight">号码管理</h2>
-          <p className="mt-1 text-sm text-slate-500">集中管理号码基础资料、存放位置、余额、有效期和资费信息。</p>
+          <p className="mt-1 text-sm text-slate-500">集中查看号码资料和统一 Health，快速定位有效期、余额、保号或运营商同步风险。</p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row">
           <Link href="/sims/deleted" className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border bg-white px-4 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
@@ -247,6 +280,27 @@ export default function SimsPage() {
         </Card>
       ) : null}
 
+      {!loading && sims.length ? (
+        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <button type="button" onClick={() => setHealthFilter("healthy")} className="rounded-xl border bg-white px-4 py-3 text-left transition hover:border-emerald-200 hover:bg-emerald-50/30">
+            <div className="text-xs text-slate-400">Health 正常</div>
+            <div className="mt-1 text-xl font-semibold text-emerald-700">{healthSummary.healthy}</div>
+          </button>
+          <button type="button" onClick={() => setHealthFilter("needs_attention")} className="rounded-xl border bg-white px-4 py-3 text-left transition hover:border-amber-200 hover:bg-amber-50/30">
+            <div className="text-xs text-slate-400">需要关注</div>
+            <div className="mt-1 text-xl font-semibold text-amber-700">{healthSummary.needsAttention}</div>
+          </button>
+          <button type="button" onClick={() => setHealthFilter("critical")} className="rounded-xl border bg-white px-4 py-3 text-left transition hover:border-rose-200 hover:bg-rose-50/30">
+            <div className="text-xs text-slate-400">紧急</div>
+            <div className="mt-1 text-xl font-semibold text-rose-700">{healthSummary.critical}</div>
+          </button>
+          <button type="button" onClick={() => setHealthFilter("paused_inactive")} className="rounded-xl border bg-white px-4 py-3 text-left transition hover:bg-slate-50">
+            <div className="text-xs text-slate-400">暂停 / 停用</div>
+            <div className="mt-1 text-xl font-semibold text-slate-600">{healthSummary.pausedInactive}</div>
+          </button>
+        </section>
+      ) : null}
+
       <Card className="overflow-hidden">
         <div className="space-y-3 border-b p-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -256,7 +310,7 @@ export default function SimsPage() {
             </div>
             <div className="relative w-full lg:w-80">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索号码、运营商、存放设备、套餐或 ICCID" className="pl-9" />
+              <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索号码、运营商、Health、套餐或 ICCID" className="pl-9" />
             </div>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
@@ -273,8 +327,15 @@ export default function SimsPage() {
                 </option>
               ))}
             </select>
+            <select value={healthFilter} onChange={(event) => setHealthFilter(event.target.value)} aria-label="按号码健康状态筛选" className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-slate-400">
+              <option value="all">全部 Health</option>
+              <option value="healthy">正常 · {healthSummary.healthy}</option>
+              <option value="needs_attention">需要关注 · {healthSummary.needsAttention}</option>
+              <option value="critical">紧急 · {healthSummary.critical}</option>
+              <option value="paused_inactive">暂停 / 停用 · {healthSummary.pausedInactive}</option>
+            </select>
             <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-slate-400">
-              <option value="all">全部状态</option>
+              <option value="all">全部号码状态</option>
               {SIM_STATUSES.map((status) => <option key={status.value} value={status.value}>{status.label}</option>)}
             </select>
             <select value={carrierFilter} onChange={(event) => setCarrierFilter(event.target.value)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-slate-400">
@@ -295,11 +356,12 @@ export default function SimsPage() {
           <div className="flex min-h-72 flex-col items-center justify-center px-6 text-center">
             <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-500"><Smartphone className="h-5 w-5" /></div>
             <p className="mt-4 text-sm font-medium">{sims.length ? "没有匹配的号码" : "还没有录入号码"}</p>
-            <p className="mt-1 max-w-md text-xs leading-5 text-slate-400">{sims.length ? "尝试调整搜索关键词或筛选条件。" : "录入第一张 SIM / eSIM 后，就可以继续维护资费和生命周期信息。"}</p>
+            <p className="mt-1 max-w-md text-xs leading-5 text-slate-400">{sims.length ? "尝试调整搜索关键词、Health 或其他筛选条件。" : "录入第一张 SIM / eSIM 后，就可以继续维护资费和生命周期信息。"}</p>
           </div>
         ) : (
           <div className="divide-y">
             {filtered.map((sim) => {
+              const health = healthBySim.get(sim.id);
               const hint = dateHint(sim);
               const isDateOverdue = Boolean(sim.validUntil && sim.validUntil < todayDate());
               const feeLabel = planFeeLabel(sim);
@@ -326,6 +388,7 @@ export default function SimsPage() {
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-medium text-slate-900 transition group-hover:text-slate-950">{sim.label}</span>
+                          {health ? <SimHealthBadge status={health.healthStatus} /> : null}
                           <span className={`rounded-md px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ${statusClass(sim.status)}`}>{getSimStatusLabel(sim.status)}</span>
                           {isDateOverdue && sim.status !== "expired" && sim.status !== "closed" ? <span className="rounded-md bg-rose-50 px-2 py-0.5 text-[11px] font-medium text-rose-700 ring-1 ring-inset ring-rose-100">有效期已过</span> : null}
                           {sim.tariffId ? (
@@ -343,6 +406,12 @@ export default function SimsPage() {
                             <MapPin className="h-3 w-3" />{sim.deviceName || "未分配"}
                           </span>
                         </div>
+                        {health?.primaryReason ? (
+                          <div className={`mt-2 line-clamp-2 text-xs leading-5 ${health.healthStatus === "critical" ? "text-rose-600" : health.healthStatus === "attention" ? "text-amber-700" : "text-sky-700"}`}>
+                            <span className="font-medium">{health.primaryReason.title}</span>
+                            <span className="text-slate-400"> · {health.primaryReason.detail}</span>
+                          </div>
+                        ) : null}
                         {sim.tariffId ? (
                           <div className="mt-2 flex flex-wrap gap-1.5">
                             {typeLabel ? <span className="rounded-md bg-indigo-50 px-2 py-1 text-[10px] font-medium text-indigo-700 ring-1 ring-inset ring-indigo-100">{typeLabel}</span> : null}
@@ -426,6 +495,7 @@ export default function SimsPage() {
       {overviewSim ? (
         <SimOverviewModal
           sim={overviewSim}
+          health={healthBySim.get(overviewSim.id) ?? null}
           onClose={() => setOverviewSim(null)}
           onEdit={() => {
             const sim = overviewSim;
