@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { getCountryCallingCode, parsePhoneNumberFromString, type CountryCode } from "libphonenumber-js";
-import { Loader2, UserRoundCheck, X } from "lucide-react";
+import { BellRing, Loader2, UserRoundCheck, X } from "lucide-react";
 import { EsimProfileEditor } from "@/components/sims/esim-profile-editor";
 import {
   SimBalanceSourceEditor,
@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { ModalPortal } from "@/components/ui/modal-portal";
 import { getDeviceTypeLabel, type DeviceRecord } from "@/lib/device-types";
 import { createEmptyEsimProfileForm, type EsimProfileFormValue } from "@/lib/esim-profile-types";
+import { REMINDER_STATE_CHANGED_EVENT } from "@/lib/reminders";
 import {
   getDefaultCurrency,
   IDENTITY_DOCUMENT_TYPES,
@@ -32,6 +33,8 @@ type FormState = {
   iccid: string;
   balance: string;
   currencyCode: string;
+  lowBalanceEnabled: boolean;
+  lowBalanceThreshold: string;
   status: string;
   activationDate: string;
   validUntil: string;
@@ -75,6 +78,8 @@ function initialForm(carriers: CarrierRecord[], editing: SimRecord | null): Form
       iccid: editing.iccid || "",
       balance: editing.balance === null ? "" : String(editing.balance),
       currencyCode: editing.currencyCode || getDefaultCurrency(editing.countryCode),
+      lowBalanceEnabled: Boolean(editing.lowBalanceEnabled),
+      lowBalanceThreshold: editing.lowBalanceThreshold === null ? "" : String(editing.lowBalanceThreshold),
       status: editing.status,
       activationDate: editing.activationDate || "",
       validUntil: editing.validUntil || "",
@@ -99,6 +104,8 @@ function initialForm(carriers: CarrierRecord[], editing: SimRecord | null): Form
     iccid: "",
     balance: "",
     currencyCode: carrier ? getDefaultCurrency(carrier.countryCode) : "USD",
+    lowBalanceEnabled: false,
+    lowBalanceThreshold: "",
     status: "active",
     activationDate: "",
     validUntil: "",
@@ -206,6 +213,10 @@ export function SimEditorModal({
       setError("请选择运营商");
       return;
     }
+    if (form.lowBalanceEnabled && !form.lowBalanceThreshold.trim()) {
+      setError("启用低余额提醒时请填写提醒阈值");
+      return;
+    }
     if (form.identityDocumentType === "other" && !form.identityDocumentTypeCustom.trim()) {
       setError("请输入具体证件 / 材料类型");
       return;
@@ -246,6 +257,7 @@ export function SimEditorModal({
       setPersistedSimId(savedId);
 
       await balanceSourceRef.current?.saveForSim(savedId);
+      window.dispatchEvent(new Event(REMINDER_STATE_CHANGED_EVENT));
       await onSaved();
       onClose();
     } catch (err) {
@@ -397,6 +409,51 @@ export function SimEditorModal({
               onCurrencyChange={(currencyCode) => setForm((current) => ({ ...current, currencyCode }))}
               disabled={saving}
             />
+
+            <section className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div className="flex items-start gap-2.5">
+                  <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-slate-500 ring-1 ring-slate-200">
+                    <BellRing className="h-3.5 w-3.5" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-medium text-slate-800">低余额提醒</div>
+                    <p className="mt-1 max-w-xl text-xs leading-5 text-slate-400">余额低于或等于阈值时进入处理中心；余额恢复到阈值以上会自动解除。余额未知时不会产生提醒。</p>
+                  </div>
+                </div>
+                <label className="inline-flex shrink-0 cursor-pointer items-center gap-2 text-xs font-medium text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={form.lowBalanceEnabled}
+                    onChange={(event) => setForm({ ...form, lowBalanceEnabled: event.target.checked })}
+                    disabled={saving}
+                    className="h-4 w-4 rounded border-slate-300"
+                  />
+                  启用提醒
+                </label>
+              </div>
+
+              {form.lowBalanceEnabled ? (
+                <div className="mt-4 grid gap-2 sm:max-w-md">
+                  <span className="text-xs font-medium text-slate-600">余额低于或等于</span>
+                  <div className="flex h-10 overflow-hidden rounded-xl border border-slate-200 bg-white focus-within:border-slate-400 focus-within:ring-2 focus-within:ring-slate-100">
+                    <input
+                      value={form.lowBalanceThreshold}
+                      onChange={(event) => setForm({ ...form, lowBalanceThreshold: event.target.value })}
+                      type="number"
+                      min="0"
+                      step="any"
+                      inputMode="decimal"
+                      placeholder="例如 20"
+                      className="min-w-0 flex-1 bg-transparent px-3 text-sm text-slate-700 outline-none"
+                    />
+                    <div className="flex min-w-20 items-center justify-center border-l border-slate-200 bg-slate-50 px-3 text-xs font-medium text-slate-500">
+                      {form.currencyCode || "币种"}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </section>
 
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="space-y-1.5 text-sm">
