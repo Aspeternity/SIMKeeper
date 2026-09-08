@@ -1,0 +1,116 @@
+name: Verify Backup Disaster Recovery
+
+on:
+  workflow_run:
+    workflows:
+      - Build and Publish Docker Image
+    types:
+      - completed
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  backup-recovery-smoke:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Pull verified image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="${{ github.event.workflow_run.head_sha }}"
+          echo "IMAGE=ghcr.io/aspeternity/simkeeper:sha-${sha:0:7}" >> "$GITHUB_ENV"
+          docker pull "ghcr.io/aspeternity/simkeeper:sha-${sha:0:7}"
+
+      - name: Verify encrypted export, validation and restore
+        shell: bash
+        run: |
+          set -euo pipefail
+          container="simkeeper-backup-recovery-smoke"
+          tmp="$(mktemp -d)"
+          base="http://127.0.0.1:18093"
+          cookies="$tmp/cookies.txt"
+          passphrase="backup-test-123"
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            rm -rf "$tmp" || true
+          }
+          trap cleanup EXIT
+          fail() { echo "::error::$1"; docker logs "$container" 2>&1 || true; exit 1; }
+
+          mkdir -p "$tmp/data"
+          docker run -d \
+            --name "$container" \
+            -p 18093:3000 \
+            -e SIMKEEPER_COOKIE_SECURE=false \
+            -e PUID="$(id -u)" \
+            -e PGID="$(id -g)" \
+            -v "$tmp/data:/app/data" \
+            "$IMAGE" >/dev/null || fail "container start failed"
+          for _ in $(seq 1 40); do curl -fsS "$base/api/health" >/dev/null 2>&1 && break; sleep 1; done
+          curl -fsS "$base/api/health" >/dev/null || fail "health check failed"
+
+          curl -fsS -c "$cookies" -o /dev/null -X POST \
+            --data-urlencode 'username=backupadmin' \
+            --data-urlencode 'password=smoke-test-123' \
+            --data-urlencode 'confirmPassword=smoke-test-123' \
+            "$base/api/auth/setup" || fail "setup failed"
+
+          curl -fsS -b "$cookies" -H 'Content-Type: application/json' \
+            -d '{"name":"Backup Carrier","countryCode":"PH","website":"","notes":"portable-backup-secret-note"}' \
+            "$base/api/carriers" > "$tmp/carrier.json" || fail "carrier create failed"
+          carrier_id="$(jq -r '.carrier.id' "$tmp/carrier.json")"
+
+          jq -n --argjson carrierId "$carrier_id" '{label:"Backup SIM",phoneNumber:"+639244457547",carrierId:$carrierId,deviceId:null,simType:"physical",iccid:"8986000000000000040",balance:12.5,currencyCode:"PHP",status:"active",activationDate:"2026-09-01",validUntil:"2027-09-01",identityStatus:"registered",identityName:"BACKUP USER",identityDocumentType:"passport",identityDocumentTypeCustom:"",identityDocumentNumber:"BACKUP-SECRET-DOC",identityCountryCode:"CN",identityNotes:"backup identity secret",notes:"backup smoke",esimProfile:null}' > "$tmp/sim.json"
+          curl -fsS -b "$cookies" -H 'Content-Type: application/json' --data-binary @"$tmp/sim.json" "$base/api/sims" > "$tmp/sim-created.json" || fail "sim create failed"
+
+          curl -fsS -b "$cookies" -H 'Content-Type: application/json' \
+            -d '{"action":"create"}' "$base/api/backups" > "$tmp/local.json" || fail "local backup create failed"
+          [ "$(jq -r '.backup.validation' "$tmp/local.json")" = "verified" ] || fail "local backup is not integrity verified"
+          [ "$(jq -r '.backup.formatVersion' "$tmp/local.json")" = "4" ] || fail "local backup format is not v4"
+
+          jq -n --arg passphrase "$passphrase" '{action:"exportEncrypted",passphrase:$passphrase}' > "$tmp/export-request.json"
+          curl -fsS -b "$cookies" -H 'Content-Type: application/json' --data-binary @"$tmp/export-request.json" "$base/api/backups" > "$tmp/secure.simkeeper-backup" || fail "encrypted export failed"
+          [ "$(jq -r '.format' "$tmp/secure.simkeeper-backup")" = "simkeeper-encrypted-portable-backup" ] || fail "encrypted wrapper format mismatch"
+          [ "$(jq -r '.encryption.cipher' "$tmp/secure.simkeeper-backup")" = "aes-256-gcm" ] || fail "cipher mismatch"
+          [ "$(jq -r '.encryption.kdf' "$tmp/secure.simkeeper-backup")" = "scrypt" ] || fail "kdf mismatch"
+          if grep -qE 'Backup Carrier|639244457547|BACKUP-SECRET-DOC|backupadmin' "$tmp/secure.simkeeper-backup"; then
+            fail "portable encrypted backup leaked plaintext sensitive data"
+          fi
+
+          jq -n --slurpfile backup "$tmp/secure.simkeeper-backup" --arg passphrase "$passphrase" '{action:"inspectImported",backup:$backup[0],passphrase:$passphrase}' > "$tmp/inspect-request.json"
+          curl -fsS -b "$cookies" -H 'Content-Type: application/json' --data-binary @"$tmp/inspect-request.json" "$base/api/backups" > "$tmp/inspect.json" || fail "encrypted backup inspection failed"
+          [ "$(jq -r '.summary.encrypted' "$tmp/inspect.json")" = "true" ] || fail "inspection did not report encrypted backup"
+          [ "$(jq -r '.summary.validation' "$tmp/inspect.json")" = "verified" ] || fail "inspection did not verify digest"
+          [ "$(jq -r '.summary.counts.sim_cards' "$tmp/inspect.json")" = "1" ] || fail "inspection summary count mismatch"
+
+          jq -n --slurpfile backup "$tmp/secure.simkeeper-backup" '{action:"inspectImported",backup:$backup[0],passphrase:"wrong-password"}' > "$tmp/wrong-request.json"
+          wrong_code="$(curl -sS -b "$cookies" -o "$tmp/wrong.json" -w '%{http_code}' -H 'Content-Type: application/json' --data-binary @"$tmp/wrong-request.json" "$base/api/backups")"
+          [ "$wrong_code" = "400" ] || fail "wrong passphrase was not rejected"
+
+          jq '.ciphertext = ((.ciphertext[0:8]) + "A" + (.ciphertext[9:]))' "$tmp/secure.simkeeper-backup" > "$tmp/tampered.simkeeper-backup"
+          jq -n --slurpfile backup "$tmp/tampered.simkeeper-backup" --arg passphrase "$passphrase" '{action:"inspectImported",backup:$backup[0],passphrase:$passphrase}' > "$tmp/tamper-request.json"
+          tamper_code="$(curl -sS -b "$cookies" -o "$tmp/tamper.json" -w '%{http_code}' -H 'Content-Type: application/json' --data-binary @"$tmp/tamper-request.json" "$base/api/backups")"
+          [ "$tamper_code" = "400" ] || fail "tampered ciphertext was not rejected"
+
+          curl -fsS -b "$cookies" -H 'Content-Type: application/json' \
+            -d '{"name":"After Backup Carrier","countryCode":"HK","website":"","notes":"must disappear after restore"}' \
+            "$base/api/carriers" >/dev/null || fail "post-backup mutation failed"
+          curl -fsS -b "$cookies" "$base/api/carriers" > "$tmp/carriers-before.json" || fail "carriers before restore failed"
+          jq -e '.carriers | map(.name) | index("After Backup Carrier") != null' "$tmp/carriers-before.json" >/dev/null || fail "post-backup mutation missing"
+
+          jq -n --slurpfile backup "$tmp/secure.simkeeper-backup" --arg passphrase "$passphrase" '{action:"restoreImported",backup:$backup[0],passphrase:$passphrase}' > "$tmp/restore-request.json"
+          curl -fsS -b "$cookies" -H 'Content-Type: application/json' --data-binary @"$tmp/restore-request.json" "$base/api/backups" > "$tmp/restore.json" || fail "encrypted restore failed"
+          [ "$(jq -r '.restored.validation' "$tmp/restore.json")" = "verified" ] || fail "restored backup was not verified"
+          [ -n "$(jq -r '.safetyBackup // empty' "$tmp/restore.json")" ] || fail "pre-restore safety backup was not created"
+
+          curl -fsS -b "$cookies" "$base/api/carriers" > "$tmp/carriers-after.json" || fail "carriers after restore failed"
+          jq -e '.carriers | map(.name) | index("Backup Carrier") != null' "$tmp/carriers-after.json" >/dev/null || fail "original carrier missing after restore"
+          jq -e '.carriers | map(.name) | index("After Backup Carrier") == null' "$tmp/carriers-after.json" >/dev/null || fail "post-backup mutation survived restore"
+
+          curl -fsS -b "$cookies" "$base/api/backups" > "$tmp/backups-after.json" || fail "backup list after restore failed"
+          jq -e '.backups | map(.reason) | index("pre-restore") != null' "$tmp/backups-after.json" >/dev/null || fail "pre-restore safety backup missing from list"
