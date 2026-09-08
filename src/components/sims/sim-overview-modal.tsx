@@ -17,10 +17,12 @@ import {
 import { KeepAliveOverviewSection } from "@/components/keep-alive/keep-alive-overview-section";
 import { EsimProfileOverviewSection } from "@/components/sims/esim-profile-overview-section";
 import { SimBalanceDetail } from "@/components/sims/sim-balance-detail";
+import { SimHealthBadge } from "@/components/sims/sim-health-badge";
 import { Card } from "@/components/ui/card";
 import { ModalPortal } from "@/components/ui/modal-portal";
 import { COUNTRY_REGIONS } from "@/lib/countries";
 import { formatPhoneNumber } from "@/lib/phone-format";
+import type { SimHealthItem, SimHealthReasonSeverity, SimHealthStatus } from "@/lib/sim-health-types";
 import {
   getIdentityDocumentTypeLabel,
   getIdentityStatusLabel,
@@ -123,6 +125,20 @@ function statusClass(status: string) {
     default:
       return "bg-slate-100 text-slate-500 ring-slate-200";
   }
+}
+
+function healthPanelClass(status: SimHealthStatus) {
+  if (status === "critical") return "border-rose-200 bg-rose-50/60";
+  if (status === "attention") return "border-amber-200 bg-amber-50/60";
+  if (status === "setup") return "border-sky-200 bg-sky-50/60";
+  if (status === "healthy") return "border-emerald-200 bg-emerald-50/50";
+  return "border-slate-200 bg-slate-50/70";
+}
+
+function healthReasonClass(severity: SimHealthReasonSeverity) {
+  if (severity === "critical") return "border-rose-100 bg-white/80 text-rose-700";
+  if (severity === "attention") return "border-amber-100 bg-white/80 text-amber-700";
+  return "border-sky-100 bg-white/80 text-sky-700";
 }
 
 function planTypeLabel(value: string | null | undefined) {
@@ -484,11 +500,13 @@ function SectionHeader({
 
 export function SimOverviewModal({
   sim,
+  health,
   onClose,
   onEdit,
   onEditTariff,
 }: {
   sim: SimRecord;
+  health?: SimHealthItem | null;
   onClose: () => void;
   onEdit: () => void;
   onEditTariff: () => void;
@@ -548,6 +566,7 @@ export function SimOverviewModal({
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-2">
               <h3 className="text-xl font-semibold text-slate-900">{sim.label}</h3>
+              {health ? <SimHealthBadge status={health.healthStatus} /> : null}
               <span className={`rounded-md px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ${statusClass(sim.status)}`}>
                 {getSimStatusLabel(sim.status)}
               </span>
@@ -569,6 +588,34 @@ export function SimOverviewModal({
         </div>
 
         <div className="min-h-0 flex-1 space-y-6 overflow-y-auto bg-white px-5 py-5 sm:px-6">
+          {health ? (
+            <section data-sim-health-detail={health.healthStatus} className={`rounded-2xl border p-4 ${healthPanelClass(health.healthStatus)}`}>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-semibold text-slate-900">号码健康</span>
+                    <SimHealthBadge status={health.healthStatus} />
+                  </div>
+                  <p className="mt-2 text-sm font-medium text-slate-700">{health.summary}</p>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">Health 汇总真实的有效期、保号、余额与运营商连接状态；即使任务被忽略或延后，这里的风险判断也不会被隐藏。</p>
+                </div>
+                {health.updatedAt ? <div className="shrink-0 text-[11px] text-slate-400">最近状态更新 {health.updatedAt.slice(0, 16).replace("T", " ")}</div> : null}
+              </div>
+
+              {health.reasons.length ? (
+                <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                  {health.reasons.slice(0, 6).map((reason) => (
+                    <div key={reason.key} className={`rounded-xl border px-3 py-2.5 ${healthReasonClass(reason.severity)}`}>
+                      <div className="text-xs font-semibold">{reason.title}</div>
+                      <div className="mt-1 text-[11px] leading-5 text-slate-500">{reason.detail}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {health.reasons.length > 6 ? <div className="mt-2 text-[11px] text-slate-400">另有 {health.reasons.length - 6} 项健康原因未展开</div> : null}
+            </section>
+          ) : null}
+
           <section className="space-y-3">
             <SectionHeader
               title="基本信息"
