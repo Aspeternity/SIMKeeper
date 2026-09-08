@@ -1,6 +1,9 @@
 import "server-only";
 
-import { getLowBalanceReminderItems } from "@/lib/condition-episodes";
+import {
+  getLowBalanceReminderItems,
+  getSyncHealthReminderItems,
+} from "@/lib/condition-episodes";
 import { getLifecycleToday } from "@/lib/lifecycle-engine";
 import { getRawCurrentReminderItems as getRawLifecycleReminderItems } from "@/lib/notifications";
 import { formatPhoneNumber } from "@/lib/phone-format";
@@ -38,6 +41,7 @@ export function getRawUnifiedReminderItems(today = getLifecycleToday()) {
   return sortUnifiedReminders([
     ...getRawLifecycleReminderItems(today),
     ...getLowBalanceReminderItems(),
+    ...getSyncHealthReminderItems(),
   ].map(normalizeReminderDisplay));
 }
 
