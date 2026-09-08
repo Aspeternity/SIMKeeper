@@ -1,5 +1,5 @@
 import { ListChecks } from "lucide-react";
-import { ReminderCenter } from "@/components/reminders/reminder-center";
+import { ReminderCenterLive } from "@/components/reminders/reminder-center-live";
 import { getUnifiedReminderItems } from "@/lib/current-reminders";
 import { listReminderActions } from "@/lib/reminder-actions";
 
@@ -22,7 +22,7 @@ export default function RemindersPage() {
         <p className="mt-1 text-sm text-slate-500">号码有效期、保号规则与低余额状态共用同一套待处理事项；真实数据恢复正常后事项会自动解除，“稍后提醒 / 忽略本轮”只调整当前这一轮的提醒节奏。</p>
       </div>
 
-      <ReminderCenter reminders={reminders} history={history} />
+      <ReminderCenterLive reminders={reminders} history={history} />
     </div>
   );
 }
