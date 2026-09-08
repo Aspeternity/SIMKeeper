@@ -218,7 +218,8 @@ export function SimBalanceDetail({ sim }: { sim: SimRecord }) {
 
   const automatic = Boolean(source?.connector);
   const connector = source?.connector ?? null;
-  const latest = automatic && source?.latest?.connectorId === connector?.id ? source.latest : null;
+  const latestCandidate = source?.latest ?? null;
+  const latest = automatic && latestCandidate?.connectorId === connector?.id ? latestCandidate : null;
   const balance = latest?.balance ?? sim.balance;
   const currencyCode = latest?.currencyCode ?? sim.currencyCode;
   const displayBalance = balance === null || balance === undefined
