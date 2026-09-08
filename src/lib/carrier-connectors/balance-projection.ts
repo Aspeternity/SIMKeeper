@@ -5,8 +5,11 @@ import { sqlite } from "@/db";
 const TRIGGER_NAME = "simkeeper_project_carrier_balance";
 
 export function ensureCarrierBalanceProjection() {
+  // Recreate the trigger so existing installations also pick up new projection
+  // fields introduced after the trigger was first installed.
+  sqlite.exec(`DROP TRIGGER IF EXISTS ${TRIGGER_NAME};`);
   sqlite.exec(`
-    CREATE TRIGGER IF NOT EXISTS ${TRIGGER_NAME}
+    CREATE TRIGGER ${TRIGGER_NAME}
     AFTER INSERT ON sim_sync_snapshots
     WHEN NEW.source_provider <> 'mock'
       AND EXISTS (
@@ -19,6 +22,7 @@ export function ensureCarrierBalanceProjection() {
       UPDATE sim_cards
       SET balance = NEW.balance,
           currency_code = NEW.currency_code,
+          balance_updated_at = NEW.synced_at,
           updated_at = NEW.synced_at
       WHERE id = NEW.sim_id;
     END;
@@ -53,6 +57,17 @@ export function ensureCarrierBalanceProjection() {
           ORDER BY ss.synced_at DESC, ss.id DESC
           LIMIT 1
         ),
+        balance_updated_at = COALESCE((
+          SELECT ss.synced_at
+          FROM sim_sync_snapshots ss
+          JOIN carrier_connector_sims l
+            ON l.sim_id = ss.sim_id
+           AND l.connector_id = ss.connector_id
+          WHERE ss.sim_id = sim_cards.id
+            AND ss.source_provider <> 'mock'
+          ORDER BY ss.synced_at DESC, ss.id DESC
+          LIMIT 1
+        ), balance_updated_at),
         updated_at = COALESCE((
           SELECT ss.synced_at
           FROM sim_sync_snapshots ss
