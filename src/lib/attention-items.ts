@@ -9,7 +9,7 @@ import {
 } from "@/lib/reminders";
 
 export type AttentionSource = "lifecycle" | "carrier_connector" | "balance";
-export type AttentionKind = ReminderKind | "connector_health" | "low_balance";
+export type AttentionKind = ReminderKind | "connector_health";
 export type AttentionPriority = "critical" | "attention" | "watch" | "setup";
 export type AttentionSection = "now" | "soon" | "setup";
 
@@ -48,7 +48,7 @@ const priorityRank: Record<AttentionPriority, number> = {
 export function getAttentionPriority(status: ReminderStatus): AttentionPriority {
   if (status === "overdue") return "critical";
   if (status === "grace" || status === "today") return "attention";
-  if (status === "upcoming") return "watch";
+  if (status === "upcoming" || status === "condition") return "watch";
   return "setup";
 }
 
@@ -65,7 +65,8 @@ export function getAttentionSection(priority: AttentionPriority): AttentionSecti
   return "setup";
 }
 
-function getAttentionActionLabel(priority: AttentionPriority) {
+function getAttentionActionLabel(priority: AttentionPriority, kind: ReminderKind) {
+  if (kind === "low_balance") return "查看号码";
   if (priority === "setup") return "去设置";
   if (priority === "watch") return "查看处理";
   return "立即处理";
@@ -73,9 +74,10 @@ function getAttentionActionLabel(priority: AttentionPriority) {
 
 export function reminderToAttentionItem(reminder: ReminderItem): AttentionItem {
   const priority = getAttentionPriority(reminder.status);
+  const source: AttentionSource = reminder.kind === "low_balance" ? "balance" : "lifecycle";
   return {
-    key: `lifecycle:${reminder.key}:${reminder.dueDate ?? "none"}`,
-    source: "lifecycle",
+    key: `${source}:${reminder.key}:${reminder.dueDate ?? "none"}`,
+    source,
     kind: reminder.kind,
     kindLabel: getReminderKindLabel(reminder.kind),
     priority,
@@ -92,7 +94,7 @@ export function reminderToAttentionItem(reminder: ReminderItem): AttentionItem {
     status: reminder.status,
     statusLabel: getReminderStatusLabel(reminder.status),
     href: getReminderTaskHref(reminder),
-    actionLabel: getAttentionActionLabel(priority),
+    actionLabel: getAttentionActionLabel(priority, reminder.kind),
     reminderKey: reminder.key,
     canSnooze: true,
     canIgnore: true,
