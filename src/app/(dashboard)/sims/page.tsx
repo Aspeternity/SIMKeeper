@@ -10,6 +10,7 @@ import { TariffModal } from "@/components/sims/tariff-modal";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import type { DeviceRecord } from "@/lib/device-types";
+import { formatPhoneNumber } from "@/lib/phone-format";
 import { getSimStatusLabel, getSimTypeLabel, SIM_STATUSES } from "@/lib/sim-options";
 import type { CarrierRecord, SimRecord } from "@/lib/sim-types";
 import { getRoamingAvailabilityLabel, getSmsReceivePolicyLabel } from "@/lib/tariff-options";
@@ -303,6 +304,7 @@ export default function SimsPage() {
               const isDateOverdue = Boolean(sim.validUntil && sim.validUntil < todayDate());
               const feeLabel = planFeeLabel(sim);
               const typeLabel = planTypeLabel(sim.tariffPlanType);
+              const phoneDisplay = formatPhoneNumber(sim.phoneNumber, "未填写手机号");
               return (
                 <div
                   key={sim.id}
@@ -333,7 +335,7 @@ export default function SimsPage() {
                           )}
                         </div>
                         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-500">
-                          <span>{sim.phoneNumber || "未填写手机号"}</span>
+                          <span>{phoneDisplay}</span>
                           <span>{sim.carrierName}</span>
                           <span>{sim.country} · {sim.countryCode}</span>
                           <span>{getSimTypeLabel(sim.simType)}</span>
