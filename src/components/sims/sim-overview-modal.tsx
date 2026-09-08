@@ -20,6 +20,7 @@ import { SimBalanceDetail } from "@/components/sims/sim-balance-detail";
 import { Card } from "@/components/ui/card";
 import { ModalPortal } from "@/components/ui/modal-portal";
 import { COUNTRY_REGIONS } from "@/lib/countries";
+import { formatPhoneNumber } from "@/lib/phone-format";
 import {
   getIdentityDocumentTypeLabel,
   getIdentityStatusLabel,
@@ -534,6 +535,7 @@ export function SimOverviewModal({
     const period = periodLabel(tariff.recurringPeriodValue, tariff.recurringPeriodUnit);
     return `${formatMoney(tariff.recurringFee, tariff.currencyCode)}${period ? ` / ${period}` : ""}`;
   }, [tariff]);
+  const phoneDisplay = useMemo(() => formatPhoneNumber(sim.phoneNumber, "未记录"), [sim.phoneNumber]);
 
   return (
     <ModalPortal onBackdropClick={onClose}>
@@ -551,7 +553,7 @@ export function SimOverviewModal({
               </span>
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400">
-              <CopyValue value={sim.phoneNumber || ""} className="text-xs text-slate-400" />
+              <CopyValue value={phoneDisplay === "未记录" ? "" : phoneDisplay} className="text-xs text-slate-400" />
               <CopyValue value={sim.carrierName} className="text-xs text-slate-400" />
               <CopyValue value={`${sim.country} · ${sim.countryCode}`} className="text-xs text-slate-400" />
               <CopyValue value={getSimTypeLabel(sim.simType)} className="text-xs text-slate-400" />
@@ -587,7 +589,7 @@ export function SimOverviewModal({
             {basicOpen ? (
               <>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  <DetailItem label="手机号 / MSISDN" value={sim.phoneNumber || "未记录"} />
+                  <DetailItem label="手机号 / MSISDN" value={phoneDisplay} />
                   <DetailItem label="运营商" value={`${sim.carrierName} · ${sim.country}`} />
                   <DetailItem label="SIM 类型" value={getSimTypeLabel(sim.simType)} />
                   <DetailItem label="存放位置" value={sim.deviceName || "未分配"} />
