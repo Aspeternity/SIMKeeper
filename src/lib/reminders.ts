@@ -1,8 +1,8 @@
 import { getKeepAliveRechargeRequirementLabel, getKeepAliveRuleStatus } from "@/lib/keep-alive";
 import { isLifecycleEligibleSimStatus } from "@/lib/lifecycle-engine";
 
-export type ReminderKind = "sim_validity" | "keep_alive";
-export type ReminderStatus = "overdue" | "grace" | "today" | "upcoming" | "unscheduled";
+export type ReminderKind = "sim_validity" | "keep_alive" | "low_balance";
+export type ReminderStatus = "overdue" | "grace" | "today" | "upcoming" | "unscheduled" | "condition";
 
 export const REMINDER_STATE_CHANGED_EVENT = "simkeeper:reminder-state-changed";
 export const REMINDER_TASK_FOCUS_EVENT = "simkeeper:reminder-task-focus";
@@ -53,8 +53,9 @@ const statusRank: Record<ReminderStatus, number> = {
   overdue: 0,
   grace: 1,
   today: 2,
-  upcoming: 3,
-  unscheduled: 4,
+  condition: 3,
+  upcoming: 4,
+  unscheduled: 5,
 };
 
 function reminderStatusFromRuleState(state: { status: string; days: number | null }): ReminderStatus | null {
@@ -227,15 +228,21 @@ export function getReminderStatusLabel(status: ReminderStatus) {
       return "即将到期";
     case "unscheduled":
       return "待设置日期";
+    case "condition":
+      return "余额不足";
   }
 }
 
 export function getReminderKindLabel(kind: ReminderKind) {
-  return kind === "sim_validity" ? "号码有效期" : "保号规则";
+  if (kind === "sim_validity") return "号码有效期";
+  if (kind === "keep_alive") return "保号规则";
+  return "低余额";
 }
 
 export function getReminderRelativeLabel(item: Pick<ReminderItem, "status" | "days">) {
-  if (item.status === "unscheduled" || item.days === null) return "待设置日期";
+  if (item.status === "condition") return "余额低于提醒阈值";
+  if (item.status === "unscheduled") return "待设置日期";
+  if (item.days === null) return "待处理";
   if (item.status === "today") return "今天";
   if (item.status === "grace") return `已过期 ${Math.abs(item.days)} 天 · 宽限期内`;
   if (item.status === "overdue") return `已逾期 ${Math.abs(item.days)} 天`;
