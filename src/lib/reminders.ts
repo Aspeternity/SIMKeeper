@@ -1,4 +1,5 @@
-import { daysBetweenDates, getKeepAliveRechargeRequirementLabel, getKeepAliveRuleStatus } from "@/lib/keep-alive";
+import { getKeepAliveRechargeRequirementLabel, getKeepAliveRuleStatus } from "@/lib/keep-alive";
+import { isLifecycleEligibleSimStatus } from "@/lib/lifecycle-engine";
 
 export type ReminderKind = "sim_validity" | "keep_alive";
 export type ReminderStatus = "overdue" | "grace" | "today" | "upcoming" | "unscheduled";
@@ -21,6 +22,8 @@ export type ReminderItem = {
   href: string;
   detail: string;
   requirement?: string | null;
+  warningDays?: number;
+  gracePeriodDays?: number;
 };
 
 type ReminderSim = {
@@ -95,7 +98,10 @@ export function buildReminderItems({
   const reminders: ReminderItem[] = [];
 
   for (const sim of sims) {
-    if (sim.status === "closed") continue;
+    // Lifecycle attention is actionable only for active numbers. Paused,
+    // expired and closed numbers remain in records/history but do not keep
+    // generating current work for the user.
+    if (!isLifecycleEligibleSimStatus(sim.status)) continue;
 
     const simRules = rulesBySim.get(sim.id) ?? [];
     const linkedValidityRule = simRules.find((rule) => rule.enabled && rule.dueDateSource === "sim_validity");
@@ -125,14 +131,23 @@ export function buildReminderItems({
           days: state.days,
           href: "/sims",
           detail: sim.validUntil
-            ? `号码有效期将在 ${sim.validUntil} 到期 · 跟随保号规则“${linkedValidityRule.name}” · 提前 ${linkedValidityRule.warningDays} 天提醒${requirement ? ` · 操作要求：${requirement}` : ""}`
+            ? `号码有效期将在 ${sim.validUntil} 到期 · 跟随保号规则“${linkedValidityRule.name}” · 提前 ${linkedValidityRule.warningDays} 天提醒${linkedValidityRule.gracePeriodDays > 0 ? ` · 宽限 ${linkedValidityRule.gracePeriodDays} 天` : ""}${requirement ? ` · 操作要求：${requirement}` : ""}`
             : `跟随号码有效期的保号规则“${linkedValidityRule.name}”已启用，但号码尚未设置有效期${requirement ? ` · 操作要求：${requirement}` : ""}`,
           requirement,
+          warningDays: linkedValidityRule.warningDays,
+          gracePeriodDays: linkedValidityRule.gracePeriodDays,
         });
       }
     } else if (sim.validUntil) {
-      const days = daysBetweenDates(today, sim.validUntil);
-      if (days <= validityWarningDays) {
+      const state = getKeepAliveRuleStatus({
+        enabled: true,
+        nextDueDate: sim.validUntil,
+        warningDays: validityWarningDays,
+        gracePeriodDays: 0,
+        today,
+      });
+      const status = reminderStatusFromRuleState(state);
+      if (status) {
         reminders.push({
           key: `validity-${sim.id}`,
           simId: sim.id,
@@ -143,11 +158,13 @@ export function buildReminderItems({
           kind: "sim_validity",
           title: "号码有效期",
           dueDate: sim.validUntil,
-          status: days < 0 ? "overdue" : days === 0 ? "today" : "upcoming",
-          days,
+          status,
+          days: state.days,
           href: "/sims",
-          detail: `号码有效期将在 ${sim.validUntil} 到期`,
+          detail: `号码有效期将在 ${sim.validUntil} 到期 · 提前 ${validityWarningDays} 天提醒`,
           requirement: null,
+          warningDays: validityWarningDays,
+          gracePeriodDays: 0,
         });
       }
     }
@@ -179,9 +196,11 @@ export function buildReminderItems({
         days: state.days,
         href: "/sims",
         detail: rule.nextDueDate
-          ? `下一次保号操作日期 ${rule.nextDueDate} · 提前 ${rule.warningDays} 天提醒${requirement ? ` · 操作要求：${requirement}` : ""}`
+          ? `下一次保号操作日期 ${rule.nextDueDate} · 提前 ${rule.warningDays} 天提醒${rule.gracePeriodDays > 0 ? ` · 宽限 ${rule.gracePeriodDays} 天` : ""}${requirement ? ` · 操作要求：${requirement}` : ""}`
           : `该保号规则尚未设置下一次操作日期${requirement ? ` · 操作要求：${requirement}` : ""}`,
         requirement,
+        warningDays: rule.warningDays,
+        gracePeriodDays: rule.gracePeriodDays,
       });
     }
   }
