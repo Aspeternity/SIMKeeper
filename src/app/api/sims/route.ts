@@ -51,6 +51,11 @@ const deviceIdField = z.preprocess(
   z.number().int().positive("存放位置无效").nullable(),
 );
 
+const optionalLowBalanceThreshold = z.preprocess(
+  (value) => (value === "" || value === null || value === undefined ? null : Number(value)),
+  z.number().finite().nonnegative("低余额阈值不能小于 0").nullable(),
+);
+
 const simSchema = z
   .object({
     label: z.string().trim().min(1, "请输入号码名称").max(80, "号码名称不能超过 80 个字符"),
@@ -70,6 +75,8 @@ const simSchema = z
       z.number().finite().nonnegative("余额不能小于 0").nullable(),
     ),
     currencyCode: z.string().trim().max(3, "币种代码不能超过 3 位").optional().default(""),
+    lowBalanceEnabled: z.boolean().optional().default(false),
+    lowBalanceThreshold: optionalLowBalanceThreshold.optional().default(null),
     status: z.enum(["active", "paused", "expired", "closed"]),
     activationDate: dateField,
     validUntil: dateField,
@@ -94,8 +101,11 @@ const simSchema = z
   })
   .superRefine((value, context) => {
     const currencyCode = value.currencyCode.toUpperCase();
-    if (value.balance !== null && !/^[A-Z]{3}$/.test(currencyCode)) {
-      context.addIssue({ code: "custom", path: ["currencyCode"], message: "填写余额时请选择币种" });
+    if ((value.balance !== null || value.lowBalanceEnabled) && !/^[A-Z]{3}$/.test(currencyCode)) {
+      context.addIssue({ code: "custom", path: ["currencyCode"], message: "填写余额或启用低余额提醒时请选择币种" });
+    }
+    if (value.lowBalanceEnabled && value.lowBalanceThreshold === null) {
+      context.addIssue({ code: "custom", path: ["lowBalanceThreshold"], message: "启用低余额提醒时请填写提醒阈值" });
     }
     if (value.activationDate && value.validUntil && value.activationDate > value.validUntil) {
       context.addIssue({ code: "custom", path: ["validUntil"], message: "有效期不能早于激活日期" });
@@ -131,6 +141,9 @@ const rowSelection = {
   iccid: simCards.iccid,
   balance: simCards.balance,
   currencyCode: simCards.currencyCode,
+  balanceUpdatedAt: simCards.balanceUpdatedAt,
+  lowBalanceEnabled: simCards.lowBalanceEnabled,
+  lowBalanceThreshold: simCards.lowBalanceThreshold,
   status: simCards.status,
   activationDate: simCards.activationDate,
   validUntil: simCards.validUntil,
@@ -216,7 +229,9 @@ function normalize(parsed: z.infer<typeof simSchema>, phoneNumber: string | null
     simType: parsed.simType,
     iccid: parsed.iccid || null,
     balance: parsed.balance,
-    currencyCode: parsed.balance === null ? null : parsed.currencyCode.toUpperCase(),
+    currencyCode: parsed.balance === null && !parsed.lowBalanceEnabled ? null : parsed.currencyCode.toUpperCase(),
+    lowBalanceEnabled: parsed.lowBalanceEnabled,
+    lowBalanceThreshold: parsed.lowBalanceThreshold,
     status: parsed.status,
     activationDate: parsed.activationDate || null,
     validUntil: parsed.validUntil || null,
@@ -271,9 +286,15 @@ export async function POST(request: NextRequest) {
   try {
     const insertedId = sqlite.transaction(() => {
       const now = new Date().toISOString();
+      const normalized = normalize(parsed.data, normalizedPhone.phoneNumber);
       const inserted = db
         .insert(simCards)
-        .values({ ...normalize(parsed.data, normalizedPhone.phoneNumber), createdAt: now, updatedAt: now })
+        .values({
+          ...normalized,
+          balanceUpdatedAt: normalized.balance !== null ? now : null,
+          createdAt: now,
+          updatedAt: now,
+        })
         .returning({ id: simCards.id })
         .get();
 
@@ -304,7 +325,16 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "提交的数据不正确" }, { status: 400 });
   }
 
-  const current = db.select({ id: simCards.id }).from(simCards).where(eq(simCards.id, id)).get();
+  const current = db
+    .select({
+      id: simCards.id,
+      balance: simCards.balance,
+      currencyCode: simCards.currencyCode,
+      balanceUpdatedAt: simCards.balanceUpdatedAt,
+    })
+    .from(simCards)
+    .where(eq(simCards.id, id))
+    .get();
   if (!current) {
     return NextResponse.json({ error: "号码不存在" }, { status: 404 });
   }
@@ -328,8 +358,15 @@ export async function PATCH(request: NextRequest) {
 
   try {
     sqlite.transaction(() => {
+      const now = new Date().toISOString();
+      const normalized = normalize(parsed.data, normalizedPhone.phoneNumber);
+      const balanceChanged = current.balance !== normalized.balance || current.currencyCode !== normalized.currencyCode;
       db.update(simCards)
-        .set({ ...normalize(parsed.data, normalizedPhone.phoneNumber), updatedAt: new Date().toISOString() })
+        .set({
+          ...normalized,
+          balanceUpdatedAt: balanceChanged ? now : current.balanceUpdatedAt,
+          updatedAt: now,
+        })
         .where(eq(simCards.id, id))
         .run();
 
