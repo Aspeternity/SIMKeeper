@@ -35,7 +35,7 @@ type BalanceSource = {
 };
 
 function formatDateTime(value: string | null | undefined) {
-  if (!value) return "尚未同步";
+  if (!value) return "尚未更新";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat("zh-CN", {
@@ -113,6 +113,7 @@ export function SimBalanceDetail({ sim }: { sim: SimRecord }) {
       if (!response.ok) throw new Error(data.error || "余额同步失败");
       setNotice("已同步");
       window.dispatchEvent(new CustomEvent("simkeeper:balance-synced", { detail: { simId: sim.id } }));
+      window.dispatchEvent(new Event("simkeeper:reminder-state-changed"));
     } catch (syncError) {
       setError(syncError instanceof Error ? syncError.message : "余额同步失败");
     } finally {
@@ -165,6 +166,7 @@ export function SimBalanceDetail({ sim }: { sim: SimRecord }) {
       setNotice(data.message || "GlobeOne 验证完成");
       await reloadSource();
       window.dispatchEvent(new CustomEvent("simkeeper:balance-synced", { detail: { simId: sim.id } }));
+      window.dispatchEvent(new Event("simkeeper:reminder-state-changed"));
     } catch (authError) {
       setError(authError instanceof Error ? authError.message : "GlobeOne 验证失败");
     } finally {
@@ -180,6 +182,7 @@ export function SimBalanceDetail({ sim }: { sim: SimRecord }) {
     ? "未记录"
     : `${balance} ${currencyCode || ""}`.trim();
   const needsGlobeOtp = globeOtpRequired(source?.connector);
+  const balanceUpdatedAt = latest?.syncedAt ?? sim.balanceUpdatedAt;
 
   return (
     <div className="rounded-xl bg-slate-50 px-3.5 py-3">
@@ -208,6 +211,13 @@ export function SimBalanceDetail({ sim }: { sim: SimRecord }) {
           </button>
         ) : null}
         {notice ? <span className="text-[10px] font-medium text-emerald-600">{notice}</span> : null}
+      </div>
+
+      <div className="mt-2 space-y-0.5 text-[10px] leading-4 text-slate-400">
+        {balanceUpdatedAt ? <div>余额更新 {formatDateTime(balanceUpdatedAt)}</div> : null}
+        {sim.lowBalanceEnabled && sim.lowBalanceThreshold !== null ? (
+          <div>低余额提醒 ≤ {sim.lowBalanceThreshold} {sim.currencyCode || currencyCode || ""}</div>
+        ) : null}
       </div>
 
       {automatic && source?.connector ? (
