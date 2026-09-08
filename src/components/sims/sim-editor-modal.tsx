@@ -48,6 +48,36 @@ type FormState = {
   notes: string;
 };
 
+type LowBalanceSourcePayload = {
+  connector: {
+    id: number;
+    provider: string;
+    syncIntervalMinutes: number;
+    lastSuccessAt: string | null;
+  } | null;
+  latest: {
+    connectorId: number | null;
+    sourceProvider: string;
+    balance: number | null;
+  } | null;
+};
+
+function lowBalanceSourceEligible(source: LowBalanceSourcePayload | null) {
+  const connector = source?.connector;
+  const latest = source?.latest;
+  return Boolean(
+    connector
+    && connector.provider !== "mock"
+    && connector.syncIntervalMinutes > 0
+    && connector.lastSuccessAt
+    && latest
+    && latest.connectorId === connector.id
+    && latest.sourceProvider !== "mock"
+    && latest.balance !== null
+    && Number.isFinite(latest.balance),
+  );
+}
+
 function getCallingCode(countryCode: string) {
   if (!countryCode) return "";
   try {
@@ -149,6 +179,8 @@ export function SimEditorModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [persistedSimId, setPersistedSimId] = useState<number | null>(editing?.id ?? null);
+  const [lowBalanceEligible, setLowBalanceEligible] = useState(false);
+  const [lowBalanceEligibilityLoading, setLowBalanceEligibilityLoading] = useState(Boolean(editing?.id));
   const balanceSourceRef = useRef<SimBalanceSourceEditorHandle | null>(null);
 
   const selectedCarrier = useMemo(
@@ -188,6 +220,54 @@ export function SimEditorModal({
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    const simId = persistedSimId;
+
+    async function refreshLowBalanceEligibility() {
+      if (!simId) {
+        if (active) {
+          setLowBalanceEligible(false);
+          setLowBalanceEligibilityLoading(false);
+        }
+        return;
+      }
+
+      setLowBalanceEligibilityLoading(true);
+      try {
+        const response = await fetch(`/api/sims/balance-source?simId=${simId}`, { cache: "no-store" });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "余额同步状态加载失败");
+        if (!active) return;
+
+        const eligible = lowBalanceSourceEligible((data.source || null) as LowBalanceSourcePayload | null);
+        setLowBalanceEligible(eligible);
+        if (!eligible) {
+          setForm((current) => current.lowBalanceEnabled
+            ? { ...current, lowBalanceEnabled: false }
+            : current);
+        }
+      } catch {
+        if (active) setLowBalanceEligible(false);
+      } finally {
+        if (active) setLowBalanceEligibilityLoading(false);
+      }
+    }
+
+    function handleBalanceSynced(event: Event) {
+      const detail = (event as CustomEvent<{ simId?: number }>).detail;
+      if (!detail?.simId || detail.simId !== simId) return;
+      void refreshLowBalanceEligibility();
+    }
+
+    void refreshLowBalanceEligibility();
+    window.addEventListener("simkeeper:balance-synced", handleBalanceSynced as EventListener);
+    return () => {
+      active = false;
+      window.removeEventListener("simkeeper:balance-synced", handleBalanceSynced as EventListener);
+    };
+  }, [persistedSimId]);
 
   function changeCarrier(carrierId: string) {
     const carrier = carriers.find((item) => item.id === Number(carrierId));
@@ -410,50 +490,52 @@ export function SimEditorModal({
               disabled={saving}
             />
 
-            <section className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                <div className="flex items-start gap-2.5">
-                  <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-slate-500 ring-1 ring-slate-200">
-                    <BellRing className="h-3.5 w-3.5" />
-                  </div>
-                  <div>
-                    <div className="text-sm font-medium text-slate-800">低余额提醒</div>
-                    <p className="mt-1 max-w-xl text-xs leading-5 text-slate-400">余额低于或等于阈值时进入处理中心；余额恢复到阈值以上会自动解除。余额未知时不会产生提醒。</p>
-                  </div>
-                </div>
-                <label className="inline-flex shrink-0 cursor-pointer items-center gap-2 text-xs font-medium text-slate-600">
-                  <input
-                    type="checkbox"
-                    checked={form.lowBalanceEnabled}
-                    onChange={(event) => setForm({ ...form, lowBalanceEnabled: event.target.checked })}
-                    disabled={saving}
-                    className="h-4 w-4 rounded border-slate-300"
-                  />
-                  启用提醒
-                </label>
-              </div>
-
-              {form.lowBalanceEnabled ? (
-                <div className="mt-4 grid gap-2 sm:max-w-md">
-                  <span className="text-xs font-medium text-slate-600">余额低于或等于</span>
-                  <div className="flex h-10 overflow-hidden rounded-xl border border-slate-200 bg-white focus-within:border-slate-400 focus-within:ring-2 focus-within:ring-slate-100">
-                    <input
-                      value={form.lowBalanceThreshold}
-                      onChange={(event) => setForm({ ...form, lowBalanceThreshold: event.target.value })}
-                      type="number"
-                      min="0"
-                      step="any"
-                      inputMode="decimal"
-                      placeholder="例如 20"
-                      className="min-w-0 flex-1 bg-transparent px-3 text-sm text-slate-700 outline-none"
-                    />
-                    <div className="flex min-w-20 items-center justify-center border-l border-slate-200 bg-slate-50 px-3 text-xs font-medium text-slate-500">
-                      {form.currencyCode || "币种"}
+            {!lowBalanceEligibilityLoading && lowBalanceEligible ? (
+              <section className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="flex items-start gap-2.5">
+                    <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-slate-500 ring-1 ring-slate-200">
+                      <BellRing className="h-3.5 w-3.5" />
+                    </div>
+                    <div>
+                      <div className="text-sm font-medium text-slate-800">低余额提醒</div>
+                      <p className="mt-1 max-w-xl text-xs leading-5 text-slate-400">仅根据运营商周期自动同步的真实余额判断；余额低于或等于阈值时进入处理中心，恢复到阈值以上后自动解除。</p>
                     </div>
                   </div>
+                  <label className="inline-flex shrink-0 cursor-pointer items-center gap-2 text-xs font-medium text-slate-600">
+                    <input
+                      type="checkbox"
+                      checked={form.lowBalanceEnabled}
+                      onChange={(event) => setForm({ ...form, lowBalanceEnabled: event.target.checked })}
+                      disabled={saving}
+                      className="h-4 w-4 rounded border-slate-300"
+                    />
+                    启用提醒
+                  </label>
                 </div>
-              ) : null}
-            </section>
+
+                {form.lowBalanceEnabled ? (
+                  <div className="mt-4 grid gap-2 sm:max-w-md">
+                    <span className="text-xs font-medium text-slate-600">余额低于或等于</span>
+                    <div className="flex h-10 overflow-hidden rounded-xl border border-slate-200 bg-white focus-within:border-slate-400 focus-within:ring-2 focus-within:ring-slate-100">
+                      <input
+                        value={form.lowBalanceThreshold}
+                        onChange={(event) => setForm({ ...form, lowBalanceThreshold: event.target.value })}
+                        type="number"
+                        min="0"
+                        step="any"
+                        inputMode="decimal"
+                        placeholder="例如 20"
+                        className="min-w-0 flex-1 bg-transparent px-3 text-sm text-slate-700 outline-none"
+                      />
+                      <div className="flex min-w-20 items-center justify-center border-l border-slate-200 bg-slate-50 px-3 text-xs font-medium text-slate-500">
+                        {form.currencyCode || "币种"}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
 
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="space-y-1.5 text-sm">
