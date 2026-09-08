@@ -24,9 +24,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const channelTypeValues = NOTIFICATION_CHANNEL_TYPES.map((item) => item.value) as [NotificationChannelType, ...NotificationChannelType[]];
-const legacyReminderKindValues = ["sim_validity", "keep_alive"] as const;
+const alpha37ReminderKindValues = ["sim_validity", "keep_alive"] as const;
+const alpha38ReminderKindValues = ["sim_validity", "keep_alive", "low_balance"] as const;
 const legacyReminderStatusValues = ["upcoming", "today", "grace", "overdue", "unscheduled"] as const;
-const reminderKindValues = ["sim_validity", "keep_alive", "low_balance"] as const;
+const reminderKindValues = ["sim_validity", "keep_alive", "low_balance", "sync_health"] as const;
 const reminderStatusValues = ["upcoming", "today", "grace", "overdue", "unscheduled", "condition"] as const;
 
 const httpUrl = z
@@ -80,13 +81,16 @@ function configString(config: NotificationChannelConfig | undefined, key: string
   return typeof value === "string" ? value.trim() : "";
 }
 
+function isExactSelection<T extends string>(selected: T[], values: readonly T[]) {
+  return selected.length === values.length && values.every((value) => selected.includes(value));
+}
+
 function normalizedFilters(raw: Record<string, unknown>, existing?: NotificationChannelConfig) {
   const source = raw.filters ?? existing?.filters ?? defaultFilters;
   const parsed = filterSchema.parse(source);
-  const legacyKinds = parsed.kinds.length === legacyReminderKindValues.length
-    && legacyReminderKindValues.every((value) => parsed.kinds.includes(value));
-  const legacyStatuses = parsed.statuses.length === legacyReminderStatusValues.length
-    && legacyReminderStatusValues.every((value) => parsed.statuses.includes(value));
+  const legacyKinds = isExactSelection(parsed.kinds, alpha37ReminderKindValues)
+    || isExactSelection(parsed.kinds, alpha38ReminderKindValues);
+  const legacyStatuses = isExactSelection(parsed.statuses, legacyReminderStatusValues);
   return {
     kinds: legacyKinds ? [...reminderKindValues] : parsed.kinds,
     statuses: legacyStatuses ? [...reminderStatusValues] : parsed.statuses,
