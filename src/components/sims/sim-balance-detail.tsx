@@ -19,6 +19,8 @@ type SourceConnector = {
 };
 
 type SourceSnapshot = {
+  connectorId: number | null;
+  sourceProvider: string;
   balance: number | null;
   currencyCode: string | null;
   balanceValidUntil: string | null;
@@ -33,6 +35,22 @@ type BalanceSource = {
   stale: boolean;
   sourceDeleted: boolean;
 };
+
+function lowBalanceSourceEligible(source: BalanceSource | null) {
+  const connector = source?.connector;
+  const latest = source?.latest;
+  return Boolean(
+    connector
+    && connector.provider !== "mock"
+    && connector.syncIntervalMinutes > 0
+    && connector.lastSuccessAt
+    && latest
+    && latest.connectorId === connector.id
+    && latest.sourceProvider !== "mock"
+    && latest.balance !== null
+    && Number.isFinite(latest.balance),
+  );
+}
 
 function formatDateTime(value: string | null | undefined) {
   if (!value) return "尚未更新";
@@ -183,6 +201,7 @@ export function SimBalanceDetail({ sim }: { sim: SimRecord }) {
     : `${balance} ${currencyCode || ""}`.trim();
   const needsGlobeOtp = globeOtpRequired(source?.connector);
   const balanceUpdatedAt = latest?.syncedAt ?? sim.balanceUpdatedAt;
+  const lowBalanceEligible = lowBalanceSourceEligible(source);
 
   return (
     <div className="rounded-xl bg-slate-50 px-3.5 py-3">
@@ -215,7 +234,7 @@ export function SimBalanceDetail({ sim }: { sim: SimRecord }) {
 
       <div className="mt-2 space-y-0.5 text-[10px] leading-4 text-slate-400">
         {balanceUpdatedAt ? <div>余额更新 {formatDateTime(balanceUpdatedAt)}</div> : null}
-        {sim.lowBalanceEnabled && sim.lowBalanceThreshold !== null ? (
+        {lowBalanceEligible && sim.lowBalanceEnabled && sim.lowBalanceThreshold !== null ? (
           <div>低余额提醒 ≤ {sim.lowBalanceThreshold} {sim.currencyCode || currencyCode || ""}</div>
         ) : null}
       </div>
