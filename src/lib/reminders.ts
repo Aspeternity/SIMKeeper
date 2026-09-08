@@ -98,9 +98,9 @@ export function buildReminderItems({
   const reminders: ReminderItem[] = [];
 
   for (const sim of sims) {
-    // Lifecycle attention is actionable only for active numbers. Paused,
-    // expired and closed numbers remain in records/history but do not keep
-    // generating current work for the user.
+    // Active and paused numbers are still live assets and keep lifecycle
+    // protection. Expired and closed numbers stay in records/history without
+    // generating new current work.
     if (!isLifecycleEligibleSimStatus(sim.status)) continue;
 
     const simRules = rulesBySim.get(sim.id) ?? [];
