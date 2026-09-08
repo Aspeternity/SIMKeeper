@@ -78,6 +78,9 @@ sqlite.exec(`
     iccid TEXT,
     balance REAL,
     currency_code TEXT,
+    balance_updated_at TEXT,
+    low_balance_enabled INTEGER NOT NULL DEFAULT 0,
+    low_balance_threshold REAL,
     status TEXT NOT NULL,
     activation_date TEXT,
     valid_until TEXT,
@@ -278,6 +281,9 @@ const simColumns = sqlite.prepare("PRAGMA table_info(sim_cards)").all() as Array
 const simColumnNames = new Set(simColumns.map((column) => column.name));
 const simMigrations = [
   ["device_id", "ALTER TABLE sim_cards ADD COLUMN device_id INTEGER REFERENCES devices(id) ON DELETE SET NULL"],
+  ["balance_updated_at", "ALTER TABLE sim_cards ADD COLUMN balance_updated_at TEXT"],
+  ["low_balance_enabled", "ALTER TABLE sim_cards ADD COLUMN low_balance_enabled INTEGER NOT NULL DEFAULT 0"],
+  ["low_balance_threshold", "ALTER TABLE sim_cards ADD COLUMN low_balance_threshold REAL"],
   ["identity_status", "ALTER TABLE sim_cards ADD COLUMN identity_status TEXT NOT NULL DEFAULT 'unknown'"],
   ["identity_name", "ALTER TABLE sim_cards ADD COLUMN identity_name TEXT"],
   ["identity_document_type", "ALTER TABLE sim_cards ADD COLUMN identity_document_type TEXT"],
@@ -292,6 +298,7 @@ for (const [column, sql] of simMigrations) {
 }
 
 sqlite.exec("CREATE INDEX IF NOT EXISTS idx_sim_cards_device_id ON sim_cards(device_id)");
+sqlite.exec("CREATE INDEX IF NOT EXISTS idx_sim_cards_low_balance_enabled ON sim_cards(low_balance_enabled)");
 
 const tariffColumns = sqlite.prepare("PRAGMA table_info(sim_tariffs)").all() as Array<{ name: string }>;
 const tariffColumnNames = new Set(tariffColumns.map((column) => column.name));
