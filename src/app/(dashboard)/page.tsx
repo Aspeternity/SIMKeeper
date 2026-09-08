@@ -4,34 +4,44 @@ import { AlertTriangle, BellRing, CheckCircle2, ChevronRight, Clock3, ShieldChec
 import { Card } from "@/components/ui/card";
 import { db } from "@/db";
 import { carriers, simBoundServices, simCards, simKeepAliveRules } from "@/db/schema";
-import { filterReminderItems } from "@/lib/reminder-actions";
-import { buildReminderItems, getReminderTaskHref } from "@/lib/reminders";
+import { getUnifiedReminderItems } from "@/lib/current-reminders";
+import { getReminderRelativeLabel, getReminderTaskHref, type ReminderStatus } from "@/lib/reminders";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-function dateInSingapore(date: Date) {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Singapore",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(date);
-}
-
 type ActionItem = {
   key: string;
-  simId: number;
   label: string;
   phoneNumber: string | null;
   carrierName: string;
   country: string;
   title: string;
-  date: string;
-  severity: "warning" | "overdue";
+  dueDate: string | null;
+  relative: string;
+  status: ReminderStatus;
+  severity: "warning" | "overdue" | "condition";
   href: string;
 };
+
+function actionSeverity(status: ReminderStatus): ActionItem["severity"] {
+  if (status === "overdue" || status === "grace") return "overdue";
+  if (status === "condition") return "condition";
+  return "warning";
+}
+
+function severityClass(severity: ActionItem["severity"]) {
+  if (severity === "overdue") return "bg-rose-50 text-rose-700";
+  if (severity === "condition") return "bg-sky-50 text-sky-700";
+  return "bg-amber-50 text-amber-700";
+}
+
+function severityLabel(severity: ActionItem["severity"]) {
+  if (severity === "overdue") return "已需处理";
+  if (severity === "condition") return "条件触发";
+  return "即将处理";
+}
 
 export default function DashboardPage() {
   const carrierCount = db.select({ id: carriers.id }).from(carriers).all().length;
@@ -40,69 +50,46 @@ export default function DashboardPage() {
     .select({
       id: simCards.id,
       label: simCards.label,
-      phoneNumber: simCards.phoneNumber,
       status: simCards.status,
-      validUntil: simCards.validUntil,
-      carrierName: carriers.name,
-      country: carriers.country,
     })
     .from(simCards)
-    .innerJoin(carriers, eq(simCards.carrierId, carriers.id))
     .all();
   const keepAliveRules = db
-    .select({
-      id: simKeepAliveRules.id,
-      simId: simKeepAliveRules.simId,
-      name: simKeepAliveRules.name,
-      dueDateSource: simKeepAliveRules.dueDateSource,
-      nextDueDate: simKeepAliveRules.nextDueDate,
-      warningDays: simKeepAliveRules.warningDays,
-      gracePeriodDays: simKeepAliveRules.gracePeriodDays,
-      enabled: simKeepAliveRules.enabled,
-      minimumRechargeAmount: simKeepAliveRules.minimumRechargeAmount,
-      rechargeCurrencyCode: simKeepAliveRules.rechargeCurrencyCode,
-    })
+    .select({ id: simKeepAliveRules.id, enabled: simKeepAliveRules.enabled })
     .from(simKeepAliveRules)
     .all();
-
-  const today = dateInSingapore(new Date());
-  const rawReminders = buildReminderItems({ sims: rows, rules: keepAliveRules, today });
-  const reminders = filterReminderItems(rawReminders, today);
+  const reminders = getUnifiedReminderItems();
   const overdueSimIds = new Set<number>();
-  const attentionSimIds = new Set<number>();
 
   for (const sim of rows) {
     if (sim.status === "expired") overdueSimIds.add(sim.id);
   }
-  for (const reminder of rawReminders) {
+  for (const reminder of reminders) {
     if (reminder.status === "overdue") overdueSimIds.add(reminder.simId);
-    else attentionSimIds.add(reminder.simId);
   }
-  for (const id of overdueSimIds) attentionSimIds.delete(id);
 
-  const actions: ActionItem[] = reminders
-    .filter((reminder) => reminder.dueDate)
-    .map((reminder) => ({
-      key: reminder.key,
-      simId: reminder.simId,
-      label: reminder.simLabel,
-      phoneNumber: reminder.phoneNumber,
-      carrierName: reminder.carrierName,
-      country: reminder.country,
-      title: reminder.title,
-      date: reminder.dueDate as string,
-      severity: reminder.status === "overdue" || reminder.status === "grace" ? "overdue" : "warning",
-      href: getReminderTaskHref(reminder),
-    }));
+  const actions: ActionItem[] = reminders.map((reminder) => ({
+    key: reminder.key,
+    label: reminder.simLabel,
+    phoneNumber: reminder.phoneNumber,
+    carrierName: reminder.carrierName,
+    country: reminder.country,
+    title: reminder.title,
+    dueDate: reminder.dueDate,
+    relative: getReminderRelativeLabel(reminder),
+    status: reminder.status,
+    severity: actionSeverity(reminder.status),
+    href: getReminderTaskHref(reminder),
+  }));
 
   const activeCount = rows.filter((sim) => sim.status === "active" && !overdueSimIds.has(sim.id)).length;
-  const actionable = actions.sort((a, b) => a.date.localeCompare(b.date)).slice(0, 8);
+  const actionable = actions.slice(0, 8);
   const enabledRuleCount = keepAliveRules.filter((rule) => rule.enabled).length;
 
   const stats = [
     { label: "号码总数", value: rows.length, icon: Smartphone },
     { label: "正常", value: activeCount, icon: CheckCircle2 },
-    { label: "待处理", value: attentionSimIds.size, icon: Clock3 },
+    { label: "待处理事项", value: reminders.length, icon: Clock3 },
     { label: "已逾期 / 失效", value: overdueSimIds.size, icon: AlertTriangle },
   ];
 
@@ -149,7 +136,7 @@ export default function DashboardPage() {
           <div className="flex items-start justify-between gap-4 border-b px-6 py-5">
             <div>
               <h3 className="font-semibold">需要处理</h3>
-              <p className="mt-1 text-sm text-slate-500">与处理中心使用同一套任务状态，只显示当前仍需要提醒和执行的最优先事项。</p>
+              <p className="mt-1 text-sm text-slate-500">与处理中心和右上角铃铛使用同一套统一事项，包含有效期、保号规则和低余额条件。</p>
             </div>
             <Link href="/reminders" className="shrink-0 text-xs font-medium text-slate-500 underline underline-offset-4">查看全部</Link>
           </div>
@@ -166,8 +153,8 @@ export default function DashboardPage() {
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-medium text-slate-800 transition group-hover:text-slate-950">{item.label}</span>
-                      <span className={`rounded-md px-2 py-0.5 text-[11px] font-medium ${item.severity === "overdue" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}>
-                        {item.severity === "overdue" ? "已需处理" : "即将处理"}
+                      <span className={`rounded-md px-2 py-0.5 text-[11px] font-medium ${severityClass(item.severity)}`}>
+                        {severityLabel(item.severity)}
                       </span>
                       <span className="text-xs text-slate-400">{item.title}</span>
                     </div>
@@ -175,8 +162,10 @@ export default function DashboardPage() {
                   </div>
                   <div className="flex shrink-0 items-center gap-3 self-stretch sm:self-auto">
                     <div className="min-w-0 flex-1 text-left sm:flex-none sm:text-right">
-                      <div className={`text-sm font-medium ${item.severity === "overdue" ? "text-rose-700" : "text-amber-700"}`}>{item.date}</div>
-                      <div className="mt-0.5 text-xs text-slate-400">点击整行进入处理</div>
+                      <div className={`text-sm font-medium ${item.severity === "overdue" ? "text-rose-700" : item.severity === "condition" ? "text-sky-700" : "text-amber-700"}`}>
+                        {item.dueDate || item.relative}
+                      </div>
+                      <div className="mt-0.5 text-xs text-slate-400">{item.dueDate ? item.relative : "点击整行进入处理"}</div>
                     </div>
                     <ChevronRight className="h-4 w-4 shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-slate-500" />
                   </div>
@@ -187,7 +176,7 @@ export default function DashboardPage() {
             <div className="flex min-h-56 flex-col items-center justify-center px-6 text-center">
               <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-500"><CheckCircle2 className="h-5 w-5" /></div>
               <p className="mt-4 text-sm font-medium">当前没有待处理事项</p>
-              <p className="mt-1 max-w-sm text-xs leading-5 text-slate-400">号码进入有效期提醒窗口或独立保号规则提醒窗口后，会自动汇总到首页、处理中心和通知渠道。</p>
+              <p className="mt-1 max-w-sm text-xs leading-5 text-slate-400">号码进入生命周期提醒窗口，或低余额等条件被触发后，会同时出现在这里、处理中心和右上角铃铛。</p>
             </div>
           )}
         </Card>
