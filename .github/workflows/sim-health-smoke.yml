@@ -1,0 +1,142 @@
+name: Verify SIM Health
+
+on:
+  workflow_run:
+    workflows:
+      - Build and Publish Docker Image
+    types:
+      - completed
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  sim-health-smoke:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Pull verified image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="${{ github.event.workflow_run.head_sha }}"
+          image="ghcr.io/aspeternity/simkeeper:sha-${sha:0:7}"
+          docker pull "$image"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Verify unified health aggregation
+        shell: bash
+        run: |
+          set -euo pipefail
+          container="simkeeper-health-smoke"
+          tmp="$(mktemp -d)"
+          base="http://127.0.0.1:18094"
+          cookies="$tmp/cookies.txt"
+          healthy_date="$(date -u -d '+120 days' +%F)"
+          attention_date="$(date -u -d '+5 days' +%F)"
+
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            rm -rf "$tmp" || true
+          }
+          trap cleanup EXIT
+
+          fail() {
+            echo "::error::$1"
+            docker logs "$container" 2>&1 || true
+            for file in "$tmp"/*.json; do
+              [ -f "$file" ] || continue
+              echo "----- $file -----"
+              cat "$file" || true
+              echo
+            done
+            exit 1
+          }
+
+          mkdir -p "$tmp/data"
+          docker run -d \
+            --name "$container" \
+            -p 18094:3000 \
+            -e SIMKEEPER_COOKIE_SECURE=false \
+            -e PUID="$(id -u)" \
+            -e PGID="$(id -g)" \
+            -v "$tmp/data:/app/data" \
+            "$IMAGE" >/dev/null || fail "container start failed"
+
+          ready=0
+          for _ in $(seq 1 40); do
+            if curl -fsS --max-time 2 "$base/api/health" >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          [ "$ready" -eq 1 ] || fail "SIMKeeper did not become healthy"
+
+          unauthorized_code="$(curl -sS -o "$tmp/unauthorized.json" -w '%{http_code}' "$base/api/sim-health")"
+          [ "$unauthorized_code" = "401" ] || fail "SIM health endpoint should require authentication"
+
+          curl -fsS -c "$cookies" -o /dev/null -X POST \
+            --data-urlencode 'username=healthadmin' \
+            --data-urlencode 'password=smoke-test-123' \
+            --data-urlencode 'confirmPassword=smoke-test-123' \
+            "$base/api/auth/setup" || fail "setup failed"
+
+          curl -fsS -b "$cookies" -H 'Content-Type: application/json' \
+            -d '{"name":"Health Carrier","countryCode":"PH","website":"","notes":""}' \
+            "$base/api/carriers" > "$tmp/carrier.json" || fail "carrier create failed"
+          carrier_id="$(jq -r '.carrier.id // empty' "$tmp/carrier.json")"
+          [ -n "$carrier_id" ] || fail "carrier id missing"
+
+          create_sim() {
+            local label="$1"
+            local status="$2"
+            local valid_until="$3"
+            local output="$4"
+            jq -n \
+              --arg label "$label" \
+              --arg status "$status" \
+              --arg validUntil "$valid_until" \
+              --argjson carrierId "$carrier_id" \
+              '{label:$label,phoneNumber:"",carrierId:$carrierId,deviceId:null,simType:"physical",iccid:"",balance:null,currencyCode:"PHP",lowBalanceEnabled:false,lowBalanceThreshold:null,status:$status,activationDate:"",validUntil:$validUntil,identityStatus:"unknown",identityName:"",identityDocumentType:"",identityDocumentTypeCustom:"",identityDocumentNumber:"",identityCountryCode:"",identityNotes:"",notes:"",esimProfile:null}' \
+              > "$tmp/payload.json"
+            status_code="$(curl -sS -b "$cookies" -o "$output" -w '%{http_code}' -H 'Content-Type: application/json' --data-binary @"$tmp/payload.json" "$base/api/sims")"
+            [ "$status_code" = "201" ] || fail "creating $label returned HTTP $status_code"
+          }
+
+          create_sim "Healthy SIM" "active" "$healthy_date" "$tmp/healthy.json"
+          create_sim "Attention SIM" "active" "$attention_date" "$tmp/attention.json"
+          create_sim "Expired SIM" "expired" "$healthy_date" "$tmp/expired.json"
+          create_sim "Paused SIM" "paused" "$healthy_date" "$tmp/paused.json"
+          create_sim "Closed SIM" "closed" "$healthy_date" "$tmp/closed.json"
+
+          curl -fsS -b "$cookies" "$base/api/sim-health" > "$tmp/health.json" || fail "SIM health query failed"
+
+          [ "$(jq -r '.summary.total' "$tmp/health.json")" = "5" ] || fail "health total mismatch"
+          [ "$(jq -r '.summary.healthy' "$tmp/health.json")" = "1" ] || fail "healthy count mismatch"
+          [ "$(jq -r '.summary.attention' "$tmp/health.json")" = "1" ] || fail "attention count mismatch"
+          [ "$(jq -r '.summary.critical' "$tmp/health.json")" = "1" ] || fail "critical count mismatch"
+          [ "$(jq -r '.summary.setup' "$tmp/health.json")" = "0" ] || fail "setup count mismatch"
+          [ "$(jq -r '.summary.paused' "$tmp/health.json")" = "1" ] || fail "paused count mismatch"
+          [ "$(jq -r '.summary.inactive' "$tmp/health.json")" = "1" ] || fail "inactive count mismatch"
+          [ "$(jq -r '.summary.needsAttention' "$tmp/health.json")" = "1" ] || fail "needs-attention count mismatch"
+
+          item_status() {
+            jq -r --arg label "$1" '.items[] | select(.simLabel == $label) | .healthStatus' "$tmp/health.json"
+          }
+
+          [ "$(item_status 'Healthy SIM')" = "healthy" ] || fail "healthy SIM classification mismatch"
+          [ "$(item_status 'Attention SIM')" = "attention" ] || fail "attention SIM classification mismatch"
+          [ "$(item_status 'Expired SIM')" = "critical" ] || fail "expired SIM classification mismatch"
+          [ "$(item_status 'Paused SIM')" = "paused" ] || fail "paused SIM classification mismatch"
+          [ "$(item_status 'Closed SIM')" = "inactive" ] || fail "closed SIM classification mismatch"
+
+          jq -e '.items[] | select(.simLabel == "Attention SIM") | .primaryReason.title == "号码有效期" and (.reasons | length >= 1)' "$tmp/health.json" >/dev/null \
+            || fail "attention SIM did not expose lifecycle reason"
+          jq -e '.items[] | select(.simLabel == "Expired SIM") | .primaryReason.title == "号码状态已过期"' "$tmp/health.json" >/dev/null \
+            || fail "expired SIM did not expose status reason"
+          jq -e '.items[] | select(.simLabel == "Closed SIM") | (.reasons | length == 0)' "$tmp/health.json" >/dev/null \
+            || fail "closed SIM should not expose active health reasons"
