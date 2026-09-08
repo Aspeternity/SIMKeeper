@@ -92,8 +92,12 @@ function formatActionTime(value: string) {
   }).format(date);
 }
 
+function isConditionTask(item: Pick<ReminderItem, "kind">) {
+  return item.kind === "low_balance" || item.kind === "sync_health";
+}
+
 function reminderDateLabel(item: Pick<ReminderItem, "kind" | "dueDate">) {
-  return item.kind === "low_balance" ? "持续状态" : item.dueDate || "未设置日期";
+  return isConditionTask(item) ? "持续状态" : item.dueDate || "未设置日期";
 }
 
 type CompletionTarget = {
@@ -243,7 +247,7 @@ export function ReminderCenter({
   }
 
   async function openCompletion(item: ReminderItem) {
-    if (item.kind === "low_balance") {
+    if (isConditionTask(item)) {
       await openSimOverview(item.simId);
       return;
     }
@@ -405,7 +409,7 @@ export function ReminderCenter({
                   <option value="grace">宽限期</option>
                   <option value="today">今天到期</option>
                   <option value="upcoming">即将到期</option>
-                  <option value="condition">余额不足</option>
+                  <option value="condition">条件提醒</option>
                   <option value="unscheduled">待设置日期</option>
                 </select>
                 <select value={kindFilter} onChange={(event) => setKindFilter(event.target.value)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-slate-400">
@@ -413,6 +417,7 @@ export function ReminderCenter({
                   <option value="sim_validity">号码有效期</option>
                   <option value="keep_alive">保号规则</option>
                   <option value="low_balance">低余额</option>
+                  <option value="sync_health">同步健康</option>
                 </select>
                 <div className="text-xs text-slate-400 xl:ml-auto">
                   显示 {filtered.length} / {items.length} 项任务{summary.unscheduled ? ` · 待设置日期 ${summary.unscheduled} 项` : ""}
@@ -441,6 +446,7 @@ export function ReminderCenter({
                 const occurrence = `${item.key}:${item.dueDate ?? "none"}`;
                 const overviewLoading = overviewLoadingSimId === item.simId;
                 const busy = actingKey === occurrence || completionLoadingKey === occurrence || overviewLoading;
+                const conditionTask = isConditionTask(item);
                 return (
                   <div
                     id={getReminderTaskAnchor(item)}
@@ -488,14 +494,14 @@ export function ReminderCenter({
                             type="button"
                             disabled={busy}
                             onClick={() => void openCompletion(item)}
-                            className={`inline-flex h-8 items-center justify-center gap-1.5 rounded-lg px-3 text-xs font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-50 ${item.kind === "low_balance" ? "bg-indigo-600 hover:bg-indigo-700" : "bg-emerald-600 hover:bg-emerald-700"}`}
+                            className={`inline-flex h-8 items-center justify-center gap-1.5 rounded-lg px-3 text-xs font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-50 ${conditionTask ? "bg-indigo-600 hover:bg-indigo-700" : "bg-emerald-600 hover:bg-emerald-700"}`}
                           >
-                            {item.kind === "low_balance" ? (
+                            {conditionTask ? (
                               overviewLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Smartphone className="h-3 w-3" />
                             ) : (
                               completionLoadingKey === occurrence ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />
                             )}
-                            {item.kind === "low_balance" ? "查看号码" : "立即处理"}
+                            {conditionTask ? "查看号码" : "立即处理"}
                           </button>
                           <select
                             defaultValue=""
@@ -519,7 +525,9 @@ export function ReminderCenter({
                             onClick={() => {
                               const message = item.kind === "low_balance"
                                 ? `忽略“${item.simLabel} · ${item.title}”当前这一轮低余额状态吗？\n\n余额恢复后本轮会自动结束；以后再次低余额时 SIMKeeper 会创建新一轮并重新提醒。`
-                                : `忽略“${item.simLabel} · ${item.title}”当前这一轮提醒吗？真实生命周期状态不会改变，截止日期变化后仍会重新提醒。`;
+                                : item.kind === "sync_health"
+                                  ? `忽略“${item.simLabel} · ${item.title}”当前这一轮同步健康状态吗？\n\n只会隐藏本轮站内提醒；连接恢复后本轮会自动结束，以后出现新的同步异常仍会重新提醒。`
+                                  : `忽略“${item.simLabel} · ${item.title}”当前这一轮提醒吗？真实生命周期状态不会改变，截止日期变化后仍会重新提醒。`;
                               if (window.confirm(message)) void performReminderAction(item, "ignored");
                             }}
                             className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-slate-200 px-3 text-xs font-medium text-slate-500 transition hover:bg-white hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
@@ -545,7 +553,7 @@ export function ReminderCenter({
                 <>
                   <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600"><CheckCircle2 className="h-5 w-5" /></div>
                   <p className="mt-4 text-sm font-medium text-slate-800">当前没有需要处理的任务</p>
-                  <p className="mt-1 max-w-md text-xs leading-5 text-slate-400">已忽略或仍在暂缓期限内的事项不会出现在这里；生命周期推进或余额恢复正常后，对应事项会自动结束。</p>
+                  <p className="mt-1 max-w-md text-xs leading-5 text-slate-400">已忽略或仍在暂缓期限内的事项不会出现在这里；生命周期推进、余额恢复或同步连接恢复正常后，对应事项会自动结束。</p>
                 </>
               )}
             </div>
@@ -579,7 +587,7 @@ export function ReminderCenter({
                         </div>
                         <div className="mt-1 text-sm text-slate-600">{item.title}</div>
                         <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-400">
-                          <span>{item.kind === "low_balance" ? "本轮：持续低余额状态" : `本轮截止：${item.dueDate || "未设置日期"}`}</span>
+                          <span>{item.kind === "low_balance" ? "本轮：持续低余额状态" : item.kind === "sync_health" ? "本轮：同步健康异常状态" : `本轮截止：${item.dueDate || "未设置日期"}`}</span>
                           {item.action === "completed" && !item.verified ? <span className="font-medium text-amber-600">该记录来自旧版一键标记，不再用于压制提醒</span> : null}
                         </div>
                       </div>
