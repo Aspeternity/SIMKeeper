@@ -1,0 +1,43 @@
+name: Verify Dashboard Overview
+
+on:
+  workflow_run:
+    workflows: [Build and Publish Docker Image]
+    types: [completed]
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  dashboard-overview-smoke:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Pull verified image
+        run: |
+          sha="${{ github.event.workflow_run.head_sha }}"
+          image="ghcr.io/aspeternity/simkeeper:sha-${sha:0:7}"
+          docker pull "$image"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+      - name: Verify dashboard sections
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          trap 'docker rm -f simkeeper-dashboard-smoke >/dev/null 2>&1 || true; rm -rf "$tmp"' EXIT
+          mkdir -p "$tmp/data"
+          docker run -d --name simkeeper-dashboard-smoke -p 18097:3000 -e SIMKEEPER_COOKIE_SECURE=false -v "$tmp/data:/app/data" "$IMAGE" >/dev/null
+          for _ in $(seq 1 40); do curl -fsS http://127.0.0.1:18097/api/health >/dev/null 2>&1 && break; sleep 1; done
+          curl -fsS -c "$tmp/cookies" -o /dev/null -X POST --data-urlencode 'username=dashboardadmin' --data-urlencode 'password=dashboard-test-123' --data-urlencode 'confirmPassword=dashboard-test-123' http://127.0.0.1:18097/api/auth/setup
+          curl -fsS -b "$tmp/cookies" -H 'Content-Type: application/json' -d '{"name":"Dashboard Carrier","countryCode":"PH","website":"","notes":""}' http://127.0.0.1:18097/api/carriers > "$tmp/carrier.json"
+          carrier_id="$(jq -r '.carrier.id' "$tmp/carrier.json")"
+          jq -n --argjson carrierId "$carrier_id" '{label:"Dashboard eSIM",phoneNumber:"",carrierId:$carrierId,deviceId:null,simType:"esim",iccid:"",balance:null,currencyCode:"PHP",lowBalanceEnabled:false,lowBalanceThreshold:null,status:"active",activationDate:"",validUntil:"",identityStatus:"unknown",identityName:"",identityDocumentType:"",identityDocumentTypeCustom:"",identityDocumentNumber:"",identityCountryCode:"",identityNotes:"",notes:"",esimProfile:null}' > "$tmp/sim.json"
+          curl -fsS -b "$tmp/cookies" -H 'Content-Type: application/json' --data-binary @"$tmp/sim.json" http://127.0.0.1:18097/api/sims >/dev/null
+          curl -fsS -b "$tmp/cookies" http://127.0.0.1:18097/ > "$tmp/dashboard.html"
+          grep -q 'data-dashboard-version="alpha.43"' "$tmp/dashboard.html"
+          grep -q '号码资产总览' "$tmp/dashboard.html"
+          grep -q '未来 30 天' "$tmp/dashboard.html"
+          grep -q '配置检查' "$tmp/dashboard.html"
+          grep -q 'Dashboard Carrier' "$tmp/dashboard.html"
+          grep -q '菲律宾' "$tmp/dashboard.html"
