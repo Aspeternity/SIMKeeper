@@ -1,7 +1,10 @@
 import "server-only";
 
 import { sqlite } from "@/db";
-import { ensureCarrierConnectorTables } from "@/lib/carrier-connectors/store";
+import {
+  ensureCarrierConnectorTables,
+  listCarrierConnectors,
+} from "@/lib/carrier-connectors/store";
 import type { ReminderItem } from "@/lib/reminders";
 
 export type ConditionEpisodeStatus = "open" | "resolved";
@@ -48,6 +51,14 @@ type LowBalanceSimRow = {
   carrier_name: string;
   country: string;
 };
+
+type SyncHealthConditionType = "sync_authentication" | "sync_failure" | "sync_stale";
+const SYNC_HEALTH_CONDITION_TYPES: SyncHealthConditionType[] = [
+  "sync_authentication",
+  "sync_failure",
+  "sync_stale",
+];
+const RECOVERY_LOOKBACK_MS = 14 * 24 * 60 * 60_000;
 
 export function ensureConditionEpisodeTables() {
   sqlite.exec(`
@@ -107,6 +118,17 @@ function mapEpisode(row: RawEpisode): ConditionEpisodeRecord {
   };
 }
 
+function selectEpisodeById(id: number) {
+  const row = sqlite
+    .prepare(
+      `SELECT id, condition_key, condition_type, subject_type, subject_id, episode_no,
+              status, opened_at, resolved_at, last_observed_at, snapshot_json
+       FROM condition_episodes WHERE id = ?`,
+    )
+    .get(id) as RawEpisode | undefined;
+  return row ? mapEpisode(row) : null;
+}
+
 function getOpenEpisode(conditionKey: string) {
   const row = sqlite
     .prepare(
@@ -155,22 +177,13 @@ function openEpisode(input: {
       input.observedAt,
       input.observedAt,
     );
-
-  const row = sqlite
-    .prepare(
-      `SELECT id, condition_key, condition_type, subject_type, subject_id, episode_no,
-              status, opened_at, resolved_at, last_observed_at, snapshot_json
-       FROM condition_episodes WHERE id = ?`,
-    )
-    .get(Number(result.lastInsertRowid)) as RawEpisode;
-  return mapEpisode(row);
+  const episode = selectEpisodeById(Number(result.lastInsertRowid));
+  if (!episode) throw new Error("Condition episode 创建失败");
+  return episode;
 }
 
 function observeEpisode(episode: ConditionEpisodeRecord, snapshot: Record<string, unknown>, observedAt: string) {
-  const previousSnapshot = JSON.stringify(episode.snapshot);
   const nextSnapshot = JSON.stringify(snapshot);
-  if (previousSnapshot === nextSnapshot) return episode;
-
   sqlite
     .prepare(
       `UPDATE condition_episodes
@@ -203,7 +216,7 @@ function formatAmount(value: number) {
   return Number(value).toLocaleString("zh-CN", { maximumFractionDigits: 6 });
 }
 
-function formatBalanceUpdatedAt(value: string | null) {
+function formatObservedAt(value: string | null | undefined) {
   if (!value) return null;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
@@ -300,7 +313,7 @@ export function getLowBalanceReminderItems(): ReminderItem[] {
           });
       const balanceLabel = `${formatAmount(sim.balance as number)}${currencyCode ? ` ${currencyCode}` : ""}`;
       const thresholdLabel = `${formatAmount(sim.low_balance_threshold as number)}${currencyCode ? ` ${currencyCode}` : ""}`;
-      const updatedLabel = formatBalanceUpdatedAt(sim.balance_updated_at);
+      const updatedLabel = formatObservedAt(sim.balance_updated_at);
 
       activeItems.push({
         key: `low-balance-${sim.id}-episode-${episode.episodeNo}`,
@@ -317,9 +330,200 @@ export function getLowBalanceReminderItems(): ReminderItem[] {
         href: "/sims",
         detail: `当前余额 ${balanceLabel} · 提醒阈值 ${thresholdLabel}${updatedLabel ? ` · 余额更新 ${updatedLabel}` : ""}`,
         requirement: `余额需高于 ${thresholdLabel}`,
+        conditionState: "active",
       });
     }
   })();
 
   return activeItems;
+}
+
+function syncHealthConditionKey(type: SyncHealthConditionType, connectorId: number) {
+  return `${type}:connector:${connectorId}`;
+}
+
+function desiredSyncHealthConditionType(healthStatus: string): SyncHealthConditionType | null {
+  if (healthStatus === "authentication") return "sync_authentication";
+  if (healthStatus === "error") return "sync_failure";
+  if (healthStatus === "stale") return "sync_stale";
+  return null;
+}
+
+function syncHealthTitle(type: SyncHealthConditionType) {
+  if (type === "sync_authentication") return "运营商认证失效";
+  if (type === "sync_stale") return "同步数据已过期";
+  return "运营商同步异常";
+}
+
+function syncHealthRequirement(type: SyncHealthConditionType) {
+  if (type === "sync_authentication") return "请更新运营商登录凭据并重新同步";
+  if (type === "sync_stale") return "请立即同步并检查运营商连接";
+  return "请检查连接状态并重新同步";
+}
+
+function syncHealthDetail(
+  connector: ReturnType<typeof listCarrierConnectors>[number],
+  type: SyncHealthConditionType,
+) {
+  const parts = [`${connector.providerLabel} · ${connector.name}`];
+  const lastAttempt = formatObservedAt(connector.lastAttemptAt);
+  const lastSuccess = formatObservedAt(connector.lastSuccessAt);
+  const dataUpdated = formatObservedAt(connector.dataUpdatedAt);
+  if (type === "sync_authentication" && connector.lastError) parts.push(connector.lastError);
+  if (type === "sync_failure") {
+    parts.push(`连续失败 ${Math.max(1, connector.failureCount)} 次`);
+    if (connector.lastError) parts.push(connector.lastError);
+  }
+  if (type === "sync_stale") parts.push("当前自动同步数据已超过可信新鲜度窗口");
+  if (lastAttempt) parts.push(`最后尝试 ${lastAttempt}`);
+  if (lastSuccess) parts.push(`最后成功 ${lastSuccess}`);
+  if (dataUpdated) parts.push(`数据更新 ${dataUpdated}`);
+  return parts.join(" · ");
+}
+
+function syncHealthSnapshot(connector: ReturnType<typeof listCarrierConnectors>[number]) {
+  return {
+    provider: connector.provider,
+    providerLabel: connector.providerLabel,
+    connectorName: connector.name,
+    healthStatus: connector.healthStatus,
+    lastAttemptAt: connector.lastAttemptAt,
+    lastSuccessAt: connector.lastSuccessAt,
+    dataUpdatedAt: connector.dataUpdatedAt,
+    lastError: connector.lastError,
+    lastErrorType: connector.lastErrorType,
+    lastErrorAt: connector.lastErrorAt,
+    failureCount: connector.failureCount,
+    nextRetryAt: connector.nextRetryAt,
+    retryCount: connector.retryCount,
+  };
+}
+
+export function getSyncHealthReminderItems(): ReminderItem[] {
+  ensureConditionEpisodeTables();
+  ensureCarrierConnectorTables();
+  const observedAt = new Date().toISOString();
+  const connectors = listCarrierConnectors();
+  const desired = new Map<string, {
+    connector: ReturnType<typeof listCarrierConnectors>[number];
+    type: SyncHealthConditionType;
+  }>();
+
+  for (const connector of connectors) {
+    if (connector.provider === "mock" || connector.syncIntervalMinutes <= 0 || !connector.linkedSims.length) continue;
+    const type = desiredSyncHealthConditionType(connector.healthStatus);
+    if (!type) continue;
+    desired.set(syncHealthConditionKey(type, connector.id), { connector, type });
+  }
+
+  const items: ReminderItem[] = [];
+  sqlite.transaction(() => {
+    const openHealthEpisodes = sqlite
+      .prepare(
+        `SELECT id, condition_key, condition_type, subject_type, subject_id, episode_no,
+                status, opened_at, resolved_at, last_observed_at, snapshot_json
+         FROM condition_episodes
+         WHERE status = 'open'
+           AND condition_type IN ('sync_authentication', 'sync_failure', 'sync_stale')`,
+      )
+      .all() as RawEpisode[];
+
+    for (const row of openHealthEpisodes) {
+      if (!desired.has(row.condition_key)) resolveEpisode(mapEpisode(row), observedAt);
+    }
+
+    for (const [conditionKey, candidate] of desired) {
+      const { connector, type } = candidate;
+      const sim = connector.linkedSims[0];
+      if (!sim) continue;
+      const snapshot = syncHealthSnapshot(connector);
+      const currentEpisode = getOpenEpisode(conditionKey);
+      const episode = currentEpisode
+        ? observeEpisode(currentEpisode, snapshot, observedAt)
+        : openEpisode({
+            conditionKey,
+            conditionType: type,
+            subjectType: "connector",
+            subjectId: connector.id,
+            snapshot,
+            observedAt,
+          });
+
+      items.push({
+        key: `sync-health-${connector.id}-${type}-episode-${episode.episodeNo}`,
+        simId: sim.id,
+        simLabel: sim.label,
+        phoneNumber: sim.phoneNumber,
+        carrierName: sim.carrierName,
+        country: sim.country,
+        kind: "sync_health",
+        title: syncHealthTitle(type),
+        dueDate: null,
+        status: "condition",
+        days: null,
+        href: "/sims",
+        detail: syncHealthDetail(connector, type),
+        requirement: syncHealthRequirement(type),
+        conditionState: "active",
+      });
+    }
+  })();
+
+  return items;
+}
+
+export function getSyncHealthRecoveryNotificationItems(): ReminderItem[] {
+  ensureConditionEpisodeTables();
+  ensureCarrierConnectorTables();
+  const cutoff = new Date(Date.now() - RECOVERY_LOOKBACK_MS).toISOString();
+  const connectors = new Map(listCarrierConnectors().map((connector) => [connector.id, connector]));
+  const rows = sqlite
+    .prepare(
+      `SELECT ce.id, ce.condition_key, ce.condition_type, ce.subject_type, ce.subject_id,
+              ce.episode_no, ce.status, ce.opened_at, ce.resolved_at, ce.last_observed_at,
+              ce.snapshot_json
+       FROM condition_episodes ce
+       WHERE ce.status = 'resolved'
+         AND ce.resolved_at >= ?
+         AND ce.condition_type IN ('sync_authentication', 'sync_failure', 'sync_stale')
+         AND ce.id = (
+           SELECT MAX(latest.id)
+           FROM condition_episodes latest
+           WHERE latest.subject_type = 'connector'
+             AND latest.subject_id = ce.subject_id
+             AND latest.condition_type IN ('sync_authentication', 'sync_failure', 'sync_stale')
+         )
+       ORDER BY ce.resolved_at DESC`,
+    )
+    .all(cutoff) as RawEpisode[];
+
+  const items: ReminderItem[] = [];
+  for (const row of rows) {
+    const episode = mapEpisode(row);
+    const connector = connectors.get(episode.subjectId);
+    if (!connector || connector.healthStatus !== "healthy") continue;
+    const sim = connector.linkedSims[0];
+    if (!sim) continue;
+    const recoveredAt = formatObservedAt(episode.resolvedAt);
+    const successAt = formatObservedAt(connector.lastSuccessAt);
+    items.push({
+      key: `sync-health-recovery-episode-${episode.id}`,
+      simId: sim.id,
+      simLabel: sim.label,
+      phoneNumber: sim.phoneNumber,
+      carrierName: sim.carrierName,
+      country: sim.country,
+      kind: "sync_health",
+      title: "运营商同步已恢复",
+      dueDate: null,
+      status: "condition",
+      days: null,
+      href: "/sims",
+      detail: `${connector.providerLabel} · ${connector.name} 已恢复正常${successAt ? ` · 最近成功 ${successAt}` : ""}${recoveredAt ? ` · 恢复于 ${recoveredAt}` : ""}`,
+      requirement: null,
+      conditionState: "recovered",
+      notificationPolicy: "once",
+    });
+  }
+  return items;
 }
