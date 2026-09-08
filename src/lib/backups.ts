@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { dataDir, sqlite } from "@/db";
 import { ensureCarrierConnectorTables } from "@/lib/carrier-connectors/store";
+import { ensureConditionEpisodeTables } from "@/lib/condition-episodes";
 import { exportCredentialSecret, importCredentialSecret } from "@/lib/credential-crypto";
 import { ensureEsimProfileTable } from "@/lib/esim-profiles";
 import { ensureNotificationTables } from "@/lib/notifications";
@@ -34,6 +35,7 @@ export const BACKUP_TABLES = [
   "sim_tariff_custom_items",
   "sim_keep_alive_rules",
   "sim_keep_alive_events",
+  "condition_episodes",
   "reminder_actions",
   "sim_bound_services",
   "notification_channels",
@@ -49,6 +51,7 @@ function ensureBackupTables() {
   ensureSimArchiveTable();
   ensureNotificationTables();
   ensureReminderActionTables();
+  ensureConditionEpisodeTables();
 }
 
 ensureBackupTables();
