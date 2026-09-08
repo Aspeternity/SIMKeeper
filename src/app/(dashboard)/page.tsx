@@ -1,11 +1,12 @@
 import Link from "next/link";
-import { eq } from "drizzle-orm";
-import { AlertTriangle, BellRing, CheckCircle2, ChevronRight, Clock3, ShieldCheck, Smartphone, Waypoints } from "lucide-react";
+import { AlertTriangle, BellRing, CheckCircle2, ChevronRight, CircleAlert, ShieldCheck, Smartphone, Waypoints } from "lucide-react";
+import { SimHealthBadge } from "@/components/sims/sim-health-badge";
 import { Card } from "@/components/ui/card";
 import { db } from "@/db";
-import { carriers, simBoundServices, simCards, simKeepAliveRules } from "@/db/schema";
+import { carriers, simBoundServices, simKeepAliveRules } from "@/db/schema";
 import { getUnifiedReminderItems } from "@/lib/current-reminders";
 import { getReminderRelativeLabel, getReminderTaskHref, type ReminderStatus } from "@/lib/reminders";
+import { getSimHealthOverview } from "@/lib/sim-health";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -46,27 +47,13 @@ function severityLabel(severity: ActionItem["severity"]) {
 export default function DashboardPage() {
   const carrierCount = db.select({ id: carriers.id }).from(carriers).all().length;
   const boundServiceCount = db.select({ id: simBoundServices.id }).from(simBoundServices).all().length;
-  const rows = db
-    .select({
-      id: simCards.id,
-      label: simCards.label,
-      status: simCards.status,
-    })
-    .from(simCards)
-    .all();
   const keepAliveRules = db
     .select({ id: simKeepAliveRules.id, enabled: simKeepAliveRules.enabled })
     .from(simKeepAliveRules)
     .all();
+  const enabledRuleCount = keepAliveRules.filter((rule) => rule.enabled).length;
   const reminders = getUnifiedReminderItems();
-  const overdueSimIds = new Set<number>();
-
-  for (const sim of rows) {
-    if (sim.status === "expired") overdueSimIds.add(sim.id);
-  }
-  for (const reminder of reminders) {
-    if (reminder.status === "overdue") overdueSimIds.add(reminder.simId);
-  }
+  const health = getSimHealthOverview();
 
   const actions: ActionItem[] = reminders.map((reminder) => ({
     key: reminder.key,
@@ -82,15 +69,16 @@ export default function DashboardPage() {
     href: getReminderTaskHref(reminder),
   }));
 
-  const activeCount = rows.filter((sim) => sim.status === "active" && !overdueSimIds.has(sim.id)).length;
   const actionable = actions.slice(0, 8);
-  const enabledRuleCount = keepAliveRules.filter((rule) => rule.enabled).length;
+  const healthAttention = health.items
+    .filter((item) => item.healthStatus === "critical" || item.healthStatus === "attention" || item.healthStatus === "setup")
+    .slice(0, 6);
 
   const stats = [
-    { label: "号码总数", value: rows.length, icon: Smartphone },
-    { label: "正常", value: activeCount, icon: CheckCircle2 },
-    { label: "待处理事项", value: reminders.length, icon: Clock3 },
-    { label: "已逾期 / 失效", value: overdueSimIds.size, icon: AlertTriangle },
+    { label: "号码总数", value: health.summary.total, icon: Smartphone },
+    { label: "健康正常", value: health.summary.healthy, icon: CheckCircle2 },
+    { label: "需要关注", value: health.summary.needsAttention, icon: CircleAlert },
+    { label: "紧急", value: health.summary.critical, icon: AlertTriangle },
   ];
 
   return (
@@ -98,7 +86,7 @@ export default function DashboardPage() {
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
           <h2 className="text-2xl font-semibold tracking-tight">你的号码生命周期，一处管理</h2>
-          <p className="mt-1 text-sm text-slate-500">号码、实名、资费、保号规则、处理任务、绑定服务与外部通知统一汇总成完整生命周期档案。</p>
+          <p className="mt-1 text-sm text-slate-500">号码健康统一汇总有效期、保号、余额和运营商同步状态；需要执行的任务仍由处理中心统一承接。</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Link href="/services" className="inline-flex h-10 items-center gap-2 rounded-xl border px-4 text-sm font-medium text-slate-700 transition hover:bg-white">
@@ -131,12 +119,12 @@ export default function DashboardPage() {
         })}
       </section>
 
-      <section className="grid gap-6 xl:grid-cols-[1.4fr_0.6fr]">
+      <section className="grid gap-6 xl:grid-cols-[1.3fr_0.7fr]">
         <Card className="min-h-80 overflow-hidden">
           <div className="flex items-start justify-between gap-4 border-b px-6 py-5">
             <div>
               <h3 className="font-semibold">需要处理</h3>
-              <p className="mt-1 text-sm text-slate-500">与处理中心和右上角铃铛使用同一套统一事项，包含有效期、保号规则和低余额条件。</p>
+              <p className="mt-1 text-sm text-slate-500">这里是可执行任务；忽略或延后任务不会改变号码本身的 Health 判断。</p>
             </div>
             <Link href="/reminders" className="shrink-0 text-xs font-medium text-slate-500 underline underline-offset-4">查看全部</Link>
           </div>
@@ -176,31 +164,49 @@ export default function DashboardPage() {
             <div className="flex min-h-56 flex-col items-center justify-center px-6 text-center">
               <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-500"><CheckCircle2 className="h-5 w-5" /></div>
               <p className="mt-4 text-sm font-medium">当前没有待处理事项</p>
-              <p className="mt-1 max-w-sm text-xs leading-5 text-slate-400">号码进入生命周期提醒窗口，或低余额等条件被触发后，会同时出现在这里、处理中心和右上角铃铛。</p>
+              <p className="mt-1 max-w-sm text-xs leading-5 text-slate-400">号码进入生命周期提醒窗口，或余额、同步等条件被触发后，会出现在这里、处理中心和右上角铃铛。</p>
             </div>
           )}
         </Card>
 
-        <Card className="p-6">
-          <h3 className="font-semibold">Alpha 进度</h3>
-          <div className="mt-5 space-y-4 text-sm">
-            {[
-              ["SQLite 持久化", true],
-              ["首次管理员创建", true],
-              ["登录 / Session", true],
-              ["Dashboard Shell", true],
-              [`运营商管理 · ${carrierCount} 条`, true],
-              [`号码管理 · ${rows.length} 条`, true],
-              [`绑定服务 · ${boundServiceCount} 条`, true],
-              [`保号规则 · ${enabledRuleCount} 条`, true],
-              ["生命周期处理中心", true],
-              ["外部通知渠道", true],
-            ].map(([label, done]) => (
-              <div key={String(label)} className="flex items-center gap-3">
-                <span className={`h-2.5 w-2.5 rounded-full ${done ? "bg-emerald-500" : "bg-slate-200"}`} />
-                <span className={done ? "text-slate-700" : "text-slate-400"}>{String(label)}</span>
-              </div>
-            ))}
+        <Card className="overflow-hidden">
+          <div className="flex items-start justify-between gap-4 border-b px-6 py-5">
+            <div>
+              <h3 className="font-semibold">号码健康</h3>
+              <p className="mt-1 text-sm text-slate-500">每张 SIM 只保留一个整体状态，并展示当前最重要的原因。</p>
+            </div>
+            <Link href="/sims" className="shrink-0 text-xs font-medium text-slate-500 underline underline-offset-4">查看号码</Link>
+          </div>
+
+          {healthAttention.length ? (
+            <div className="divide-y divide-slate-100">
+              {healthAttention.map((item) => (
+                <Link key={item.simId} href="/sims" className="block px-6 py-4 transition hover:bg-slate-50">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="truncate text-sm font-medium text-slate-800">{item.simLabel}</span>
+                        <SimHealthBadge status={item.healthStatus} />
+                      </div>
+                      <div className="mt-1 text-xs text-slate-400">{item.carrierName} · {item.phoneNumber || "未填写手机号"}</div>
+                    </div>
+                    <ChevronRight className="h-4 w-4 shrink-0 text-slate-300" />
+                  </div>
+                  <div className="mt-2 text-xs font-medium text-slate-600">{item.summary}</div>
+                  {item.primaryReason?.detail ? <div className="mt-1 line-clamp-2 text-[11px] leading-5 text-slate-400">{item.primaryReason.detail}</div> : null}
+                </Link>
+              ))}
+            </div>
+          ) : (
+            <div className="flex min-h-56 flex-col items-center justify-center px-6 text-center">
+              <CheckCircle2 className="h-6 w-6 text-emerald-500" />
+              <p className="mt-3 text-sm font-medium text-slate-700">当前没有健康风险</p>
+              <p className="mt-1 text-xs leading-5 text-slate-400">暂停 {health.summary.paused} · 已停用 {health.summary.inactive}</p>
+            </div>
+          )}
+
+          <div className="border-t bg-slate-50/70 px-6 py-3 text-[11px] text-slate-400">
+            运营商 {carrierCount} · 绑定服务 {boundServiceCount} · 启用保号规则 {enabledRuleCount} · 暂停 {health.summary.paused} · 已停用 {health.summary.inactive}
           </div>
         </Card>
       </section>
