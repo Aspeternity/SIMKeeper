@@ -1,6 +1,7 @@
 import {
   BellRing,
   Box,
+  KeyRound,
   LayoutDashboard,
   RadioTower,
   Send,
@@ -28,6 +29,7 @@ export const PRIMARY_NAV_ITEMS: NavigationItem[] = [
   { label: "保号规则", href: "/history", icon: ShieldCheck },
   { label: "处理中心", href: "/reminders", icon: BellRing },
   { label: "通知渠道", href: "/notifications", icon: Send },
+  { label: "账号安全", href: "/security", icon: KeyRound },
 ];
 
 export const SETTINGS_NAV_ITEM: NavigationItem = {
