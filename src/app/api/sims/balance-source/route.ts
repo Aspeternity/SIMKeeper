@@ -160,15 +160,22 @@ function sourcePayload(simId: number) {
           provider: connector.provider,
           providerLabel: connector.providerLabel,
           status: connector.status,
+          healthStatus: connector.healthStatus,
           syncIntervalMinutes: connector.syncIntervalMinutes,
           hasCredentials: connector.hasCredentials,
           lastSyncedAt: connector.lastSyncedAt,
+          lastAttemptAt: connector.lastAttemptAt,
           lastSuccessAt: connector.lastSuccessAt,
-          // The SIM editor should not reopen with an old provider failure as a
-          // red alert. Globe keeps the error text because its OTP flow uses it
-          // to detect a reauthentication requirement; other providers surface
-          // only the current interactive attempt via the response error field.
-          lastError: connector.provider === "globe" ? connector.lastError : null,
+          dataUpdatedAt: connector.dataUpdatedAt,
+          lastError: connector.lastError,
+          lastErrorType: connector.lastErrorType,
+          lastErrorAt: connector.lastErrorAt,
+          failureCount: connector.failureCount,
+          retryAt: connector.retryAt,
+          retryAttempt: connector.retryAttempt,
+          nextRetryAt: connector.nextRetryAt,
+          retryCount: connector.retryCount,
+          scheduledSyncAt: connector.scheduledSyncAt,
           nextSyncAt: connector.nextSyncAt,
           stale: connector.stale,
         }
