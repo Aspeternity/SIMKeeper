@@ -50,7 +50,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const attentionItems = buildAttentionItems(getCurrentReminderItems());
 
   return (
-    <div className="flex min-h-screen bg-slate-50">
+    <div className="flex min-h-screen bg-slate-50" data-reminder-count={attentionItems.length}>
       <Sidebar />
       <div className="min-w-0 flex-1">
         <Topbar username={user.username} items={attentionItems} />
