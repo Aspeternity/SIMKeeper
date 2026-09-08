@@ -176,7 +176,14 @@ function buildSummary(items: SimHealthItem[]) {
     needsAttention: 0,
   };
 
-  for (const item of items) summary[item.healthStatus] += 1;
+  for (const item of items) {
+    if (item.healthStatus === "healthy") summary.healthy += 1;
+    else if (item.healthStatus === "attention") summary.attention += 1;
+    else if (item.healthStatus === "critical") summary.critical += 1;
+    else if (item.healthStatus === "setup") summary.setup += 1;
+    else if (item.healthStatus === "paused") summary.paused += 1;
+    else summary.inactive += 1;
+  }
   summary.needsAttention = summary.attention + summary.setup;
   return summary;
 }
