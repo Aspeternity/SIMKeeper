@@ -1,7 +1,7 @@
 import { getKeepAliveRechargeRequirementLabel, getKeepAliveRuleStatus } from "@/lib/keep-alive";
 import { isLifecycleEligibleSimStatus } from "@/lib/lifecycle-engine";
 
-export type ReminderKind = "sim_validity" | "keep_alive" | "low_balance";
+export type ReminderKind = "sim_validity" | "keep_alive" | "low_balance" | "sync_health";
 export type ReminderStatus = "overdue" | "grace" | "today" | "upcoming" | "unscheduled" | "condition";
 
 export const REMINDER_STATE_CHANGED_EVENT = "simkeeper:reminder-state-changed";
@@ -24,6 +24,8 @@ export type ReminderItem = {
   requirement?: string | null;
   warningDays?: number;
   gracePeriodDays?: number;
+  conditionState?: "active" | "recovered";
+  notificationPolicy?: "default" | "once";
 };
 
 type ReminderSim = {
@@ -99,9 +101,6 @@ export function buildReminderItems({
   const reminders: ReminderItem[] = [];
 
   for (const sim of sims) {
-    // Active and paused numbers are still live assets and keep lifecycle
-    // protection. Expired and closed numbers stay in records/history without
-    // generating new current work.
     if (!isLifecycleEligibleSimStatus(sim.status)) continue;
 
     const simRules = rulesBySim.get(sim.id) ?? [];
@@ -229,18 +228,26 @@ export function getReminderStatusLabel(status: ReminderStatus) {
     case "unscheduled":
       return "待设置日期";
     case "condition":
-      return "余额不足";
+      return "条件提醒";
   }
 }
 
 export function getReminderKindLabel(kind: ReminderKind) {
   if (kind === "sim_validity") return "号码有效期";
   if (kind === "keep_alive") return "保号规则";
-  return "低余额";
+  if (kind === "low_balance") return "低余额";
+  return "同步健康";
 }
 
-export function getReminderRelativeLabel(item: Pick<ReminderItem, "status" | "days">) {
-  if (item.status === "condition") return "余额低于提醒阈值";
+export function getReminderRelativeLabel(
+  item: Pick<ReminderItem, "status" | "days"> & Partial<Pick<ReminderItem, "kind" | "conditionState">>,
+) {
+  if (item.status === "condition") {
+    if (item.conditionState === "recovered") return "已恢复";
+    if (item.kind === "low_balance") return "余额低于提醒阈值";
+    if (item.kind === "sync_health") return "需要检查同步";
+    return "需要处理";
+  }
   if (item.status === "unscheduled") return "待设置日期";
   if (item.days === null) return "待处理";
   if (item.status === "today") return "今天";
