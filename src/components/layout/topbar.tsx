@@ -7,6 +7,7 @@ import {
   Bell,
   CheckCircle2,
   ChevronRight,
+  CircleDollarSign,
   Loader2,
   LogOut,
   Menu,
@@ -143,7 +144,12 @@ export function Topbar({ username, items: initialItems }: { username: string; it
 
   async function quickAction(item: AttentionItem, action: "snoozed" | "ignored") {
     if (!item.reminderKey || actingKey) return;
-    if (action === "ignored" && !window.confirm(`确定忽略“${item.subjectLabel} · ${item.title}”本轮事项吗？\n\n如果下一轮到期条件再次出现，SIMKeeper 仍会重新生成事项。`)) return;
+    if (action === "ignored") {
+      const message = item.kind === "low_balance"
+        ? `确定忽略“${item.subjectLabel} · ${item.title}”当前这一轮低余额状态吗？\n\n余额恢复后本轮会自动结束；以后再次低余额时 SIMKeeper 会创建新一轮并重新提醒。`
+        : `确定忽略“${item.subjectLabel} · ${item.title}”本轮事项吗？\n\n如果下一轮到期条件再次出现，SIMKeeper 仍会重新生成事项。`;
+      if (!window.confirm(message)) return;
+    }
 
     setActingKey(item.key);
     setPanelError("");
@@ -243,7 +249,7 @@ export function Topbar({ username, items: initialItems }: { username: string; it
                 {summary.total > 0 ? (
                   <div className="max-h-[31rem] divide-y divide-slate-100 overflow-y-auto">
                     {preview.map((item) => {
-                      const Icon = item.kind === "sim_validity" ? Smartphone : ShieldCheck;
+                      const Icon = item.kind === "sim_validity" ? Smartphone : item.kind === "low_balance" ? CircleDollarSign : ShieldCheck;
                       const busy = actingKey === item.key;
                       return (
                         <div key={item.key} className="px-4 py-3.5">
@@ -262,7 +268,7 @@ export function Topbar({ username, items: initialItems }: { username: string; it
                               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                                 <span className={`rounded-md px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset ${priorityClass(item.priority)}`}>{item.priorityLabel}</span>
                                 <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">{item.kindLabel}</span>
-                                <span className="truncate text-[10px] text-slate-400">{item.dueDate || "未设置日期"}</span>
+                                <span className="truncate text-[10px] text-slate-400">{item.kind === "low_balance" ? "持续状态" : item.dueDate || "未设置日期"}</span>
                               </div>
                               <div className="mt-2.5 flex flex-wrap items-center gap-2">
                                 <Link
@@ -309,7 +315,7 @@ export function Topbar({ username, items: initialItems }: { username: string; it
                       <CheckCircle2 className="h-5 w-5" />
                     </div>
                     <p className="mt-4 text-sm font-medium text-slate-900">当前没有需要处理的事项</p>
-                    <p className="mx-auto mt-1 max-w-xs text-xs leading-5 text-slate-400">需要处理或近期关注的号码生命周期事项会自动出现在这里。</p>
+                    <p className="mx-auto mt-1 max-w-xs text-xs leading-5 text-slate-400">号码生命周期、余额等需要处理或近期关注的状态会自动出现在这里。</p>
                   </div>
                 )}
 
