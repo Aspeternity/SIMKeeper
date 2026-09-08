@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { KeyRound, Loader2, RefreshCw } from "lucide-react";
+import type { CarrierConnectorHealthStatus } from "@/lib/carrier-connectors/types";
 import type { SimRecord } from "@/lib/sim-types";
 
 type SourceConnector = {
@@ -9,11 +10,22 @@ type SourceConnector = {
   provider: string;
   providerLabel: string;
   status: "connected" | "error";
+  healthStatus: CarrierConnectorHealthStatus;
   syncIntervalMinutes: number;
   hasCredentials: boolean;
   lastSyncedAt: string | null;
+  lastAttemptAt: string | null;
   lastSuccessAt: string | null;
+  dataUpdatedAt: string | null;
   lastError: string | null;
+  lastErrorType: string | null;
+  lastErrorAt: string | null;
+  failureCount: number;
+  retryAt: string | null;
+  retryAttempt: number;
+  nextRetryAt: string | null;
+  retryCount: number;
+  scheduledSyncAt: string | null;
   nextSyncAt: string | null;
   stale: boolean;
 };
@@ -36,6 +48,17 @@ type BalanceSource = {
   sourceDeleted: boolean;
 };
 
+const HEALTH_VIEW: Record<CarrierConnectorHealthStatus, { label: string; className: string }> = {
+  healthy: { label: "正常", className: "bg-emerald-50 text-emerald-700" },
+  syncing: { label: "正在同步", className: "bg-sky-50 text-sky-700" },
+  retrying: { label: "等待重试", className: "bg-amber-50 text-amber-700" },
+  authentication: { label: "认证失效", className: "bg-rose-50 text-rose-700" },
+  error: { label: "同步异常", className: "bg-rose-50 text-rose-700" },
+  stale: { label: "数据过期", className: "bg-amber-50 text-amber-700" },
+  paused: { label: "已暂停", className: "bg-slate-100 text-slate-600" },
+  pending: { label: "等待首次同步", className: "bg-slate-100 text-slate-600" },
+};
+
 function lowBalanceSourceEligible(source: BalanceSource | null) {
   const connector = source?.connector;
   const latest = source?.latest;
@@ -53,7 +76,7 @@ function lowBalanceSourceEligible(source: BalanceSource | null) {
 }
 
 function formatDateTime(value: string | null | undefined) {
-  if (!value) return "尚未更新";
+  if (!value) return "尚未记录";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat("zh-CN", {
@@ -66,6 +89,7 @@ function formatDateTime(value: string | null | undefined) {
 
 function globeOtpRequired(connector: SourceConnector | null | undefined) {
   if (connector?.provider !== "globe" || connector.status !== "error") return false;
+  if (connector.healthStatus === "authentication") return true;
   return /短信验证码重新认证|reauthentication\s+needed|device\s+not\s+recognized/i.test(
     connector.lastError ?? "",
   );
@@ -193,15 +217,17 @@ export function SimBalanceDetail({ sim }: { sim: SimRecord }) {
   }
 
   const automatic = Boolean(source?.connector);
-  const latest = automatic ? source?.latest : null;
+  const connector = source?.connector ?? null;
+  const latest = automatic && source?.latest?.connectorId === connector?.id ? source.latest : null;
   const balance = latest?.balance ?? sim.balance;
   const currencyCode = latest?.currencyCode ?? sim.currencyCode;
   const displayBalance = balance === null || balance === undefined
     ? "未记录"
     : `${balance} ${currencyCode || ""}`.trim();
-  const needsGlobeOtp = globeOtpRequired(source?.connector);
+  const needsGlobeOtp = globeOtpRequired(connector);
   const balanceUpdatedAt = latest?.syncedAt ?? sim.balanceUpdatedAt;
   const lowBalanceEligible = lowBalanceSourceEligible(source);
+  const healthView = connector ? HEALTH_VIEW[connector.healthStatus] : null;
 
   return (
     <div className="rounded-xl bg-slate-50 px-3.5 py-3">
@@ -209,8 +235,11 @@ export function SimBalanceDetail({ sim }: { sim: SimRecord }) {
         <div className="text-[11px] text-slate-400">余额</div>
         {loading ? (
           <Loader2 className="h-3 w-3 animate-spin text-slate-300" />
-        ) : automatic ? (
-          <span className="rounded-md bg-indigo-50 px-1.5 py-0.5 text-[9px] font-medium text-indigo-700">自动同步</span>
+        ) : automatic && healthView ? (
+          <div className="flex items-center gap-1.5">
+            <span className="rounded-md bg-indigo-50 px-1.5 py-0.5 text-[9px] font-medium text-indigo-700">自动同步</span>
+            <span className={`rounded-md px-1.5 py-0.5 text-[9px] font-medium ${healthView.className}`}>{healthView.label}</span>
+          </div>
         ) : (
           <span className="rounded-md bg-white px-1.5 py-0.5 text-[9px] font-medium text-slate-400 ring-1 ring-inset ring-slate-200">手动维护</span>
         )}
@@ -239,11 +268,27 @@ export function SimBalanceDetail({ sim }: { sim: SimRecord }) {
         ) : null}
       </div>
 
-      {automatic && source?.connector ? (
+      {automatic && connector ? (
         <div className="mt-2 space-y-0.5 text-[10px] leading-4 text-slate-400">
-          <div>{source.connector.providerLabel} · 上次成功 {formatDateTime(source.connector.lastSuccessAt)}</div>
+          <div>{connector.providerLabel}</div>
+          {connector.dataUpdatedAt ? <div>数据更新 {formatDateTime(connector.dataUpdatedAt)}</div> : null}
+          {connector.lastAttemptAt ? <div>最后尝试 {formatDateTime(connector.lastAttemptAt)}</div> : null}
+          {connector.lastSuccessAt ? <div>最后成功 {formatDateTime(connector.lastSuccessAt)}</div> : <div>尚无成功同步</div>}
           {latest?.balanceValidUntil ? <div>余额有效期 {latest.balanceValidUntil}</div> : null}
-          {source.connector.nextSyncAt ? <div>下次计划 {formatDateTime(source.connector.nextSyncAt)}</div> : null}
+          {connector.nextRetryAt ? <div className="text-amber-600">下次重试 {formatDateTime(connector.nextRetryAt)} · 第 {connector.retryCount} 次重试</div> : null}
+          {!connector.nextRetryAt && connector.scheduledSyncAt ? <div>下次计划 {formatDateTime(connector.scheduledSyncAt)}</div> : null}
+        </div>
+      ) : null}
+
+      {connector?.healthStatus === "retrying" && connector.lastError && !error ? (
+        <div className="mt-2 rounded-lg bg-amber-50 px-2 py-1.5 text-[10px] leading-4 text-amber-700">
+          {connector.lastError}
+        </div>
+      ) : null}
+
+      {connector?.healthStatus === "stale" && !error ? (
+        <div className="mt-2 rounded-lg bg-amber-50 px-2 py-1.5 text-[10px] leading-4 text-amber-700">
+          当前自动同步数据已过期，请立即同步并检查运营商连接。
         </div>
       ) : null}
 
@@ -301,8 +346,10 @@ export function SimBalanceDetail({ sim }: { sim: SimRecord }) {
 
       {error ? (
         <div className="mt-2 rounded-lg bg-rose-50 px-2 py-1.5 text-[10px] leading-4 text-rose-600">{error}</div>
-      ) : automatic && source?.connector?.status === "error" && source.connector.lastError && !needsGlobeOtp ? (
-        <div className="mt-2 rounded-lg bg-rose-50 px-2 py-1.5 text-[10px] leading-4 text-rose-600">{source.connector.lastError}</div>
+      ) : automatic && connector && ["authentication", "error"].includes(connector.healthStatus) && connector.lastError && !needsGlobeOtp ? (
+        <div className="mt-2 rounded-lg bg-rose-50 px-2 py-1.5 text-[10px] leading-4 text-rose-600">
+          {connector.lastError}{connector.failureCount > 1 ? ` · 连续失败 ${connector.failureCount} 次` : ""}
+        </div>
       ) : null}
     </div>
   );
