@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getCurrentUser } from "@/lib/auth";
+import { getRawUnifiedReminderItems, getUnifiedReminderItems } from "@/lib/current-reminders";
 import {
   createReminderAction,
   deleteReminderAction,
   getReminderToday,
   listReminderActions,
 } from "@/lib/reminder-actions";
-import { getCurrentReminderItems, getRawCurrentReminderItems } from "@/lib/notifications";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,7 +30,7 @@ async function requireUser() {
 export async function GET() {
   const unauthorized = await requireUser();
   if (unauthorized) return unauthorized;
-  return NextResponse.json({ reminders: getCurrentReminderItems(), history: listReminderActions(100) });
+  return NextResponse.json({ reminders: getUnifiedReminderItems(), history: listReminderActions(100) });
 }
 
 export async function POST(request: NextRequest) {
@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null);
   if (body?.action === "completed") {
     return NextResponse.json(
-      { error: "“完成处理”必须先记录真实的充值、短信、续期或其他生命周期操作，不能直接隐藏提醒" },
+      { error: "“完成处理”必须由真实的号码状态变化解除，不能直接隐藏提醒" },
       { status: 400 },
     );
   }
@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "提醒处理数据不正确" }, { status: 400 });
   }
 
-  const rawReminders = getRawCurrentReminderItems();
+  const rawReminders = getRawUnifiedReminderItems();
   const reminder = rawReminders.find(
     (item) => item.key === parsed.data.reminderKey && item.dueDate === parsed.data.dueDate,
   );
@@ -66,7 +66,7 @@ export async function POST(request: NextRequest) {
       snoozeDays: parsed.data.snoozeDays,
     });
     return NextResponse.json(
-      { action, reminders: getCurrentReminderItems(), history: listReminderActions(100) },
+      { action, reminders: getUnifiedReminderItems(), history: listReminderActions(100) },
       { status: 201 },
     );
   } catch (error) {
@@ -90,7 +90,7 @@ export async function DELETE(request: NextRequest) {
 
   return NextResponse.json({
     deletedAction,
-    reminders: getCurrentReminderItems(),
+    reminders: getUnifiedReminderItems(),
     history: listReminderActions(100),
   });
 }
