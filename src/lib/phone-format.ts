@@ -16,16 +16,13 @@ export function getPhoneDisplayParts(value: string | null | undefined): PhoneDis
     if (!parsed) return null;
 
     const callingCode = `+${parsed.countryCallingCode}`;
-    const international = parsed.formatInternational();
-    const nationalDisplay = international.startsWith(callingCode)
-      ? international.slice(callingCode.length).trim()
-      : parsed.nationalNumber;
+    const nationalNumber = parsed.nationalNumber;
 
     return {
       callingCode,
-      nationalNumber: parsed.nationalNumber,
-      nationalDisplay: nationalDisplay || parsed.nationalNumber,
-      internationalDisplay: `${callingCode} ${nationalDisplay || parsed.nationalNumber}`.trim(),
+      nationalNumber,
+      nationalDisplay: nationalNumber,
+      internationalDisplay: `${callingCode} ${nationalNumber}`,
     };
   } catch {
     return null;
