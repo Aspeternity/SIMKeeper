@@ -22,6 +22,9 @@ export type SimRecord = {
   iccid: string | null;
   balance: number | null;
   currencyCode: string | null;
+  balanceUpdatedAt: string | null;
+  lowBalanceEnabled: boolean;
+  lowBalanceThreshold: number | null;
   status: string;
   activationDate: string | null;
   validUntil: string | null;
