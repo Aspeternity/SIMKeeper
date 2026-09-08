@@ -1,6 +1,10 @@
 import "server-only";
 
 import { sqlite } from "@/db";
+import {
+  getLifecycleOccurrenceKey,
+  getLifecycleToday,
+} from "@/lib/lifecycle-engine";
 import type { ReminderActionRecord, ReminderActionType } from "@/lib/reminder-action-types";
 import type { ReminderItem } from "@/lib/reminders";
 
@@ -66,16 +70,11 @@ function mapAction(row: ReminderActionRow): ReminderActionRecord {
 }
 
 export function getReminderOccurrenceKey(reminderKey: string, dueDate: string | null) {
-  return `${reminderKey}\u0000${dueDate ?? ""}`;
+  return getLifecycleOccurrenceKey(reminderKey, dueDate);
 }
 
 export function getReminderToday(date = new Date()) {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Singapore",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(date);
+  return getLifecycleToday(date);
 }
 
 function addDays(date: string, days: number) {
@@ -133,6 +132,9 @@ export function filterReminderItems(reminders: ReminderItem[], today: string) {
   const latest = getCurrentReminderActionMap(today);
 
   return reminders.filter((reminder) => {
+    // An action belongs to exactly one lifecycle occurrence: rule/SIM identity
+    // plus the due date for that round. Once real lifecycle data advances the
+    // due date, an old snooze/ignore record can no longer hide the new round.
     const action = latest.get(getReminderOccurrenceKey(reminder.key, reminder.dueDate));
     if (!action) return true;
     if (action.action === "ignored") return false;
