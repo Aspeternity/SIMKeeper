@@ -66,7 +66,7 @@ export function getAttentionSection(priority: AttentionPriority): AttentionSecti
 }
 
 function getAttentionActionLabel(priority: AttentionPriority, kind: ReminderKind) {
-  if (kind === "low_balance") return "查看号码";
+  if (kind === "low_balance") return "查看处理";
   if (priority === "setup") return "去设置";
   if (priority === "watch") return "查看处理";
   return "立即处理";
