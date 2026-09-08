@@ -74,7 +74,10 @@ export function evaluateLifecycleDeadline({
 }
 
 export function isLifecycleEligibleSimStatus(status: string | null | undefined) {
-  return status === "active";
+  // "paused" means the number is temporarily not in use, not that it can be
+  // forgotten. It still needs validity/keep-alive protection. Expired and
+  // closed numbers no longer create current lifecycle work.
+  return status === "active" || status === "paused";
 }
 
 export function getLifecycleOccurrenceKey(subjectKey: string, dueDate: string | null | undefined) {
