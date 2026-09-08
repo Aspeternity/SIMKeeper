@@ -4,6 +4,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import { carriers, simBoundServices, simCards } from "@/db/schema";
 import { getCurrentUser } from "@/lib/auth";
+import { formatPhoneNumber } from "@/lib/phone-format";
 import {
   SERVICE_BINDING_STATUSES,
   SERVICE_BINDING_TYPES,
@@ -57,6 +58,13 @@ function simExists(id: number) {
   return db.select({ id: simCards.id }).from(simCards).where(eq(simCards.id, id)).get();
 }
 
+function withFormattedPhone<T extends { phoneNumber: string | null }>(row: T): T {
+  return {
+    ...row,
+    phoneNumber: row.phoneNumber ? formatPhoneNumber(row.phoneNumber, row.phoneNumber) : null,
+  };
+}
+
 function getBindings(simId?: number) {
   const base = db
     .select({
@@ -84,16 +92,16 @@ function getBindings(simId?: number) {
     .innerJoin(simCards, eq(simBoundServices.simId, simCards.id))
     .innerJoin(carriers, eq(simCards.carrierId, carriers.id));
 
-  if (simId) {
-    return base
-      .where(eq(simBoundServices.simId, simId))
-      .orderBy(asc(simBoundServices.status), asc(simBoundServices.serviceName), asc(simBoundServices.id))
-      .all();
-  }
+  const rows = simId
+    ? base
+        .where(eq(simBoundServices.simId, simId))
+        .orderBy(asc(simBoundServices.status), asc(simBoundServices.serviceName), asc(simBoundServices.id))
+        .all()
+    : base
+        .orderBy(asc(simBoundServices.status), asc(simBoundServices.serviceName), asc(simBoundServices.id))
+        .all();
 
-  return base
-    .orderBy(asc(simBoundServices.status), asc(simBoundServices.serviceName), asc(simBoundServices.id))
-    .all();
+  return rows.map(withFormattedPhone);
 }
 
 function getSims() {
@@ -109,7 +117,8 @@ function getSims() {
     .from(simCards)
     .innerJoin(carriers, eq(simCards.carrierId, carriers.id))
     .orderBy(asc(carriers.country), asc(carriers.name), asc(simCards.label))
-    .all();
+    .all()
+    .map(withFormattedPhone);
 }
 
 export async function GET(request: NextRequest) {
