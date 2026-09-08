@@ -5,7 +5,7 @@ import { Topbar } from "@/components/layout/topbar";
 import { Card } from "@/components/ui/card";
 import { buildAttentionItems } from "@/lib/attention-items";
 import { getCurrentUser, hasAdmin } from "@/lib/auth";
-import { getCurrentReminderItems } from "@/lib/notifications";
+import { getUnifiedReminderItems } from "@/lib/current-reminders";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,7 +47,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const user = await getCurrentUser();
   if (!user) return <AuthGate mode="login" />;
 
-  const attentionItems = buildAttentionItems(getCurrentReminderItems());
+  const attentionItems = buildAttentionItems(getUnifiedReminderItems());
 
   return (
     <div className="flex min-h-screen bg-slate-50" data-reminder-count={attentionItems.length}>
