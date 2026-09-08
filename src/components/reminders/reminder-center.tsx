@@ -9,6 +9,7 @@ import {
   CalendarClock,
   Check,
   CheckCircle2,
+  CircleDollarSign,
   CircleHelp,
   Clock3,
   History,
@@ -50,6 +51,7 @@ function statusClass(status: ReminderStatus) {
   if (status === "overdue") return "bg-rose-50 text-rose-700 ring-rose-100";
   if (status === "grace") return "bg-orange-50 text-orange-700 ring-orange-100";
   if (status === "today") return "bg-amber-50 text-amber-700 ring-amber-100";
+  if (status === "condition") return "bg-indigo-50 text-indigo-700 ring-indigo-100";
   if (status === "upcoming") return "bg-sky-50 text-sky-700 ring-sky-100";
   return "bg-slate-100 text-slate-600 ring-slate-200";
 }
@@ -58,6 +60,7 @@ function relativeClass(status: ReminderStatus) {
   if (status === "overdue") return "text-rose-700";
   if (status === "grace") return "text-orange-700";
   if (status === "today") return "text-amber-700";
+  if (status === "condition") return "text-indigo-700";
   if (status === "upcoming") return "text-sky-700";
   return "text-slate-500";
 }
@@ -87,6 +90,10 @@ function formatActionTime(value: string) {
     minute: "2-digit",
     hour12: false,
   }).format(date);
+}
+
+function reminderDateLabel(item: Pick<ReminderItem, "kind" | "dueDate">) {
+  return item.kind === "low_balance" ? "持续状态" : item.dueDate || "未设置日期";
 }
 
 type CompletionTarget = {
@@ -157,7 +164,7 @@ export function ReminderCenter({
     total: items.length,
     overdue: items.filter((item) => item.status === "overdue" || item.status === "grace").length,
     today: items.filter((item) => item.status === "today").length,
-    upcoming: items.filter((item) => item.status === "upcoming").length,
+    watch: items.filter((item) => item.status === "upcoming" || item.status === "condition").length,
     unscheduled: items.filter((item) => item.status === "unscheduled").length,
   }), [items]);
 
@@ -174,6 +181,7 @@ export function ReminderCenter({
       const matchesKind = kindFilter === "all" || item.kind === kindFilter;
       const matchesStatus = statusFilter === "all"
         || (statusFilter === "urgent" && ["overdue", "grace", "today"].includes(item.status))
+        || (statusFilter === "watch" && ["upcoming", "condition"].includes(item.status))
         || item.status === statusFilter;
       return matchesQuery && matchesKind && matchesStatus;
     });
@@ -193,7 +201,7 @@ export function ReminderCenter({
     { label: "当前待处理", value: summary.total, icon: BellRing },
     { label: "已逾期 / 宽限", value: summary.overdue, icon: AlertTriangle },
     { label: "今天到期", value: summary.today, icon: Clock3 },
-    { label: "即将到期", value: summary.upcoming, icon: CalendarClock },
+    { label: "近期关注", value: summary.watch, icon: CalendarClock },
   ];
 
   function announceReminderStateChanged() {
@@ -235,6 +243,11 @@ export function ReminderCenter({
   }
 
   async function openCompletion(item: ReminderItem) {
+    if (item.kind === "low_balance") {
+      await openSimOverview(item.simId);
+      return;
+    }
+
     const occurrence = `${item.key}:${item.dueDate ?? "none"}`;
     setCompletionLoadingKey(occurrence);
     setError("");
@@ -303,7 +316,7 @@ export function ReminderCenter({
   async function deleteHistoryItem(item: ReminderActionRecord) {
     const message = item.action === "completed" && item.verified
       ? `确定删除“${item.simLabel} · ${item.title}”这条处理中心记录吗？\n\n只会删除这里的核验记录，不会回滚已经记录的充值/活动、余额、号码有效期或保号日期。`
-      : `确定删除“${item.simLabel} · ${item.title}”这条处理记录吗？\n\n删除后会按本轮剩余处理记录重新计算提醒控制；没有其他控制记录且真实生命周期仍处于提醒窗口时，任务会重新出现。`;
+      : `确定删除“${item.simLabel} · ${item.title}”这条处理记录吗？\n\n删除后会按本轮剩余处理记录重新计算提醒控制；如果对应的真实状态仍然存在，事项会重新出现。`;
     if (!window.confirm(message)) return;
 
     setDeletingActionId(item.id);
@@ -387,23 +400,26 @@ export function ReminderCenter({
                 <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-slate-400">
                   <option value="all">全部状态</option>
                   <option value="urgent">需要优先处理</option>
+                  <option value="watch">近期关注</option>
                   <option value="overdue">已逾期</option>
                   <option value="grace">宽限期</option>
                   <option value="today">今天到期</option>
                   <option value="upcoming">即将到期</option>
+                  <option value="condition">余额不足</option>
                   <option value="unscheduled">待设置日期</option>
                 </select>
                 <select value={kindFilter} onChange={(event) => setKindFilter(event.target.value)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-slate-400">
                   <option value="all">全部类型</option>
                   <option value="sim_validity">号码有效期</option>
                   <option value="keep_alive">保号规则</option>
+                  <option value="low_balance">低余额</option>
                 </select>
                 <div className="text-xs text-slate-400 xl:ml-auto">
                   显示 {filtered.length} / {items.length} 项任务{summary.unscheduled ? ` · 待设置日期 ${summary.unscheduled} 项` : ""}
                 </div>
               </>
             ) : (
-              <div className="text-xs leading-5 text-slate-400 xl:flex-1">处理历史可以手动删除。删除“稍后提醒 / 忽略本轮”会取消对应提醒控制；删除已完成核验记录不会回滚真实生命周期数据。</div>
+              <div className="text-xs leading-5 text-slate-400 xl:flex-1">处理历史可以手动删除。删除“稍后提醒 / 忽略本轮”会取消对应提醒控制；真实号码状态和历史业务记录不会被回滚。</div>
             )}
             <div className={`relative w-full xl:w-96 ${view === "history" ? "xl:ml-auto" : ""}`}>
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -421,10 +437,10 @@ export function ReminderCenter({
           filtered.length ? (
             <div className="divide-y divide-slate-100">
               {filtered.map((item) => {
-                const Icon = item.kind === "sim_validity" ? Smartphone : ShieldCheck;
+                const Icon = item.kind === "sim_validity" ? Smartphone : item.kind === "low_balance" ? CircleDollarSign : ShieldCheck;
                 const occurrence = `${item.key}:${item.dueDate ?? "none"}`;
-                const busy = actingKey === occurrence || completionLoadingKey === occurrence;
                 const overviewLoading = overviewLoadingSimId === item.simId;
+                const busy = actingKey === occurrence || completionLoadingKey === occurrence || overviewLoading;
                 return (
                   <div
                     id={getReminderTaskAnchor(item)}
@@ -458,23 +474,28 @@ export function ReminderCenter({
                         </div>
                         <div className="ml-auto hidden shrink-0 pl-4 text-right xl:block">
                           <div className={`text-sm font-medium ${relativeClass(item.status)}`}>{getReminderRelativeLabel(item)}</div>
-                          <div className="mt-0.5 text-xs text-slate-400">{item.dueDate || "未设置日期"}</div>
+                          <div className="mt-0.5 text-xs text-slate-400">{reminderDateLabel(item)}</div>
                         </div>
                       </button>
 
                       <div className="flex shrink-0 flex-col items-start justify-center gap-2 px-2 pb-2 xl:items-end xl:py-2">
                         <div className="text-left xl:hidden">
                           <div className={`text-sm font-medium ${relativeClass(item.status)}`}>{getReminderRelativeLabel(item)}</div>
-                          <div className="mt-0.5 text-xs text-slate-400">{item.dueDate || "未设置日期"}</div>
+                          <div className="mt-0.5 text-xs text-slate-400">{reminderDateLabel(item)}</div>
                         </div>
                         <div className="flex flex-wrap items-center gap-2 xl:justify-end">
                           <button
                             type="button"
                             disabled={busy}
                             onClick={() => void openCompletion(item)}
-                            className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3 text-xs font-medium text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                            className={`inline-flex h-8 items-center justify-center gap-1.5 rounded-lg px-3 text-xs font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-50 ${item.kind === "low_balance" ? "bg-indigo-600 hover:bg-indigo-700" : "bg-emerald-600 hover:bg-emerald-700"}`}
                           >
-                            {completionLoadingKey === occurrence ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}立即处理
+                            {item.kind === "low_balance" ? (
+                              overviewLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Smartphone className="h-3 w-3" />
+                            ) : (
+                              completionLoadingKey === occurrence ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />
+                            )}
+                            {item.kind === "low_balance" ? "查看号码" : "立即处理"}
                           </button>
                           <select
                             defaultValue=""
@@ -496,9 +517,10 @@ export function ReminderCenter({
                             type="button"
                             disabled={busy}
                             onClick={() => {
-                              if (window.confirm(`忽略“${item.simLabel} · ${item.title}”当前这一轮提醒吗？真实生命周期状态不会改变，截止日期变化后仍会重新提醒。`)) {
-                                void performReminderAction(item, "ignored");
-                              }
+                              const message = item.kind === "low_balance"
+                                ? `忽略“${item.simLabel} · ${item.title}”当前这一轮低余额状态吗？\n\n余额恢复后本轮会自动结束；以后再次低余额时 SIMKeeper 会创建新一轮并重新提醒。`
+                                : `忽略“${item.simLabel} · ${item.title}”当前这一轮提醒吗？真实生命周期状态不会改变，截止日期变化后仍会重新提醒。`;
+                              if (window.confirm(message)) void performReminderAction(item, "ignored");
                             }}
                             className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-slate-200 px-3 text-xs font-medium text-slate-500 transition hover:bg-white hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
                           >
@@ -523,7 +545,7 @@ export function ReminderCenter({
                 <>
                   <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600"><CheckCircle2 className="h-5 w-5" /></div>
                   <p className="mt-4 text-sm font-medium text-slate-800">当前没有需要处理的任务</p>
-                  <p className="mt-1 max-w-md text-xs leading-5 text-slate-400">已忽略或仍在暂缓期限内的事项不会出现在这里；真正完成的事项由新的有效期或下一次保号日期自然结束当前轮次。</p>
+                  <p className="mt-1 max-w-md text-xs leading-5 text-slate-400">已忽略或仍在暂缓期限内的事项不会出现在这里；生命周期推进或余额恢复正常后，对应事项会自动结束。</p>
                 </>
               )}
             </div>
@@ -557,7 +579,7 @@ export function ReminderCenter({
                         </div>
                         <div className="mt-1 text-sm text-slate-600">{item.title}</div>
                         <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-400">
-                          <span>本轮截止：{item.dueDate || "未设置日期"}</span>
+                          <span>{item.kind === "low_balance" ? "本轮：持续低余额状态" : `本轮截止：${item.dueDate || "未设置日期"}`}</span>
                           {item.action === "completed" && !item.verified ? <span className="font-medium text-amber-600">该记录来自旧版一键标记，不再用于压制提醒</span> : null}
                         </div>
                       </div>
