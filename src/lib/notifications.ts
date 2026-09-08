@@ -30,9 +30,10 @@ export const OVERDUE_REPEAT_INTERVAL_DAYS = 7;
 export const CONDITION_REPEAT_INTERVAL_DAYS = 3;
 export const CONDITION_SCAN_INTERVAL_MS = 60_000;
 
-const LEGACY_NOTIFICATION_KINDS: ReminderKind[] = ["sim_validity", "keep_alive"];
+const ALPHA37_NOTIFICATION_KINDS: ReminderKind[] = ["sim_validity", "keep_alive"];
+const ALPHA38_NOTIFICATION_KINDS: ReminderKind[] = ["sim_validity", "keep_alive", "low_balance"];
 const LEGACY_NOTIFICATION_STATUSES: ReminderStatus[] = ["upcoming", "today", "grace", "overdue", "unscheduled"];
-const ALL_NOTIFICATION_KINDS: ReminderKind[] = ["sim_validity", "keep_alive", "low_balance"];
+const ALL_NOTIFICATION_KINDS: ReminderKind[] = ["sim_validity", "keep_alive", "low_balance", "sync_health"];
 const ALL_NOTIFICATION_STATUSES: ReminderStatus[] = ["upcoming", "today", "grace", "overdue", "unscheduled", "condition"];
 const MAX_TIMER_DELAY_MS = 2_147_000_000;
 const SCHEDULE_START_TOLERANCE_MS = 60_000;
@@ -502,6 +503,12 @@ async function getUnifiedNotificationReminderItems(today = datePartsInTimeZone()
   return getUnifiedReminderItems(today);
 }
 
+async function getConditionNotificationReminderItems(today = datePartsInTimeZone().date) {
+  const active = (await getUnifiedNotificationReminderItems(today)).filter((item) => item.status === "condition");
+  const { getSyncHealthRecoveryNotificationItems } = await import("@/lib/condition-episodes");
+  return [...active, ...getSyncHealthRecoveryNotificationItems()];
+}
+
 function stringConfig(config: NotificationChannelConfig, key: string) {
   const value = config[key];
   return typeof value === "string" ? value.trim() : "";
@@ -512,8 +519,8 @@ function numberConfig(config: NotificationChannelConfig, key: string, fallback: 
   return Number.isFinite(value) ? value : fallback;
 }
 
-function isLegacyFullSelection<T extends string>(selected: T[], legacyValues: T[]) {
-  return selected.length === legacyValues.length && legacyValues.every((value) => selected.includes(value));
+function isExactSelection<T extends string>(selected: T[], values: readonly T[]) {
+  return selected.length === values.length && values.every((value) => selected.includes(value));
 }
 
 function channelFilter(config: NotificationChannelConfig): NotificationChannelFilter {
@@ -528,12 +535,14 @@ function channelFilter(config: NotificationChannelConfig): NotificationChannelFi
   const statuses = Array.isArray(record.statuses)
     ? record.statuses.filter((value): value is ReminderStatus => typeof value === "string" && ALL_NOTIFICATION_STATUSES.includes(value as ReminderStatus))
     : [];
+  const legacyKinds = isExactSelection(kinds, ALPHA37_NOTIFICATION_KINDS)
+    || isExactSelection(kinds, ALPHA38_NOTIFICATION_KINDS);
   return {
     kinds: kinds.length
-      ? isLegacyFullSelection(kinds, LEGACY_NOTIFICATION_KINDS) ? [...ALL_NOTIFICATION_KINDS] : [...new Set(kinds)]
+      ? legacyKinds ? [...ALL_NOTIFICATION_KINDS] : [...new Set(kinds)]
       : [...ALL_NOTIFICATION_KINDS],
     statuses: statuses.length
-      ? isLegacyFullSelection(statuses, LEGACY_NOTIFICATION_STATUSES) ? [...ALL_NOTIFICATION_STATUSES] : [...new Set(statuses)]
+      ? isExactSelection(statuses, LEGACY_NOTIFICATION_STATUSES) ? [...ALL_NOTIFICATION_STATUSES] : [...new Set(statuses)]
       : [...ALL_NOTIFICATION_STATUSES],
   };
 }
@@ -568,11 +577,16 @@ async function request(url: string | URL, init?: RequestInit) {
   }
 }
 
+function webhookEvent(reminders: ReminderItem[]) {
+  if (!reminders.length) return "test";
+  if (reminders.every((item) => item.conditionState === "recovered")) return "condition_recovered";
+  if (reminders.every((item) => item.status === "condition")) return "condition_alert";
+  return "reminder_digest";
+}
+
 async function sendChannelMessage(channel: NotificationChannel, title: string, message: string, reminders: ReminderItem[] = []) {
   const config = channel.config;
-  const event = reminders.length
-    ? reminders.every((item) => item.status === "condition") ? "condition_alert" : "reminder_digest"
-    : "test";
+  const event = webhookEvent(reminders);
 
   if (channel.type === "webhook") {
     const url = validateHttpUrl(stringConfig(config, "url"), "Webhook URL");
@@ -726,6 +740,7 @@ function automaticReminderIsDue(channel: NotificationChannel, reminder: Reminder
 function conditionReminderIsDue(channel: NotificationChannel, reminder: ReminderItem, today: string) {
   if (reminder.status !== "condition" || !channelAcceptsReminder(channel, reminder)) return false;
   const lastDate = lastSuccessfulReminderDeliveryDate(channel.id, reminder.key);
+  if (reminder.notificationPolicy === "once") return !lastDate;
   return !lastDate || daysBetweenDates(lastDate, today) >= CONDITION_REPEAT_INTERVAL_DAYS;
 }
 
@@ -750,7 +765,7 @@ function renderReminderItem(settings: NotificationSettings, channel: Notificatio
     country: item.country,
     title: item.title,
     kind: getReminderKindLabel(item.kind),
-    status: getReminderStatusLabel(item.status),
+    status: item.conditionState === "recovered" ? "已恢复" : getReminderStatusLabel(item.status),
     relative: getReminderRelativeLabel(item),
     dueDate: item.dueDate || "",
     dueSuffix: item.dueDate ? ` · ${item.dueDate}` : "",
@@ -900,6 +915,12 @@ export async function dispatchNotifications(options: { force?: boolean; respectS
   };
 }
 
+function conditionHeading(items: ReminderItem[]) {
+  return items.length && items.every((item) => item.conditionState === "recovered")
+    ? "同步恢复"
+    : "条件提醒";
+}
+
 export async function dispatchConditionNotifications() {
   ensureNotificationTables();
   const settings = getNotificationSettings();
@@ -910,7 +931,7 @@ export async function dispatchConditionNotifications() {
   }
 
   const channels = listNotificationChannels().filter((channel) => channel.enabled);
-  const reminders = (await getUnifiedNotificationReminderItems(nowParts.date)).filter((item) => item.status === "condition");
+  const reminders = await getConditionNotificationReminderItems(nowParts.date);
   let sent = 0;
   let failed = 0;
   let skipped = 0;
@@ -933,7 +954,7 @@ export async function dispatchConditionNotifications() {
 
     if (!eligible.length) continue;
 
-    const rendered = renderReminderDigest(settings, channel, eligible, "条件提醒", nowParts.date);
+    const rendered = renderReminderDigest(settings, channel, eligible, conditionHeading(eligible), nowParts.date);
     try {
       await sendChannelMessage(channel, rendered.title, rendered.message, eligible);
       for (const reminder of eligible) {
