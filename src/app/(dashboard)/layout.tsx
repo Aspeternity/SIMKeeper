@@ -51,6 +51,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   return (
     <div className="flex min-h-screen bg-slate-50" data-reminder-count={attentionItems.length}>
+      <span className="sr-only">你的号码生命周期，一处管理</span>
       <Sidebar />
       <div className="min-w-0 flex-1">
         <Topbar username={user.username} items={attentionItems} />
