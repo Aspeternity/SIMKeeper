@@ -1,5 +1,24 @@
 export type CarrierConnectorStatus = "connected" | "error";
 
+export type CarrierProviderErrorType =
+  | "temporary"
+  | "authentication"
+  | "rate_limit"
+  | "maintenance"
+  | "configuration"
+  | "unsupported"
+  | "permanent";
+
+export type CarrierConnectorHealthStatus =
+  | "healthy"
+  | "syncing"
+  | "retrying"
+  | "authentication"
+  | "error"
+  | "stale"
+  | "paused"
+  | "pending";
+
 export type ConnectorAccountStatus =
   | "active"
   | "suspended"
@@ -99,6 +118,22 @@ export const CONNECTOR_ACCOUNT_STATUS_OPTIONS: Array<{
   { value: "closed", label: "已关闭" },
   { value: "unknown", label: "未知" },
 ];
+
+export const CONNECTOR_HEALTH_STATUS_LABELS: Record<CarrierConnectorHealthStatus, string> = {
+  healthy: "正常",
+  syncing: "正在同步",
+  retrying: "等待重试",
+  authentication: "认证失效",
+  error: "同步异常",
+  stale: "数据过期",
+  paused: "已暂停",
+  pending: "等待首次同步",
+};
+
+export function getConnectorHealthStatusLabel(value: CarrierConnectorHealthStatus | string | null | undefined) {
+  if (!value) return "未知";
+  return CONNECTOR_HEALTH_STATUS_LABELS[value as CarrierConnectorHealthStatus] ?? "未知";
+}
 
 export function getConnectorAccountStatusLabel(value: string | null | undefined) {
   return CONNECTOR_ACCOUNT_STATUS_OPTIONS.find((item) => item.value === value)?.label ?? "未知";
