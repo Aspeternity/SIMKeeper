@@ -27,11 +27,16 @@ export const DEFAULT_NOTIFICATION_TIME = "09:00";
 export const DEFAULT_NOTIFICATION_MILESTONES = [30, 14, 7, 3, 1, 0] as const;
 export const OVERDUE_INITIAL_MILESTONES = [1, 3] as const;
 export const OVERDUE_REPEAT_INTERVAL_DAYS = 7;
+export const CONDITION_REPEAT_INTERVAL_DAYS = 3;
+export const CONDITION_SCAN_INTERVAL_MS = 60_000;
 
-const ALL_NOTIFICATION_KINDS: ReminderKind[] = ["sim_validity", "keep_alive"];
-const ALL_NOTIFICATION_STATUSES: ReminderStatus[] = ["upcoming", "today", "grace", "overdue", "unscheduled"];
+const LEGACY_NOTIFICATION_KINDS: ReminderKind[] = ["sim_validity", "keep_alive"];
+const LEGACY_NOTIFICATION_STATUSES: ReminderStatus[] = ["upcoming", "today", "grace", "overdue", "unscheduled"];
+const ALL_NOTIFICATION_KINDS: ReminderKind[] = ["sim_validity", "keep_alive", "low_balance"];
+const ALL_NOTIFICATION_STATUSES: ReminderStatus[] = ["upcoming", "today", "grace", "overdue", "unscheduled", "condition"];
 const MAX_TIMER_DELAY_MS = 2_147_000_000;
 const SCHEDULE_START_TOLERANCE_MS = 60_000;
+const CONDITION_INITIAL_DELAY_MS = 5_000;
 
 export type NotificationChannelFilter = {
   kinds: ReminderKind[];
@@ -492,6 +497,11 @@ export function getCurrentReminderItems() {
   return filterReminderItems(getRawCurrentReminderItems(today), today);
 }
 
+async function getUnifiedNotificationReminderItems(today = datePartsInTimeZone().date) {
+  const { getUnifiedReminderItems } = await import("@/lib/current-reminders");
+  return getUnifiedReminderItems(today);
+}
+
 function stringConfig(config: NotificationChannelConfig, key: string) {
   const value = config[key];
   return typeof value === "string" ? value.trim() : "";
@@ -500,6 +510,10 @@ function stringConfig(config: NotificationChannelConfig, key: string) {
 function numberConfig(config: NotificationChannelConfig, key: string, fallback: number) {
   const value = Number(config[key]);
   return Number.isFinite(value) ? value : fallback;
+}
+
+function isLegacyFullSelection<T extends string>(selected: T[], legacyValues: T[]) {
+  return selected.length === legacyValues.length && legacyValues.every((value) => selected.includes(value));
 }
 
 function channelFilter(config: NotificationChannelConfig): NotificationChannelFilter {
@@ -515,8 +529,12 @@ function channelFilter(config: NotificationChannelConfig): NotificationChannelFi
     ? record.statuses.filter((value): value is ReminderStatus => typeof value === "string" && ALL_NOTIFICATION_STATUSES.includes(value as ReminderStatus))
     : [];
   return {
-    kinds: kinds.length ? [...new Set(kinds)] : [...ALL_NOTIFICATION_KINDS],
-    statuses: statuses.length ? [...new Set(statuses)] : [...ALL_NOTIFICATION_STATUSES],
+    kinds: kinds.length
+      ? isLegacyFullSelection(kinds, LEGACY_NOTIFICATION_KINDS) ? [...ALL_NOTIFICATION_KINDS] : [...new Set(kinds)]
+      : [...ALL_NOTIFICATION_KINDS],
+    statuses: statuses.length
+      ? isLegacyFullSelection(statuses, LEGACY_NOTIFICATION_STATUSES) ? [...ALL_NOTIFICATION_STATUSES] : [...new Set(statuses)]
+      : [...ALL_NOTIFICATION_STATUSES],
   };
 }
 
@@ -552,12 +570,16 @@ async function request(url: string | URL, init?: RequestInit) {
 
 async function sendChannelMessage(channel: NotificationChannel, title: string, message: string, reminders: ReminderItem[] = []) {
   const config = channel.config;
+  const event = reminders.length
+    ? reminders.every((item) => item.status === "condition") ? "condition_alert" : "reminder_digest"
+    : "test";
 
   if (channel.type === "webhook") {
     const url = validateHttpUrl(stringConfig(config, "url"), "Webhook URL");
     const method = stringConfig(config, "method").toUpperCase() === "GET" ? "GET" : "POST";
     const bearerToken = stringConfig(config, "bearerToken");
     if (method === "GET") {
+      url.searchParams.set("event", event);
       url.searchParams.set("title", title);
       url.searchParams.set("message", message);
       url.searchParams.set("count", String(reminders.length));
@@ -568,7 +590,7 @@ async function sendChannelMessage(channel: NotificationChannel, title: string, m
     await request(url, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(bearerToken ? { Authorization: `Bearer ${bearerToken}` } : {}) },
-      body: JSON.stringify({ source: "SIMKeeper", event: reminders.length ? "reminder_digest" : "test", title, message, reminders }),
+      body: JSON.stringify({ source: "SIMKeeper", event, title, message, reminders }),
     });
     return;
   }
@@ -667,8 +689,20 @@ function lastReminderDeliveryDate(channelId: number, reminderKey: string) {
   return row?.delivered_on || null;
 }
 
+function lastSuccessfulReminderDeliveryDate(channelId: number, reminderKey: string) {
+  const row = sqlite
+    .prepare(
+      `SELECT delivered_on FROM notification_deliveries
+       WHERE channel_id = ? AND kind = 'reminder' AND reminder_key = ? AND status = 'success'
+       ORDER BY delivered_on DESC, id DESC LIMIT 1`,
+    )
+    .get(channelId, reminderKey) as { delivered_on?: string } | undefined;
+  return row?.delivered_on || null;
+}
+
 function automaticReminderIsDue(channel: NotificationChannel, reminder: ReminderItem, settings: NotificationSettings, today: string) {
   if (!channelAcceptsReminder(channel, reminder)) return false;
+  if (reminder.status === "condition") return false;
 
   if (reminder.status === "upcoming" || reminder.status === "today") {
     return reminder.days !== null && settings.milestoneDays.includes(reminder.days);
@@ -687,6 +721,12 @@ function automaticReminderIsDue(channel: NotificationChannel, reminder: Reminder
   }
 
   return false;
+}
+
+function conditionReminderIsDue(channel: NotificationChannel, reminder: ReminderItem, today: string) {
+  if (reminder.status !== "condition" || !channelAcceptsReminder(channel, reminder)) return false;
+  const lastDate = lastSuccessfulReminderDeliveryDate(channel.id, reminder.key);
+  return !lastDate || daysBetweenDates(lastDate, today) >= CONDITION_REPEAT_INTERVAL_DAYS;
 }
 
 function digestSharedVariables(channel: NotificationChannel, heading: string, count: number, date: string) {
@@ -800,7 +840,7 @@ export async function dispatchNotifications(options: { force?: boolean; respectS
   }
 
   const channels = listNotificationChannels().filter((channel) => channel.enabled);
-  const reminders = getCurrentReminderItems();
+  const reminders = await getUnifiedNotificationReminderItems(nowParts.date);
   let sent = 0;
   let failed = 0;
   let skipped = 0;
@@ -860,8 +900,74 @@ export async function dispatchNotifications(options: { force?: boolean; respectS
   };
 }
 
+export async function dispatchConditionNotifications() {
+  ensureNotificationTables();
+  const settings = getNotificationSettings();
+  const nowParts = datePartsInTimeZone();
+
+  if (!settings.enabled) {
+    return { sent: 0, failed: 0, skipped: 0, suppressed: 0, reminders: 0, deliveredReminders: 0, channels: 0, reason: "disabled" as const };
+  }
+
+  const channels = listNotificationChannels().filter((channel) => channel.enabled);
+  const reminders = (await getUnifiedNotificationReminderItems(nowParts.date)).filter((item) => item.status === "condition");
+  let sent = 0;
+  let failed = 0;
+  let skipped = 0;
+  let suppressed = 0;
+  let deliveredReminders = 0;
+
+  for (const channel of channels) {
+    const eligible: ReminderItem[] = [];
+    for (const reminder of reminders) {
+      if (!channelAcceptsReminder(channel, reminder) || !conditionReminderIsDue(channel, reminder, nowParts.date)) {
+        suppressed += 1;
+        continue;
+      }
+      if (alreadyAttemptedToday(channel.id, reminder, nowParts.date)) {
+        skipped += 1;
+        continue;
+      }
+      eligible.push(reminder);
+    }
+
+    if (!eligible.length) continue;
+
+    const rendered = renderReminderDigest(settings, channel, eligible, "条件提醒", nowParts.date);
+    try {
+      await sendChannelMessage(channel, rendered.title, rendered.message, eligible);
+      for (const reminder of eligible) {
+        insertDelivery({ channel, kind: "reminder", reminder, deliveredOn: nowParts.date, status: "success" });
+      }
+      sent += 1;
+      deliveredReminders += eligible.length;
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : "发送失败";
+      for (const reminder of eligible) {
+        insertDelivery({ channel, kind: "reminder", reminder, deliveredOn: nowParts.date, status: "failed", error: messageText });
+      }
+      failed += 1;
+      deliveredReminders += eligible.length;
+    }
+  }
+
+  if (sent || failed) writeSetting("notification_last_dispatch_at", new Date().toISOString());
+
+  return {
+    sent,
+    failed,
+    skipped,
+    suppressed,
+    reminders: reminders.length,
+    deliveredReminders,
+    channels: channels.length,
+    reason: "completed" as const,
+  };
+}
+
 let schedulerStarted = false;
 let schedulerTimer: ReturnType<typeof setTimeout> | null = null;
+let conditionWatcherTimer: ReturnType<typeof setTimeout> | null = null;
 
 function armNotificationScheduler() {
   if (!schedulerStarted) return;
@@ -887,12 +993,33 @@ function armNotificationScheduler() {
   schedulerTimer.unref?.();
 }
 
+function armConditionWatcher(delay = CONDITION_SCAN_INTERVAL_MS) {
+  if (!schedulerStarted) return;
+  if (conditionWatcherTimer) {
+    clearTimeout(conditionWatcherTimer);
+    conditionWatcherTimer = null;
+  }
+
+  conditionWatcherTimer = setTimeout(() => {
+    void dispatchConditionNotifications()
+      .catch((error) => {
+        console.error("[SIMKeeper] condition notification watcher failed", error);
+      })
+      .finally(() => {
+        armConditionWatcher();
+      });
+  }, Math.max(1000, delay));
+  conditionWatcherTimer.unref?.();
+}
+
 export function rescheduleNotificationScheduler() {
   armNotificationScheduler();
+  armConditionWatcher(1000);
 }
 
 export function startNotificationScheduler() {
   if (schedulerStarted) return;
   schedulerStarted = true;
   armNotificationScheduler();
+  armConditionWatcher(CONDITION_INITIAL_DELAY_MS);
 }
