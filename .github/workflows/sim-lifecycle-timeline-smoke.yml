@@ -1,0 +1,185 @@
+name: Verify SIM Lifecycle Timeline
+
+on:
+  workflow_run:
+    workflows:
+      - Build and Publish Docker Image
+    types:
+      - completed
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  sim-lifecycle-timeline-smoke:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull verified image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="${{ github.event.workflow_run.head_sha }}"
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/simkeeper:sha-${sha:0:7}"
+          docker pull "$image"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Verify unified lifecycle history and backup portability
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          container="simkeeper-lifecycle-timeline-smoke"
+          base="http://127.0.0.1:18102"
+          cookies="$tmp/cookies"
+
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            rm -rf "$tmp" || true
+          }
+          trap cleanup EXIT
+
+          fail() {
+            echo "::error::$1"
+            docker logs "$container" 2>&1 || true
+            for file in "$tmp"/*.json; do
+              [ -f "$file" ] || continue
+              echo "----- $file -----"
+              head -c 12000 "$file" || true
+              echo
+            done
+            exit 1
+          }
+
+          mkdir -p "$tmp/data"
+          docker run -d \
+            --name "$container" \
+            -p 18102:3000 \
+            -e SIMKEEPER_COOKIE_SECURE=false \
+            -e PUID="$(id -u)" \
+            -e PGID="$(id -g)" \
+            -v "$tmp/data:/app/data" \
+            "$IMAGE" >/dev/null || fail "container start failed"
+
+          for _ in $(seq 1 40); do
+            curl -fsS "$base/api/health" >/dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -fsS "$base/api/health" >/dev/null || fail "health check failed"
+
+          curl -fsS -c "$cookies" -o /dev/null \
+            -X POST \
+            --data-urlencode 'username=lifecycleadmin' \
+            --data-urlencode 'password=lifecycle-test-123' \
+            --data-urlencode 'confirmPassword=lifecycle-test-123' \
+            "$base/api/auth/setup" || fail "setup failed"
+
+          curl -fsS -b "$cookies" -H 'Content-Type: application/json' \
+            -d '{"name":"Lifecycle Carrier","countryCode":"PH","website":"","notes":""}' \
+            "$base/api/carriers" > "$tmp/carrier.json" || fail "carrier creation failed"
+          carrier_id="$(jq -r '.carrier.id' "$tmp/carrier.json")"
+
+          curl -fsS -b "$cookies" -H 'Content-Type: application/json' \
+            -d '{"name":"Lifecycle Phone","type":"phone","brand":"","model":"","notes":""}' \
+            "$base/api/devices" > "$tmp/device.json" || fail "device creation failed"
+          device_id="$(jq -r '.device.id' "$tmp/device.json")"
+
+          jq -n --argjson carrierId "$carrier_id" '{
+            label:"Lifecycle SIM",phoneNumber:"",carrierId:$carrierId,deviceId:null,
+            simType:"physical",iccid:"",balance:5,currencyCode:"PHP",
+            lowBalanceEnabled:false,lowBalanceThreshold:null,status:"active",
+            activationDate:"2026-01-01",validUntil:"2026-10-01",identityStatus:"unknown",identityName:"",
+            identityDocumentType:"",identityDocumentTypeCustom:"",identityDocumentNumber:"",
+            identityCountryCode:"",identityNotes:"",notes:"",esimProfile:null
+          }' > "$tmp/sim-create.json"
+          curl -fsS -b "$cookies" -H 'Content-Type: application/json' \
+            --data-binary @"$tmp/sim-create.json" "$base/api/sims" > "$tmp/sim-result.json" \
+            || fail "SIM creation failed"
+          sim_id="$(jq -r '.sim.id' "$tmp/sim-result.json")"
+
+          jq -n --argjson id "$sim_id" --argjson carrierId "$carrier_id" --argjson deviceId "$device_id" '{
+            id:$id,label:"Lifecycle SIM",phoneNumber:"",carrierId:$carrierId,deviceId:$deviceId,
+            simType:"physical",iccid:"",balance:10,currencyCode:"PHP",
+            lowBalanceEnabled:false,lowBalanceThreshold:null,status:"active",
+            activationDate:"2026-01-01",validUntil:"2027-10-01",identityStatus:"registered",identityName:"Lifecycle Owner",
+            identityDocumentType:"passport",identityDocumentTypeCustom:"",identityDocumentNumber:"REDACTED",
+            identityCountryCode:"PH",identityNotes:"timeline smoke",notes:"",esimProfile:null
+          }' > "$tmp/sim-update.json"
+          curl -fsS -b "$cookies" -X PATCH -H 'Content-Type: application/json' \
+            --data-binary @"$tmp/sim-update.json" "$base/api/sims" > "$tmp/sim-updated.json" \
+            || fail "SIM update failed"
+
+          jq -n --argjson simId "$sim_id" '{
+            simId:$simId,serviceName:"Timeline Telegram",category:"communication",bindingType:"verification",
+            accountIdentifier:"",importance:"high",status:"active",website:"",boundAt:"2026-09-09",verifiedAt:"",notes:""
+          }' > "$tmp/service.json"
+          curl -fsS -b "$cookies" -H 'Content-Type: application/json' \
+            --data-binary @"$tmp/service.json" "$base/api/services" > "$tmp/service-result.json" \
+            || fail "service binding failed"
+
+          jq -n --argjson simId "$sim_id" '{
+            simId:$simId,activityType:"recharge",activityDate:"2026-09-09",amount:20,currencyCode:"PHP",
+            balanceAfter:30,validUntilAfter:"2028-10-01",notes:"alpha.46 recharge history"
+          }' > "$tmp/keepalive.json"
+          curl -fsS -b "$cookies" -H 'Content-Type: application/json' \
+            --data-binary @"$tmp/keepalive.json" "$base/api/keep-alive" > "$tmp/keepalive-result.json" \
+            || fail "keep-alive event failed"
+
+          jq -n --argjson simId "$sim_id" '{
+            name:"Lifecycle Mock",provider:"mock",syncIntervalMinutes:360,simIds:[$simId],
+            providerConfig:{balance:31.5,currencyCode:"PHP",balanceValidUntil:"2028-12-31",accountStatus:"active",simulateFailure:false},
+            credentials:{testToken:"lifecycle-secret"}
+          }' > "$tmp/connector.json"
+          curl -fsS -b "$cookies" -H 'Content-Type: application/json' \
+            --data-binary @"$tmp/connector.json" "$base/api/carrier-connectors" > "$tmp/connector-result.json" \
+            || fail "mock connector creation failed"
+          connector_id="$(jq -r '.connector.id' "$tmp/connector-result.json")"
+          curl -fsS -b "$cookies" -X POST -H 'Content-Type: application/json' \
+            -d "{\"connectorId\":$connector_id}" "$base/api/carrier-connectors/sync" > "$tmp/sync.json" \
+            || fail "mock sync failed"
+
+          curl -fsS -b "$cookies" "$base/api/sims/timeline?simId=$sim_id&limit=100" > "$tmp/timeline.json" \
+            || fail "timeline request failed"
+
+          jq -e '.events | any(.eventType == "sim_created")' "$tmp/timeline.json" >/dev/null || fail "SIM creation event missing"
+          jq -e '.events | any(.eventType == "device_changed")' "$tmp/timeline.json" >/dev/null || fail "device migration event missing"
+          jq -e '.events | any(.eventType == "validity_changed")' "$tmp/timeline.json" >/dev/null || fail "validity event missing"
+          jq -e '.events | any(.eventType == "balance_manual_adjusted")' "$tmp/timeline.json" >/dev/null || fail "manual balance event missing"
+          jq -e '.events | any(.eventType == "identity_updated")' "$tmp/timeline.json" >/dev/null || fail "identity event missing"
+          jq -e '.events | any(.eventType == "service_bound")' "$tmp/timeline.json" >/dev/null || fail "service event missing"
+          jq -e '.events | any(.eventType == "keep_alive_recharge")' "$tmp/timeline.json" >/dev/null || fail "keep-alive recharge event missing"
+          jq -e '.events | any(.eventType == "sync_snapshot_changed")' "$tmp/timeline.json" >/dev/null || fail "sync snapshot event missing"
+          [ "$(jq '[.events[] | select(.eventType == "validity_changed")] | length' "$tmp/timeline.json")" = "1" ] \
+            || fail "keep-alive validity update was duplicated as a manual validity event"
+          if grep -q 'REDACTED' "$tmp/timeline.json"; then fail "identity document number leaked into timeline"; fi
+
+          curl -fsS -b "$cookies" "$base/api/backups?export=1" > "$tmp/export.json" || fail "backup export failed"
+          [ "$(jq -r '.schemaVersion' "$tmp/export.json")" = "2" ] || fail "backup schema was not bumped to v2"
+          [ "$(jq '.tables.sim_lifecycle_events | length' "$tmp/export.json")" -gt 0 ] || fail "lifecycle events missing from portable backup"
+          [ "$(jq '.tables.carrier_connector_attempts | length' "$tmp/export.json")" -gt 0 ] || fail "connector attempt history missing from portable backup"
+
+          before_count="$(jq '.events | length' "$tmp/timeline.json")"
+          jq -n --slurpfile backup "$tmp/export.json" '{action:"restoreImported",backup:$backup[0]}' > "$tmp/restore-payload.json"
+          curl -fsS -b "$cookies" -H 'Content-Type: application/json' \
+            --data-binary @"$tmp/restore-payload.json" "$base/api/backups" > "$tmp/restore.json" \
+            || fail "portable backup restore failed"
+          [ "$(jq -r '.ok' "$tmp/restore.json")" = "true" ] || fail "portable backup restore did not succeed"
+
+          curl -fsS -b "$cookies" "$base/api/sims/timeline?simId=$sim_id&limit=100" > "$tmp/timeline-restored.json" \
+            || fail "timeline request after restore failed"
+          after_count="$(jq '.events | length' "$tmp/timeline-restored.json")"
+          [ "$after_count" = "$before_count" ] || fail "timeline changed after backup restore"
+          jq -e '.events | any(.eventType == "service_bound")' "$tmp/timeline-restored.json" >/dev/null \
+            || fail "lifecycle history was not restored"
+
+          echo "SIM lifecycle timeline smoke test passed"

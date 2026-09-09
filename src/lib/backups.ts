@@ -17,10 +17,11 @@ import { ensureEsimProfileTable } from "@/lib/esim-profiles";
 import { ensureNotificationTables } from "@/lib/notifications";
 import { ensureReminderActionTables } from "@/lib/reminder-actions";
 import { ensureSimArchiveTable } from "@/lib/sim-archives";
+import { dropSimLifecycleTriggers, ensureSimLifecycleTables } from "@/lib/sim-lifecycle";
 
 export const BACKUP_FORMAT = "simkeeper-portable-backup";
 export const BACKUP_FORMAT_VERSION = 4;
-export const BACKUP_SCHEMA_VERSION = 1;
+export const BACKUP_SCHEMA_VERSION = 2;
 export const DEFAULT_BACKUP_RETENTION = 20;
 export const MIN_BACKUP_RETENTION = 1;
 export const MAX_BACKUP_RETENTION = 100;
@@ -34,6 +35,7 @@ export const BACKUP_TABLES = [
   "carrier_connectors",
   "carrier_connector_sims",
   "sim_sync_snapshots",
+  "carrier_connector_attempts",
   "sim_deleted_records",
   "sim_esim_profiles",
   "sim_tariffs",
@@ -43,6 +45,7 @@ export const BACKUP_TABLES = [
   "sim_tariff_custom_items",
   "sim_keep_alive_rules",
   "sim_keep_alive_events",
+  "sim_lifecycle_events",
   "condition_episodes",
   "reminder_actions",
   "sim_bound_services",
@@ -60,6 +63,7 @@ function ensureBackupTables() {
   ensureNotificationTables();
   ensureReminderActionTables();
   ensureConditionEpisodeTables();
+  ensureSimLifecycleTables();
 }
 
 ensureBackupTables();
@@ -452,6 +456,7 @@ function restoreParsedBackup(payload: BackupPayload) {
   const previousCredentialSecret = exportCredentialSecret();
 
   if (payload.credentialSecret) importCredentialSecret(payload.credentialSecret);
+  dropSimLifecycleTriggers();
 
   const restore = sqlite.transaction(() => {
     for (const table of DELETE_ORDER) {
@@ -491,8 +496,10 @@ function restoreParsedBackup(payload: BackupPayload) {
 
   try {
     restore();
+    ensureSimLifecycleTables();
   } catch (error) {
     importCredentialSecret(previousCredentialSecret);
+    ensureSimLifecycleTables();
     throw error;
   }
 

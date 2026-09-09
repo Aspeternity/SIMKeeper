@@ -6,8 +6,10 @@ export async function register() {
 
   const { ensureBalanceTimestampTriggers } = await import("@/lib/balance-timestamps");
   const { ensureConditionEpisodeTables } = await import("@/lib/condition-episodes");
+  const { ensureSimLifecycleTables } = await import("@/lib/sim-lifecycle");
   ensureBalanceTimestampTriggers();
   ensureConditionEpisodeTables();
+  ensureSimLifecycleTables();
 
   const globalState = globalThis as typeof globalThis & {
     __simkeeperNotificationSchedulerStarted?: boolean;

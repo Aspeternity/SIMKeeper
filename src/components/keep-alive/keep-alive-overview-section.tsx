@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Activity, CalendarClock, ChevronDown, Loader2, ShieldCheck } from "lucide-react";
 import { ServiceOverviewSection } from "@/components/services/service-overview-section";
+import { SimLifecycleTimelineSection } from "@/components/sims/sim-lifecycle-timeline-section";
 import {
   getKeepAliveActivityLabel,
   getKeepAliveDueDateSourceLabel,
@@ -94,7 +95,12 @@ export function KeepAliveOverviewSection({
 
   return (
     <>
-      {showServices ? <ServiceOverviewSection simId={simId} /> : null}
+      {showServices ? (
+        <>
+          <ServiceOverviewSection simId={simId} />
+          <SimLifecycleTimelineSection simId={simId} />
+        </>
+      ) : null}
 
       <section className={`space-y-3 ${showServices ? "border-t pt-6" : ""}`}>
         <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
