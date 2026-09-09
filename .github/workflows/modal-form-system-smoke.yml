@@ -56,6 +56,8 @@ jobs:
           grep -Fq 'export function FormSection' src/components/ui/form-field.tsx || fail "FormSection primitive missing"
           grep -Fq 'export function Select' src/components/ui/select.tsx || fail "Select primitive missing"
           grep -Fq 'export function Textarea' src/components/ui/textarea.tsx || fail "Textarea primitive missing"
+          grep -Fq 'dataAttribute="sim-editor"' src/components/sims/sim-editor-modal.tsx || fail "SIM editor not migrated"
+          grep -Fq 'dataAttribute="sim-delete"' src/components/sims/sim-delete-modal.tsx || fail "SIM delete dialog not migrated"
           grep -Fq 'dataAttribute="device-editor"' src/components/devices/device-editor-modal.tsx || fail "Device editor not migrated"
           grep -Fq 'dataAttribute="service-binding-editor"' src/components/services/service-binding-modal.tsx || fail "Service binding editor not migrated"
           grep -Fq 'dataAttribute="keep-alive-rule-editor"' src/components/keep-alive/keep-alive-rule-modal.tsx || fail "Keep-alive rule editor not migrated"
