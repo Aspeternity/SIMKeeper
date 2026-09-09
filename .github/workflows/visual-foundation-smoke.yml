@@ -1,0 +1,103 @@
+name: Verify Visual Foundation
+
+on:
+  workflow_run:
+    workflows: [Build and Publish Docker Image]
+    types: [completed]
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  visual-foundation-smoke:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Pull verified image
+        run: |
+          sha="${{ github.event.workflow_run.head_sha }}"
+          image="ghcr.io/aspeternity/simkeeper:sha-${sha:0:7}"
+          docker pull "$image"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Verify visual foundation and accent persistence
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          trap 'docker rm -f simkeeper-visual-smoke >/dev/null 2>&1 || true; rm -rf "$tmp"' EXIT
+          mkdir -p "$tmp/data"
+
+          assert_html() {
+            local file="$1"
+            local pattern="$2"
+            local label="$3"
+            if ! grep -Fq "$pattern" "$file"; then
+              echo "::error::$label missing: $pattern"
+              exit 1
+            fi
+          }
+
+          start_app() {
+            docker run -d --name simkeeper-visual-smoke -p 18111:3000 \
+              -e SIMKEEPER_COOKIE_SECURE=false \
+              -e PUID="$(id -u)" -e PGID="$(id -g)" \
+              -v "$tmp/data:/app/data" "$IMAGE" >/dev/null
+            for _ in $(seq 1 40); do
+              curl -fsS http://127.0.0.1:18111/api/health >/dev/null 2>&1 && return 0
+              sleep 1
+            done
+            docker logs simkeeper-visual-smoke
+            return 1
+          }
+
+          start_app
+          curl -fsS -c "$tmp/cookies" -o /dev/null -X POST \
+            --data-urlencode 'username=visualadmin' \
+            --data-urlencode 'password=visual-test-123' \
+            --data-urlencode 'confirmPassword=visual-test-123' \
+            http://127.0.0.1:18111/api/auth/setup
+
+          curl -fsS -b "$tmp/cookies" http://127.0.0.1:18111/ > "$tmp/default.html"
+          assert_html "$tmp/default.html" 'data-visual-foundation="alpha.51"' 'visual foundation marker'
+          assert_html "$tmp/default.html" 'data-accent="indigo"' 'default accent'
+          assert_html "$tmp/default.html" 'v0.1.0-alpha.51' 'application version'
+          assert_html "$tmp/default.html" 'bg-brand-soft' 'brand-aware active navigation'
+
+          curl -fsS -b "$tmp/cookies" http://127.0.0.1:18111/settings/overview > "$tmp/settings.html"
+          assert_html "$tmp/settings.html" 'data-site-settings="alpha.45"' 'legacy site settings marker'
+          assert_html "$tmp/settings.html" 'data-visual-settings="alpha.51"' 'visual settings marker'
+          assert_html "$tmp/settings.html" '品牌强调色' 'accent settings section'
+          assert_html "$tmp/settings.html" 'Indigo' 'indigo option'
+          assert_html "$tmp/settings.html" 'Teal' 'teal option'
+
+          curl -fsS -b "$tmp/cookies" -X PUT \
+            -F 'siteName=VisualKeeper' \
+            -F 'siteDescription=Visual foundation smoke' \
+            -F 'accentColor=teal' \
+            -F 'logoAction=keep' \
+            http://127.0.0.1:18111/api/site-settings > "$tmp/site-settings.json"
+          test "$(jq -r '.siteName' "$tmp/site-settings.json")" = "VisualKeeper"
+          test "$(jq -r '.accentColor' "$tmp/site-settings.json")" = "teal"
+
+          curl -fsS -b "$tmp/cookies" http://127.0.0.1:18111/ > "$tmp/teal.html"
+          assert_html "$tmp/teal.html" 'data-accent="teal"' 'saved teal accent'
+          assert_html "$tmp/teal.html" 'VisualKeeper' 'saved site name'
+
+          invalid_code="$(curl -sS -o "$tmp/invalid.json" -w '%{http_code}' -b "$tmp/cookies" -X PUT \
+            -F 'siteName=VisualKeeper' \
+            -F 'siteDescription=Visual foundation smoke' \
+            -F 'accentColor=orange' \
+            -F 'logoAction=keep' \
+            http://127.0.0.1:18111/api/site-settings)"
+          test "$invalid_code" = "400"
+
+          docker rm -f simkeeper-visual-smoke >/dev/null
+          start_app
+          curl -fsS -b "$tmp/cookies" http://127.0.0.1:18111/api/site-settings > "$tmp/restarted-settings.json"
+          test "$(jq -r '.accentColor' "$tmp/restarted-settings.json")" = "teal"
+          test "$(jq -r '.siteName' "$tmp/restarted-settings.json")" = "VisualKeeper"
+          curl -fsS -b "$tmp/cookies" http://127.0.0.1:18111/ > "$tmp/restarted.html"
+          assert_html "$tmp/restarted.html" 'data-accent="teal"' 'accent after restart'
+          assert_html "$tmp/restarted.html" 'data-visual-foundation="alpha.51"' 'visual marker after restart'

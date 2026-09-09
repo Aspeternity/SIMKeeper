@@ -22,8 +22,10 @@ export function generateMetadata(): Metadata {
 }
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  const settings = getSiteSettings();
+
   return (
-    <html lang="zh-CN">
+    <html lang="zh-CN" data-accent={settings.accentColor}>
       <body>{children}</body>
     </html>
   );

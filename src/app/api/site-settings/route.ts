@@ -6,6 +6,7 @@ import {
   MAX_SITE_DESCRIPTION_LENGTH,
   MAX_SITE_LOGO_BYTES,
   MAX_SITE_NAME_LENGTH,
+  SITE_ACCENT_COLORS,
   SITE_LOGO_MIME_TYPES,
 } from "@/lib/site-settings-shared";
 
@@ -15,6 +16,7 @@ export const dynamic = "force-dynamic";
 const fieldsSchema = z.object({
   siteName: z.string().trim().min(1, "网站名称不能为空").max(MAX_SITE_NAME_LENGTH, `网站名称最多 ${MAX_SITE_NAME_LENGTH} 个字符`),
   siteDescription: z.string().trim().max(MAX_SITE_DESCRIPTION_LENGTH, `网站说明最多 ${MAX_SITE_DESCRIPTION_LENGTH} 个字符`),
+  accentColor: z.enum(SITE_ACCENT_COLORS).optional(),
   logoAction: z.enum(["keep", "remove"]).default("keep"),
 });
 
@@ -36,9 +38,11 @@ export async function PUT(request: NextRequest) {
 
   try {
     const formData = await request.formData();
+    const accentColor = formData.get("accentColor");
     const parsed = fieldsSchema.safeParse({
       siteName: formData.get("siteName"),
       siteDescription: formData.get("siteDescription") ?? "",
+      accentColor: typeof accentColor === "string" && accentColor ? accentColor : undefined,
       logoAction: formData.get("logoAction") ?? "keep",
     });
 
@@ -67,6 +71,7 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json(saveSiteSettings({
       siteName: parsed.data.siteName,
       siteDescription: parsed.data.siteDescription,
+      accentColor: parsed.data.accentColor,
       logo,
     }));
   } catch (error) {

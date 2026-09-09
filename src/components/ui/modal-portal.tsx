@@ -31,11 +31,11 @@ export function ModalPortal({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[100] h-[100dvh] overflow-y-auto bg-slate-950/40 backdrop-blur-sm"
+      className="sim-modal-backdrop fixed inset-0 z-[100] h-[100dvh] overflow-y-auto bg-slate-950/30 backdrop-blur-[2px]"
       onMouseDown={handleBackdropMouseDown}
     >
       <div
-        className="flex min-h-full w-full items-start justify-center p-4 sm:items-center"
+        className="sim-modal-stage flex min-h-full w-full items-start justify-center p-3 sm:items-center sm:p-5"
         onMouseDown={handleBackdropMouseDown}
       >
         {children}

@@ -2,12 +2,15 @@ import "server-only";
 
 import { sqlite } from "@/db";
 import {
+  DEFAULT_SITE_ACCENT_COLOR,
   DEFAULT_SITE_DESCRIPTION,
   DEFAULT_SITE_NAME,
   MAX_SITE_DESCRIPTION_LENGTH,
   MAX_SITE_LOGO_BYTES,
   MAX_SITE_NAME_LENGTH,
+  SITE_ACCENT_COLORS,
   SITE_LOGO_MIME_TYPES,
+  type SiteAccentColor,
   type SiteSettings,
 } from "@/lib/site-settings-shared";
 
@@ -17,6 +20,7 @@ type StoredSiteSettings = {
   version: 1;
   siteName: string;
   siteDescription: string;
+  accentColor: SiteAccentColor;
   logoMimeType: string | null;
   logoBase64: string | null;
   logoUpdatedAt: string | null;
@@ -32,6 +36,7 @@ function defaultStoredSettings(): StoredSiteSettings {
     version: 1,
     siteName: DEFAULT_SITE_NAME,
     siteDescription: DEFAULT_SITE_DESCRIPTION,
+    accentColor: DEFAULT_SITE_ACCENT_COLOR,
     logoMimeType: null,
     logoBase64: null,
     logoUpdatedAt: null,
@@ -49,6 +54,9 @@ function normalizeStoredSettings(value: unknown): StoredSiteSettings {
   const siteDescription = typeof source.siteDescription === "string"
     ? source.siteDescription.trim().slice(0, MAX_SITE_DESCRIPTION_LENGTH)
     : DEFAULT_SITE_DESCRIPTION;
+  const accentColor = typeof source.accentColor === "string" && SITE_ACCENT_COLORS.includes(source.accentColor as SiteAccentColor)
+    ? source.accentColor as SiteAccentColor
+    : DEFAULT_SITE_ACCENT_COLOR;
   const logoMimeType = typeof source.logoMimeType === "string" && SITE_LOGO_MIME_TYPES.includes(source.logoMimeType as (typeof SITE_LOGO_MIME_TYPES)[number])
     ? source.logoMimeType
     : null;
@@ -61,6 +69,7 @@ function normalizeStoredSettings(value: unknown): StoredSiteSettings {
     version: 1,
     siteName,
     siteDescription,
+    accentColor,
     logoMimeType: logoBase64 ? logoMimeType : null,
     logoBase64,
     logoUpdatedAt,
@@ -83,6 +92,7 @@ function toPublicSettings(value: StoredSiteSettings): SiteSettings {
   return {
     siteName: value.siteName,
     siteDescription: value.siteDescription,
+    accentColor: value.accentColor,
     hasLogo,
     logoUrl: hasLogo ? `/api/site-branding/logo?v=${encodeURIComponent(value.logoUpdatedAt || "1")}` : null,
     logoUpdatedAt: hasLogo ? value.logoUpdatedAt : null,
@@ -113,6 +123,7 @@ export function getSiteLogo() {
 export function saveSiteSettings(input: {
   siteName: string;
   siteDescription: string;
+  accentColor?: SiteAccentColor;
   logo?: SiteLogoUpdate | null;
 }): SiteSettings {
   const current = readStoredSettings();
@@ -121,6 +132,7 @@ export function saveSiteSettings(input: {
     ...current,
     siteName: input.siteName.trim().slice(0, MAX_SITE_NAME_LENGTH) || DEFAULT_SITE_NAME,
     siteDescription: input.siteDescription.trim().slice(0, MAX_SITE_DESCRIPTION_LENGTH),
+    accentColor: input.accentColor ?? current.accentColor,
   };
 
   if (input.logo === null) {

@@ -1,12 +1,13 @@
 import { AlertTriangle, Archive, CheckCircle2, CircleAlert, CirclePause, Settings2 } from "lucide-react";
+import { StatusBadge, type StatusBadgeTone } from "@/components/ui/status-badge";
 import { getSimHealthStatusLabel, type SimHealthStatus } from "@/lib/sim-health-types";
 
-function healthClass(status: SimHealthStatus) {
-  if (status === "healthy") return "bg-emerald-50 text-emerald-700 ring-emerald-100";
-  if (status === "attention") return "bg-amber-50 text-amber-700 ring-amber-100";
-  if (status === "critical") return "bg-rose-50 text-rose-700 ring-rose-100";
-  if (status === "setup") return "bg-sky-50 text-sky-700 ring-sky-100";
-  return "bg-slate-100 text-slate-500 ring-slate-200";
+function healthTone(status: SimHealthStatus): StatusBadgeTone {
+  if (status === "healthy") return "success";
+  if (status === "attention") return "warning";
+  if (status === "critical") return "danger";
+  if (status === "setup") return "info";
+  return "neutral";
 }
 
 function HealthIcon({ status }: { status: SimHealthStatus }) {
@@ -20,12 +21,9 @@ function HealthIcon({ status }: { status: SimHealthStatus }) {
 
 export function SimHealthBadge({ status, className = "" }: { status: SimHealthStatus; className?: string }) {
   return (
-    <span
-      data-sim-health-status={status}
-      className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ${healthClass(status)} ${className}`}
-    >
+    <StatusBadge tone={healthTone(status)} size="sm" data-sim-health-status={status} className={className}>
       <HealthIcon status={status} />
       {getSimHealthStatusLabel(status)}
-    </span>
+    </StatusBadge>
   );
 }

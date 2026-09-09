@@ -7,7 +7,36 @@ const config: Config = {
     "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
   ],
   theme: {
-    extend: {},
+    extend: {
+      colors: {
+        brand: {
+          DEFAULT: "var(--primary)",
+          hover: "var(--primary-hover)",
+          soft: "var(--primary-soft)",
+          "soft-strong": "var(--primary-soft-strong)",
+          foreground: "var(--primary-foreground)",
+        },
+        surface: {
+          DEFAULT: "var(--surface)",
+          subtle: "var(--surface-subtle)",
+          hover: "var(--surface-hover)",
+        },
+        ink: {
+          DEFAULT: "var(--foreground)",
+          secondary: "var(--foreground-secondary)",
+          muted: "var(--foreground-muted)",
+        },
+        line: {
+          DEFAULT: "var(--border)",
+          strong: "var(--border-strong)",
+        },
+        focus: "var(--focus-ring)",
+      },
+      boxShadow: {
+        card: "var(--shadow-card)",
+        floating: "var(--shadow-floating)",
+      },
+    },
   },
   plugins: [],
 };

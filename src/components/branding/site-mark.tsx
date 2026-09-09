@@ -11,14 +11,14 @@ export function SiteMark({
 }) {
   if (logoUrl) {
     return (
-      <div className={`${className} shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-white`}>
+      <div className={`${className} shrink-0 overflow-hidden rounded-xl border border-line bg-surface shadow-sm`}>
         <img src={logoUrl} alt="" className="h-full w-full object-contain" />
       </div>
     );
   }
 
   return (
-    <div className={`${className} flex shrink-0 items-center justify-center rounded-xl bg-slate-950 text-white`}>
+    <div className={`${className} flex shrink-0 items-center justify-center rounded-xl bg-brand text-brand-foreground shadow-sm`}>
       <Smartphone className={iconClassName} />
     </div>
   );
