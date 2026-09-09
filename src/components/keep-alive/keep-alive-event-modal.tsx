@@ -1,10 +1,13 @@
 "use client";
 
 import { FormEvent, useMemo, useState } from "react";
-import { Activity, CheckCircle2, Loader2, X } from "lucide-react";
-import { Card } from "@/components/ui/card";
+import { Activity, CheckCircle2, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogAlert, DialogBody, DialogFooter, DialogHeader } from "@/components/ui/dialog";
+import { FormField, FormGrid, FormSection } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
-import { ModalPortal } from "@/components/ui/modal-portal";
+import { Select } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { CURRENCIES } from "@/lib/sim-options";
 import {
   KEEP_ALIVE_ACTIVITY_TYPES,
@@ -135,118 +138,121 @@ export function KeepAliveEventModal({
   }
 
   const statusTone = !actionMatchedRules.length
-    ? "border-slate-200 bg-slate-50 text-slate-500"
+    ? "border-line bg-surface-subtle text-ink-secondary"
     : blockedRules.length
       ? "border-amber-200 bg-amber-50 text-amber-800"
       : "border-emerald-200 bg-emerald-50 text-emerald-700";
 
   return (
-    <ModalPortal onBackdropClick={saving ? undefined : onClose}>
-      <Card className="w-full max-w-2xl overflow-hidden shadow-2xl">
-        <div className="flex items-start justify-between gap-4 border-b bg-white px-6 py-5">
-          <div>
-            <div className="flex items-center gap-2 text-sm font-medium text-slate-500">
-              {completionReminder ? <CheckCircle2 className="h-4 w-4" /> : <Activity className="h-4 w-4" />}
-              {completionReminder ? "完成生命周期提醒" : "保号活动"}
-            </div>
-            <h3 className="mt-1 text-lg font-semibold text-slate-900">{completionReminder ? "记录实际处理结果" : "记录一次活动"}</h3>
-            <p className="mt-1 text-xs text-slate-400">{sim.label} · {sim.phoneNumber || "未填写号码"}</p>
-          </div>
-          <button type="button" onClick={onClose} disabled={saving} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"><X className="h-4 w-4" /></button>
-        </div>
+    <Dialog onClose={onClose} busy={saving} size="md" dataAttribute="keep-alive-event-editor">
+      <DialogHeader
+        eyebrow={completionReminder ? "完成生命周期提醒" : "保号活动"}
+        icon={completionReminder ? <CheckCircle2 className="h-4 w-4" /> : <Activity className="h-4 w-4" />}
+        title={completionReminder ? "记录实际处理结果" : "记录一次活动"}
+        description={`${sim.label} · ${sim.phoneNumber || "未填写号码"}`}
+        onClose={onClose}
+        busy={saving}
+      />
 
-        <form onSubmit={submit} className="space-y-5 bg-white p-6">
+      <form onSubmit={submit} className="contents">
+        <DialogBody className="space-y-5">
           {completionReminder ? (
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-              <div className="text-sm font-semibold text-emerald-900">完成本轮：{completionReminder.title}</div>
-              <div className="mt-1 text-xs leading-5 text-emerald-800/80">
+            <DialogAlert tone="success">
+              <div className="font-semibold">完成本轮：{completionReminder.title}</div>
+              <div className="mt-1 text-xs leading-5 opacity-80">
                 本轮截止：{completionReminder.dueDate || "未设置日期"}。只有本次真实活动满足对应规则，并推动下一次保号日期或号码有效期后，这条提醒才会完成；单纯打开此窗口不会隐藏提醒。
               </div>
-              {targetRule ? <div className="mt-1 text-xs font-medium text-emerald-800">对应规则：{targetRule.name}</div> : null}
-            </div>
+              {targetRule ? <div className="mt-1 text-xs font-medium">对应规则：{targetRule.name}</div> : null}
+            </DialogAlert>
           ) : null}
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="space-y-1.5 text-sm">
-              <span className="font-medium text-slate-700">活动类型</span>
-              <select value={activityType} onChange={(event) => setActivityType(event.target.value)} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400" autoFocus>
-                {KEEP_ALIVE_ACTIVITY_TYPES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-              </select>
-            </label>
-            <label className="space-y-1.5 text-sm">
-              <span className="font-medium text-slate-700">活动日期</span>
-              <Input value={activityDate} onChange={(event) => setActivityDate(event.target.value)} type="date" required />
-            </label>
-          </div>
+          {error ? <DialogAlert>{error}</DialogAlert> : null}
 
-          <div className={`rounded-xl border px-4 py-3 text-sm ${statusTone}`}>
-            {!actionMatchedRules.length ? (
-              <>当前没有规则把“{getKeepAliveActivityLabel(activityType)}”设为有效保号动作；记录会保留，但不会自动改变保号日期。</>
-            ) : (
-              <div className="space-y-1.5">
-                <div>“{getKeepAliveActivityLabel(activityType)}”关联 <strong>{actionMatchedRules.length}</strong> 条规则；按当前填写内容，<strong>{qualifiedRules.length}</strong> 条满足刷新条件。</div>
-                {blockedRules.map(({ rule, qualification }) => (
-                  <div key={rule.id} className="text-xs">• {rule.name}：{qualificationReason(rule, qualification.reason)}</div>
-                ))}
-                {independentRules.length ? <div className="text-xs">满足条件的 {independentRules.length} 条独立规则会按各自周期自动推进。</div> : null}
-                {linkedValidityRules.length ? <div className="text-xs">满足条件的 {linkedValidityRules.length} 条规则跟随号码有效期；请以下方“活动后有效期”为准，不会仅凭周期猜测新的到期日。</div> : null}
-              </div>
-            )}
-          </div>
+          <FormSection title="活动信息" description="记录实际发生的动作和日期，SIMKeeper 会按当前保号规则判断是否满足刷新条件。">
+            <FormGrid>
+              <FormField label="活动类型" required>
+                <Select value={activityType} onChange={(event) => setActivityType(event.target.value)} autoFocus>
+                  {KEEP_ALIVE_ACTIVITY_TYPES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                </Select>
+              </FormField>
+              <FormField label="活动日期" required>
+                <Input value={activityDate} onChange={(event) => setActivityDate(event.target.value)} type="date" required />
+              </FormField>
+            </FormGrid>
 
-          <div className="grid gap-4 sm:grid-cols-[1fr_150px]">
-            <label className="space-y-1.5 text-sm">
-              <span className="font-medium text-slate-700">{activityType === "recharge" ? "充值金额" : "本次金额"}</span>
-              <Input value={amount} onChange={(event) => setAmount(event.target.value)} type="number" min="0" step="any" inputMode="decimal" placeholder={activityType === "recharge" ? "填写本次实际充值金额" : "可选"} />
-              {activityType === "recharge" && actionMatchedRules.some((rule) => rule.minimumRechargeAmount !== null) ? <div className="text-xs text-slate-400">存在最低充值金额要求；金额不足或留空时，相关规则不会被刷新。</div> : null}
-            </label>
-            <label className="space-y-1.5 text-sm">
-              <span className="font-medium text-slate-700">币种</span>
-              <select value={currencyCode} onChange={(event) => setCurrencyCode(event.target.value)} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400">
-                {CURRENCIES.map((currency) => <option key={currency.code} value={currency.code}>{currency.code}</option>)}
-              </select>
-            </label>
-          </div>
+            <div className={`rounded-xl border px-4 py-3 text-sm leading-6 ${statusTone}`}>
+              {!actionMatchedRules.length ? (
+                <>当前没有规则把“{getKeepAliveActivityLabel(activityType)}”设为有效保号动作；记录会保留，但不会自动改变保号日期。</>
+              ) : (
+                <div className="space-y-1.5">
+                  <div>“{getKeepAliveActivityLabel(activityType)}”关联 <strong>{actionMatchedRules.length}</strong> 条规则；按当前填写内容，<strong>{qualifiedRules.length}</strong> 条满足刷新条件。</div>
+                  {blockedRules.map(({ rule, qualification }) => (
+                    <div key={rule.id} className="text-xs">• {rule.name}：{qualificationReason(rule, qualification.reason)}</div>
+                  ))}
+                  {independentRules.length ? <div className="text-xs">满足条件的 {independentRules.length} 条独立规则会按各自周期自动推进。</div> : null}
+                  {linkedValidityRules.length ? <div className="text-xs">满足条件的 {linkedValidityRules.length} 条规则跟随号码有效期；请以下方“活动后有效期”为准，不会仅凭周期猜测新的到期日。</div> : null}
+                </div>
+              )}
+            </div>
+          </FormSection>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="space-y-1.5 text-sm">
-              <span className="font-medium text-slate-700">活动后余额</span>
-              <Input value={balanceAfter} onChange={(event) => setBalanceAfter(event.target.value)} type="number" min="0" step="any" inputMode="decimal" placeholder="可选；填写后同步更新号码余额" />
-            </label>
-            <label className="space-y-1.5 text-sm">
-              <span className="font-medium text-slate-700">活动后有效期{completionReminder?.kind === "sim_validity" ? " *" : ""}</span>
-              <Input
-                value={validUntilAfter}
-                onChange={(event) => setValidUntilAfter(event.target.value)}
-                type="date"
+          <FormSection title="金额与结果" description="充值金额用于判断最低充值要求；活动后余额和有效期会同步回号码资料。">
+            <FormGrid className="sm:grid-cols-[1fr_150px]">
+              <FormField
+                label={activityType === "recharge" ? "充值金额" : "本次金额"}
+                hint={activityType === "recharge" && actionMatchedRules.some((rule) => rule.minimumRechargeAmount !== null)
+                  ? "存在最低充值金额要求；金额不足或留空时，相关规则不会被刷新。"
+                  : undefined}
+              >
+                <Input value={amount} onChange={(event) => setAmount(event.target.value)} type="number" min="0" step="any" inputMode="decimal" placeholder={activityType === "recharge" ? "填写本次实际充值金额" : "可选"} />
+              </FormField>
+              <FormField label="币种">
+                <Select value={currencyCode} onChange={(event) => setCurrencyCode(event.target.value)}>
+                  {CURRENCIES.map((currency) => <option key={currency.code} value={currency.code}>{currency.code}</option>)}
+                </Select>
+              </FormField>
+            </FormGrid>
+
+            <FormGrid>
+              <FormField label="活动后余额" hint="填写后会同步更新号码余额。">
+                <Input value={balanceAfter} onChange={(event) => setBalanceAfter(event.target.value)} type="number" min="0" step="any" inputMode="decimal" placeholder="可选" />
+              </FormField>
+              <FormField
+                label="活动后有效期"
                 required={completionReminder?.kind === "sim_validity"}
-              />
-              <div className={`text-xs ${completionReminder?.kind === "sim_validity" || linkedValidityRules.length ? "font-medium text-amber-600" : "text-slate-400"}`}>
-                {completionReminder?.kind === "sim_validity"
+                hint={completionReminder?.kind === "sim_validity"
                   ? `完成本轮有效期提醒必须填写运营商确认的新有效期${completionReminder.dueDate ? `，且需要晚于 ${completionReminder.dueDate}` : ""}。`
                   : linkedValidityRules.length
                     ? "这次活动已满足跟随号码有效期规则的条件；运营商显示新有效期后建议填写，保存后号码管理与保号管理会同时更新。"
                     : "填写后会同步更新号码资料中的“有效期至”。"}
-              </div>
-            </label>
-          </div>
+              >
+                <Input
+                  value={validUntilAfter}
+                  onChange={(event) => setValidUntilAfter(event.target.value)}
+                  type="date"
+                  required={completionReminder?.kind === "sim_validity"}
+                />
+              </FormField>
+            </FormGrid>
+          </FormSection>
 
-          <label className="block space-y-1.5 text-sm">
-            <span className="font-medium text-slate-700">活动备注</span>
-            <textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} placeholder="例如：充值 PHP 20，有效期延长至运营商显示的新日期；通过官方 App 完成" className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100" />
-          </label>
+          <FormField label="活动备注">
+            <Textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} placeholder="例如：充值 PHP 20，有效期延长至运营商显示的新日期；通过官方 App 完成" />
+          </FormField>
+        </DialogBody>
 
-          {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
-
-          <div className="flex justify-end gap-2 border-t pt-5">
-            <button type="button" onClick={onClose} disabled={saving} className="h-10 rounded-xl border px-4 text-sm font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-50">取消</button>
-            <button type="submit" disabled={saving} className={`inline-flex h-10 min-w-28 items-center justify-center gap-2 rounded-xl px-4 text-sm font-medium text-white transition disabled:opacity-60 ${completionReminder ? "bg-emerald-600 hover:bg-emerald-700" : "bg-slate-950 hover:bg-slate-800"}`}>
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              {completionReminder ? "确认完成并记录" : "保存记录"}
-            </button>
-          </div>
-        </form>
-      </Card>
-    </ModalPortal>
+        <DialogFooter>
+          <Button type="button" variant="secondary" onClick={onClose} disabled={saving}>取消</Button>
+          <Button
+            type="submit"
+            disabled={saving}
+            className={`min-w-28 gap-2 ${completionReminder ? "bg-emerald-600 hover:bg-emerald-700" : ""}`}
+          >
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            {completionReminder ? "确认完成并记录" : "保存记录"}
+          </Button>
+        </DialogFooter>
+      </form>
+    </Dialog>
   );
 }
