@@ -16,7 +16,7 @@ export type NavigationItem = {
   icon: LucideIcon;
 };
 
-export const APP_VERSION = "0.1.0-alpha.46";
+export const APP_VERSION = "0.1.0-alpha.47";
 
 export const PRIMARY_NAV_ITEMS: NavigationItem[] = [
   { label: "概览", href: "/", icon: LayoutDashboard },
@@ -45,6 +45,7 @@ export function navigationItemIsActive(pathname: string, href: string) {
 export function getPageTitle(pathname: string) {
   if (pathname === "/settings") return "设置";
   if (pathname.startsWith("/settings/backup")) return "备份与恢复";
+  if (pathname.startsWith("/settings/system")) return "系统与数据库";
   if (pathname.startsWith("/settings/overview")) return "设置";
   if (pathname.startsWith("/settings/dashboard")) return "概览个性化";
   if (pathname.startsWith("/settings/carrier-connectors")) return "同步与诊断";

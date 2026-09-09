@@ -1,0 +1,226 @@
+name: Verify Database Foundation
+
+on:
+  workflow_run:
+    workflows:
+      - Build and Publish Docker Image
+    types:
+      - completed
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  database-foundation-smoke:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull alpha.47 and alpha.46 images
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="${{ github.event.workflow_run.head_sha }}"
+          short="${sha:0:7}"
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          current="ghcr.io/${owner}/simkeeper:sha-${short}"
+          legacy="ghcr.io/${owner}/simkeeper:sha-8dabe33"
+          docker pull "$current"
+          docker pull "$legacy"
+          echo "CURRENT_IMAGE=$current" >> "$GITHUB_ENV"
+          echo "LEGACY_IMAGE=$legacy" >> "$GITHUB_ENV"
+
+      - name: Verify alpha.46 upgrade, backup, idempotency, and fresh install
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          container="simkeeper-database-foundation-smoke"
+          tmp="$(mktemp -d)"
+          legacy_data="$tmp/legacy-data"
+          fresh_data="$tmp/fresh-data"
+          base="http://127.0.0.1:18092"
+          cookies="$tmp/cookies.txt"
+          mkdir -p "$legacy_data" "$fresh_data"
+
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            rm -rf "$tmp"
+          }
+          trap cleanup EXIT
+
+          fail() {
+            echo "::error::$1"
+            docker logs "$container" 2>&1 || true
+            for file in "$tmp"/*.json; do
+              [ -f "$file" ] || continue
+              echo "----- $file -----"
+              cat "$file" || true
+              echo
+            done
+            exit 1
+          }
+
+          start_container() {
+            image="$1"
+            data="$2"
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            docker run -d \
+              --name "$container" \
+              -p 18092:3000 \
+              -e SIMKEEPER_COOKIE_SECURE=false \
+              -e PUID="$(id -u)" \
+              -e PGID="$(id -g)" \
+              -v "$data:/app/data" \
+              "$image" >/dev/null || fail "Unable to start SIMKeeper container"
+
+            ready=0
+            for _ in $(seq 1 45); do
+              if curl -fsS --max-time 2 "$base/api/health" >/dev/null 2>&1; then
+                ready=1
+                break
+              fi
+              sleep 1
+            done
+            [ "$ready" -eq 1 ] || fail "SIMKeeper did not become healthy"
+          }
+
+          login() {
+            rm -f "$cookies"
+            status="$(curl -sS --max-time 10 -c "$cookies" -o /dev/null -w '%{http_code}' \
+              -X POST \
+              --data-urlencode 'username=migrationadmin' \
+              --data-urlencode 'password=migration-test-123' \
+              "$base/api/auth/login")" || fail "Login request failed"
+            [ "$status" = "303" ] || fail "Login returned HTTP $status"
+          }
+
+          # Build a real alpha.46 database first. It must not know schema_migrations yet.
+          start_container "$LEGACY_IMAGE" "$legacy_data"
+          status="$(curl -sS --max-time 10 -c "$cookies" -o /dev/null -w '%{http_code}' \
+            -X POST \
+            --data-urlencode 'username=migrationadmin' \
+            --data-urlencode 'password=migration-test-123' \
+            --data-urlencode 'confirmPassword=migration-test-123' \
+            "$base/api/auth/setup")" || fail "Legacy setup failed"
+          [ "$status" = "303" ] || fail "Legacy setup returned HTTP $status"
+
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/carrier.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' \
+            --data '{"name":"Migration Smoke Carrier","countryCode":"PH","website":"","notes":"alpha.46 upgrade source"}' \
+            "$base/api/carriers")" || fail "Legacy carrier creation failed"
+          [ "$status" = "201" ] || fail "Legacy carrier creation returned HTTP $status"
+          carrier_id="$(jq -r '.carrier.id // empty' "$tmp/carrier.json")"
+          [ -n "$carrier_id" ] || fail "Legacy carrier id missing"
+
+          jq -n --argjson carrierId "$carrier_id" '{
+            label:"Alpha46 Migration SIM",
+            phoneNumber:"+639171234567",
+            carrierId:$carrierId,
+            deviceId:null,
+            simType:"physical",
+            iccid:"",
+            balance:88.5,
+            currencyCode:"PHP",
+            lowBalanceEnabled:false,
+            lowBalanceThreshold:null,
+            status:"active",
+            activationDate:"2026-01-01",
+            validUntil:"2027-01-01",
+            identityStatus:"unknown",
+            identityName:"",
+            identityDocumentType:"",
+            identityDocumentTypeCustom:"",
+            identityDocumentNumber:"",
+            identityCountryCode:"",
+            identityNotes:"",
+            notes:"database migration smoke"
+          }' > "$tmp/sim-payload.json"
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/sim.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' --data-binary @"$tmp/sim-payload.json" \
+            "$base/api/sims")" || fail "Legacy SIM creation failed"
+          [ "$status" = "201" ] || fail "Legacy SIM creation returned HTTP $status"
+          docker rm -f "$container" >/dev/null 2>&1 || true
+
+          python3 - "$legacy_data/simkeeper.db" <<'PY'
+          import sqlite3, sys
+          db = sqlite3.connect(sys.argv[1])
+          tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+          assert "schema_migrations" not in tables, tables
+          assert db.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 1
+          assert db.execute("SELECT label FROM sim_cards").fetchone()[0] == "Alpha46 Migration SIM"
+          db.close()
+          PY
+
+          # First alpha.47 start must back up the old DB, migrate transactionally, and keep data.
+          start_container "$CURRENT_IMAGE" "$legacy_data"
+          login
+          curl -fsS --max-time 10 -b "$cookies" "$base/api/system/database" > "$tmp/database-upgraded.json" \
+            || fail "Database health endpoint failed after upgrade"
+          [ "$(jq -r '.database.schemaVersion' "$tmp/database-upgraded.json")" = "2" ] || fail "Schema version is not v2 after upgrade"
+          [ "$(jq -r '.database.expectedSchemaVersion' "$tmp/database-upgraded.json")" = "2" ] || fail "Expected schema version is not v2"
+          [ "$(jq -r '.database.pendingMigrations | length' "$tmp/database-upgraded.json")" = "0" ] || fail "Pending migrations remain after upgrade"
+          [ "$(jq -r '.database.quickCheck.status' "$tmp/database-upgraded.json")" = "ok" ] || fail "SQLite quick_check did not pass"
+          [ "$(jq -r '.database.foreignKeyViolations' "$tmp/database-upgraded.json")" = "0" ] || fail "Foreign key violations detected"
+          jq -e '[.database.migrations[].name] | index("alpha46_baseline") != null and index("query_index_audit") != null' \
+            "$tmp/database-upgraded.json" >/dev/null || fail "Migration history is incomplete"
+          [ "$(jq -r '.database.preMigrationBackups.count' "$tmp/database-upgraded.json")" -ge 1 ] || fail "Pre-migration backup was not created"
+
+          curl -fsS --max-time 10 -b "$cookies" "$base/api/sims" > "$tmp/sims-after-upgrade.json" \
+            || fail "SIM list failed after migration"
+          jq -e '.sims | any(.label == "Alpha46 Migration SIM" and .balance == 88.5 and .validUntil == "2027-01-01")' \
+            "$tmp/sims-after-upgrade.json" >/dev/null || fail "Legacy SIM data changed during migration"
+
+          mapfile -t migration_backups < <(find "$legacy_data/backups" -maxdepth 1 -type f -name 'simkeeper-pre-migration-v0-to-v2-*.db' -print | sort)
+          [ "${#migration_backups[@]}" -eq 1 ] || fail "Expected exactly one v0-to-v2 pre-migration backup"
+          backup_db="${migration_backups[0]}"
+
+          python3 - "$backup_db" <<'PY'
+          import sqlite3, sys
+          db = sqlite3.connect(sys.argv[1])
+          tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+          assert "schema_migrations" not in tables, "backup was taken after migration metadata was created"
+          assert db.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 1
+          assert db.execute("SELECT label FROM sim_cards").fetchone()[0] == "Alpha46 Migration SIM"
+          db.close()
+          PY
+
+          before_restart="$(find "$legacy_data/backups" -maxdepth 1 -type f -name 'simkeeper-pre-migration-*.db' | wc -l | tr -d ' ')"
+          docker rm -f "$container" >/dev/null 2>&1 || true
+
+          # Second alpha.47 start must be idempotent and must not create another migration snapshot.
+          start_container "$CURRENT_IMAGE" "$legacy_data"
+          login
+          curl -fsS --max-time 10 -b "$cookies" "$base/api/system/database" > "$tmp/database-restarted.json" \
+            || fail "Database health endpoint failed after restart"
+          after_restart="$(find "$legacy_data/backups" -maxdepth 1 -type f -name 'simkeeper-pre-migration-*.db' | wc -l | tr -d ' ')"
+          [ "$before_restart" = "$after_restart" ] || fail "Restart created an unnecessary migration backup"
+          [ "$(jq -r '.database.schemaVersion' "$tmp/database-restarted.json")" = "2" ] || fail "Schema version changed after restart"
+          [ "$(jq -r '.database.migrations | length' "$tmp/database-restarted.json")" = "2" ] || fail "Migration history was duplicated after restart"
+          docker rm -f "$container" >/dev/null 2>&1 || true
+
+          # A new alpha.47 installation should migrate an empty DB without creating an upgrade snapshot.
+          start_container "$CURRENT_IMAGE" "$fresh_data"
+          status="$(curl -sS --max-time 10 -c "$cookies" -o /dev/null -w '%{http_code}' \
+            -X POST \
+            --data-urlencode 'username=migrationadmin' \
+            --data-urlencode 'password=migration-test-123' \
+            --data-urlencode 'confirmPassword=migration-test-123' \
+            "$base/api/auth/setup")" || fail "Fresh setup failed"
+          [ "$status" = "303" ] || fail "Fresh setup returned HTTP $status"
+          curl -fsS --max-time 10 -b "$cookies" "$base/api/system/database" > "$tmp/database-fresh.json" \
+            || fail "Fresh database health endpoint failed"
+          [ "$(jq -r '.database.schemaVersion' "$tmp/database-fresh.json")" = "2" ] || fail "Fresh database did not reach schema v2"
+          [ "$(jq -r '.database.preMigrationBackups.count' "$tmp/database-fresh.json")" = "0" ] || fail "Fresh database created an unnecessary migration backup"
+          [ "$(jq -r '.database.status' "$tmp/database-fresh.json")" = "healthy" ] || fail "Fresh database health is not healthy"
+
+          echo "Database foundation smoke checks passed."

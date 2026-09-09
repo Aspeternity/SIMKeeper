@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Activity,
+  Database,
   DatabaseBackup,
   LayoutDashboard,
   Settings2,
@@ -18,6 +19,7 @@ const items = [
   { href: "/settings/carrier-connectors", label: "同步与诊断", icon: Activity },
   { href: "/settings/notifications", label: "通知渠道", icon: Send },
   { href: "/settings/backup", label: "备份与恢复", icon: DatabaseBackup },
+  { href: "/settings/system", label: "系统与数据库", icon: Database },
 ];
 
 export function SettingsSectionNav() {
