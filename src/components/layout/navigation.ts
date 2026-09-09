@@ -1,4 +1,5 @@
 import {
+  Activity,
   BellRing,
   Box,
   KeyRound,
@@ -18,13 +19,14 @@ export type NavigationItem = {
   icon: LucideIcon;
 };
 
-export const APP_VERSION = "0.1.0-alpha.44";
+export const APP_VERSION = "0.1.0-alpha.45";
 
 export const PRIMARY_NAV_ITEMS: NavigationItem[] = [
   { label: "概览", href: "/", icon: LayoutDashboard },
   { label: "号码管理", href: "/sims", icon: Smartphone },
   { label: "设备管理", href: "/devices", icon: Box },
   { label: "运营商", href: "/carriers", icon: RadioTower },
+  { label: "同步诊断", href: "/settings/carrier-connectors", icon: Activity },
   { label: "绑定服务", href: "/services", icon: Waypoints },
   { label: "保号规则", href: "/history", icon: ShieldCheck },
   { label: "处理中心", href: "/reminders", icon: BellRing },
@@ -43,7 +45,7 @@ export function navigationItemIsActive(pathname: string, href: string) {
 }
 
 export function getPageTitle(pathname: string) {
-  if (pathname.startsWith("/settings/carrier-connectors")) return "运营商连接";
+  if (pathname.startsWith("/settings/carrier-connectors")) return "同步诊断";
   const item = [...PRIMARY_NAV_ITEMS, SETTINGS_NAV_ITEM].find((candidate) => navigationItemIsActive(pathname, candidate.href));
   return item?.label ?? "SIMKeeper";
 }
