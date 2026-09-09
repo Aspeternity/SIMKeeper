@@ -103,4 +103,5 @@ jobs:
           curl -fsS -b "$cookies" "$base/sims" > "$tmp/sims.html" || fail "SIM page failed"
           grep -Fq 'data-sims-polish="alpha.51.1"' "$tmp/sims.html" || fail "SIM list polish marker missing"
           grep -Fq 'data-sim-toolbar="alpha.51.1"' "$tmp/sims.html" || fail "SIM toolbar polish marker missing"
-          grep -Fq '0.1.0-alpha.51.1' "$tmp/sims.html" || fail "alpha.51.1 version missing"
+          expected_version="$(jq -r '.version' package.json)"
+          grep -Fq "$expected_version" "$tmp/sims.html" || fail "application version missing from SIM page"
