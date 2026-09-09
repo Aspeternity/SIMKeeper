@@ -21,28 +21,69 @@ jobs:
           image="ghcr.io/aspeternity/simkeeper:sha-${sha:0:7}"
           docker pull "$image"
           echo "IMAGE=$image" >> "$GITHUB_ENV"
-      - name: Verify dashboard sections
+      - name: Verify dashboard overview and personalization
         run: |
           set -euo pipefail
           tmp="$(mktemp -d)"
           trap 'docker rm -f simkeeper-dashboard-smoke >/dev/null 2>&1 || true; rm -rf "$tmp"' EXIT
           mkdir -p "$tmp/data"
+
+          assert_html() {
+            local file="$1"
+            local pattern="$2"
+            local label="$3"
+            if ! grep -Fq "$pattern" "$file"; then
+              echo "::error::$label missing: $pattern"
+              exit 1
+            fi
+          }
+
           docker run -d --name simkeeper-dashboard-smoke -p 18097:3000 -e SIMKEEPER_COOKIE_SECURE=false -e PUID="$(id -u)" -e PGID="$(id -g)" -v "$tmp/data:/app/data" "$IMAGE" >/dev/null
           for _ in $(seq 1 40); do curl -fsS http://127.0.0.1:18097/api/health >/dev/null 2>&1 && break; sleep 1; done
+
           curl -fsS -c "$tmp/cookies" -o /dev/null -X POST --data-urlencode 'username=dashboardadmin' --data-urlencode 'password=dashboard-test-123' --data-urlencode 'confirmPassword=dashboard-test-123' http://127.0.0.1:18097/api/auth/setup
           curl -fsS -b "$tmp/cookies" -H 'Content-Type: application/json' -d '{"name":"Dashboard Carrier","countryCode":"PH","website":"","notes":""}' http://127.0.0.1:18097/api/carriers > "$tmp/carrier.json"
           carrier_id="$(jq -r '.carrier.id' "$tmp/carrier.json")"
           jq -n --argjson carrierId "$carrier_id" '{label:"Dashboard eSIM",phoneNumber:"",carrierId:$carrierId,deviceId:null,simType:"esim",iccid:"",balance:null,currencyCode:"PHP",lowBalanceEnabled:false,lowBalanceThreshold:null,status:"active",activationDate:"",validUntil:"",identityStatus:"unknown",identityName:"",identityDocumentType:"",identityDocumentTypeCustom:"",identityDocumentNumber:"",identityCountryCode:"",identityNotes:"",notes:"",esimProfile:null}' > "$tmp/sim.json"
-          curl -fsS -b "$tmp/cookies" -H 'Content-Type: application/json' --data-binary @"$tmp/sim.json" http://127.0.0.1:18097/api/sims >/dev/null
-          curl -fsS -b "$tmp/cookies" http://127.0.0.1:18097/ > "$tmp/dashboard.html"
-          grep -q 'data-dashboard-version="alpha.44"' "$tmp/dashboard.html"
-          grep -q 'data-dashboard-horizon="30"' "$tmp/dashboard.html"
-          grep -q 'data-dashboard-distribution-limit="6"' "$tmp/dashboard.html"
-          grep -q '号码资产总览' "$tmp/dashboard.html"
-          grep -q '未来 30 天' "$tmp/dashboard.html"
-          grep -q '配置检查' "$tmp/dashboard.html"
-          grep -q 'Dashboard Carrier' "$tmp/dashboard.html"
-          grep -q '菲律宾' "$tmp/dashboard.html"
+          curl -fsS -b "$tmp/cookies" -H 'Content-Type: application/json' --data-binary @"$tmp/sim.json" http://127.0.0.1:18097/api/sims > "$tmp/created-sim.json"
+          sim_id="$(jq -r '.sim.id' "$tmp/created-sim.json")"
+          test "$sim_id" != "null"
+
+          curl -fsS -b "$tmp/cookies" http://127.0.0.1:18097/ > "$tmp/dashboard-default.html"
+          assert_html "$tmp/dashboard-default.html" 'data-dashboard-version="alpha.44"' 'default dashboard version'
+          assert_html "$tmp/dashboard-default.html" 'data-dashboard-horizon="30"' 'default horizon'
+          assert_html "$tmp/dashboard-default.html" 'data-dashboard-distribution-limit="6"' 'default distribution limit'
+          assert_html "$tmp/dashboard-default.html" '号码资产总览' 'dashboard heading'
+          assert_html "$tmp/dashboard-default.html" '未来 30 天' 'default planning card'
+          assert_html "$tmp/dashboard-default.html" 'data-dashboard-module="configuration"' 'configuration module'
+          assert_html "$tmp/dashboard-default.html" 'Dashboard Carrier' 'carrier distribution'
+          assert_html "$tmp/dashboard-default.html" '菲律宾' 'country distribution'
+
           curl -fsS -b "$tmp/cookies" http://127.0.0.1:18097/settings/dashboard > "$tmp/customizer.html"
-          grep -q 'data-dashboard-customizer="alpha.44"' "$tmp/customizer.html"
-          grep -q 'Dashboard 个性化' "$tmp/customizer.html"
+          assert_html "$tmp/customizer.html" 'data-dashboard-customizer="alpha.44"' 'customizer marker'
+          assert_html "$tmp/customizer.html" 'Dashboard 个性化' 'customizer heading'
+
+          printf '%s' '{"version":1,"horizonDays":60,"distributionLimit":3,"focusedSimIds":['"$sim_id"'],"modules":[{"id":"focus-sims","visible":true},{"id":"health-summary","visible":true},{"id":"planning","visible":true},{"id":"asset","visible":true},{"id":"configuration","visible":false},{"id":"actions","visible":true},{"id":"health-risks","visible":true},{"id":"country-distribution","visible":true},{"id":"carrier-distribution","visible":true},{"id":"recent-activity","visible":true}]}' > "$tmp/preferences.json"
+          curl -fsS -b "$tmp/cookies" -H 'Content-Type: application/json' -X PATCH --data-binary @"$tmp/preferences.json" http://127.0.0.1:18097/api/dashboard-preferences > "$tmp/preferences-response.json"
+          test "$(jq -r '.preferences.horizonDays' "$tmp/preferences-response.json")" = "60"
+          test "$(jq -r '.preferences.distributionLimit' "$tmp/preferences-response.json")" = "3"
+          test "$(jq -r '.preferences.focusedSimIds[0]' "$tmp/preferences-response.json")" = "$sim_id"
+
+          curl -fsS -b "$tmp/cookies" http://127.0.0.1:18097/ > "$tmp/dashboard-custom.html"
+          assert_html "$tmp/dashboard-custom.html" 'data-dashboard-horizon="60"' 'custom horizon'
+          assert_html "$tmp/dashboard-custom.html" 'data-dashboard-distribution-limit="3"' 'custom distribution limit'
+          assert_html "$tmp/dashboard-custom.html" 'data-dashboard-module="focus-sims"' 'focus module'
+          assert_html "$tmp/dashboard-custom.html" "data-dashboard-focus-sim=\"$sim_id\"" 'focused sim'
+          assert_html "$tmp/dashboard-custom.html" '未来 60 天' 'custom planning card'
+          assert_html "$tmp/dashboard-custom.html" 'Top 3' 'custom distribution label'
+          if grep -Fq 'data-dashboard-module="configuration"' "$tmp/dashboard-custom.html"; then
+            echo '::error::configuration module should be hidden after personalization'
+            exit 1
+          fi
+
+          curl -fsS -b "$tmp/cookies" -X DELETE http://127.0.0.1:18097/api/dashboard-preferences > "$tmp/reset.json"
+          test "$(jq -r '.preferences.horizonDays' "$tmp/reset.json")" = "30"
+          test "$(jq -r '.preferences.focusedSimIds | length' "$tmp/reset.json")" = "0"
+          curl -fsS -b "$tmp/cookies" http://127.0.0.1:18097/ > "$tmp/dashboard-reset.html"
+          assert_html "$tmp/dashboard-reset.html" 'data-dashboard-horizon="30"' 'reset horizon'
+          assert_html "$tmp/dashboard-reset.html" 'data-dashboard-module="configuration"' 'reset configuration module'
