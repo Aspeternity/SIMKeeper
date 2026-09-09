@@ -14,7 +14,7 @@ export default function SettingsOverviewPage() {
     <div className="space-y-6" data-settings-overview-polish="alpha.51.4">
       <SettingsPageHeader
         icon={Settings2}
-        eyebrow="General"
+        eyebrow="系统设置"
         title="基础设置"
         description="管理当前 SIMKeeper 实例的名称、说明、Logo 与品牌强调色。这里的外观设置会同步到侧栏、移动端导航和登录界面。"
       />
