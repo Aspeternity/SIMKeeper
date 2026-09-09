@@ -1,0 +1,119 @@
+.root {
+  display: block;
+}
+
+.body > :global(div.space-y-6) > :global(section:first-child) {
+  display: none;
+}
+
+.body > :global(div.space-y-6) > :global(section:first-child) + * {
+  margin-top: 0 !important;
+}
+
+.body :global(.text-slate-950),
+.body :global(.text-slate-900),
+.body :global(.text-slate-800) {
+  color: var(--foreground) !important;
+}
+
+.body :global(.text-slate-700),
+.body :global(.text-slate-600),
+.body :global(.text-slate-500) {
+  color: var(--foreground-secondary) !important;
+}
+
+.body :global(.text-slate-400),
+.body :global(.text-slate-300) {
+  color: var(--foreground-muted) !important;
+}
+
+.body :global(.bg-white) {
+  background-color: var(--surface) !important;
+}
+
+.body :global(.bg-slate-50),
+.body :global(.bg-slate-100) {
+  background-color: var(--surface-subtle) !important;
+}
+
+.body :global(.bg-slate-950) {
+  background-color: var(--primary) !important;
+}
+
+.body :global(.border-slate-100),
+.body :global(.border-slate-200),
+.body :global(.divide-slate-100) {
+  border-color: var(--border) !important;
+}
+
+.body :global(.ring-slate-100),
+.body :global(.ring-slate-200) {
+  --tw-ring-color: var(--border) !important;
+}
+
+.body :global(select) {
+  border-color: var(--border) !important;
+  background-color: var(--surface) !important;
+  color: var(--foreground-secondary) !important;
+  transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
+}
+
+.body :global(select:focus) {
+  border-color: var(--primary) !important;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.body :global(.divide-y.divide-slate-100) {
+  background-color: var(--surface-subtle);
+}
+
+.body :global(.divide-y.divide-slate-100) > :global([id^="task-"]) {
+  margin: 0.5rem;
+  border: 1px solid var(--border) !important;
+  border-radius: 1rem;
+  background-color: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.body :global(.divide-y.divide-slate-100) > :global([id^="task-"] + [id^="task-"]) {
+  border-top-width: 1px !important;
+}
+
+.body :global([id^="task-"]:target) {
+  background-color: var(--primary-soft) !important;
+  box-shadow: 0 0 0 2px var(--focus-ring), var(--shadow-card);
+}
+
+.body :global([id^="task-"] button:hover),
+.body :global([id^="task-"] button:focus-visible) {
+  background-color: var(--surface-subtle) !important;
+}
+
+.body :global(.sim-card) {
+  border-color: var(--border);
+}
+
+.body :global(.sim-card > .border-b) {
+  border-color: var(--border) !important;
+}
+
+.body :global(.inline-flex.w-fit.rounded-xl.bg-slate-100.p-1) {
+  border: 1px solid var(--border);
+  background-color: var(--surface-subtle) !important;
+}
+
+.body :global(.inline-flex.w-fit.rounded-xl.bg-slate-100.p-1 button.bg-white) {
+  background-color: var(--surface) !important;
+  color: var(--foreground) !important;
+  box-shadow: var(--shadow-card);
+}
+
+.body :global(.rounded-xl.border.border-rose-200.bg-rose-50) {
+  box-shadow: var(--shadow-card);
+}
+
+@media (max-width: 639px) {
+  .body :global(.divide-y.divide-slate-100) > :global([id^="task-"]) {
+    margin: 0.375rem;
+  }
+}
