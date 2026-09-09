@@ -41,7 +41,12 @@ export const SETTINGS_NAV_ITEM: NavigationItem = {
 };
 
 export function navigationItemIsActive(pathname: string, href: string) {
-  return href === "/" ? pathname === "/" : pathname.startsWith(href);
+  if (href === "/") return pathname === "/";
+  if (href === "/settings") {
+    return pathname === "/settings"
+      || (pathname.startsWith("/settings/") && !pathname.startsWith("/settings/carrier-connectors"));
+  }
+  return pathname.startsWith(href);
 }
 
 export function getPageTitle(pathname: string) {
