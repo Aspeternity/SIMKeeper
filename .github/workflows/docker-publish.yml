@@ -131,6 +131,9 @@ jobs:
           grep -q 'aria-label="打开导航"' "$tmp/dashboard.html" || fail "Mobile navigation trigger was not rendered"
           grep -q 'data-page-title="概览"' "$tmp/dashboard.html" || fail "Dashboard top bar did not render the current page title"
           grep -q 'data-reminder-count="0"' "$tmp/dashboard.html" || fail "Empty reminder count was not rendered"
+          grep -q 'href="/settings/overview"' "$tmp/dashboard.html" || fail "Primary navigation did not expose the unified Settings entry"
+          if grep -q 'href="/notifications"' "$tmp/dashboard.html"; then fail "Notification channels still appear as a primary navigation entry"; fi
+          if grep -q 'href="/security"' "$tmp/dashboard.html"; then fail "Account security still appears as a primary navigation entry"; fi
 
           echo "[6/17] Logging out and verifying unauthenticated gate"
           : > "$headers"
@@ -322,7 +325,7 @@ jobs:
           [ "$status" = "200" ] || fail "Bound services after restore returned HTTP $status"
           [ "$(jq -r '.bindings[0].serviceName' "$tmp/services-after-restore.json")" = "Smoke Bank" ] || fail "Bound service was not restored"
 
-          echo "[17/17] Verifying processing, keep-alive rules and settings pages"
+          echo "[17/17] Verifying processing, keep-alive rules and unified settings center"
           status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/reminders.html" -w '%{http_code}' "$base/reminders")" || fail "GET /reminders failed"
           [ "$status" = "200" ] || fail "Processing center returned HTTP $status"
           grep -q '处理中心' "$tmp/reminders.html" || fail "Processing center heading was not rendered"
@@ -340,10 +343,28 @@ jobs:
           grep -q '前往处理中心' "$tmp/history.html" || fail "Keep-alive rules page did not link to processing center"
           if grep -q '>记录活动<' "$tmp/history.html"; then fail "Keep-alive rules page still exposes the old activity-record action"; fi
 
-          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/settings.html" -w '%{http_code}' "$base/settings")" || fail "GET /settings failed"
-          [ "$status" = "200" ] || fail "Settings and backup page returned HTTP $status"
-          grep -q '设置与备份' "$tmp/settings.html" || fail "Settings and backup heading was not rendered"
-          grep -q 'data-page-title="设置与备份"' "$tmp/settings.html" || fail "Settings top bar title was not synchronized with the route"
+          : > "$headers"
+          status="$(curl -sS --max-time 10 -b "$cookies" -D "$headers" -o "$tmp/settings-legacy.html" -w '%{http_code}' "$base/settings")" || fail "GET legacy /settings entry failed"
+          case "$status" in
+            307|308) ;;
+            *) fail "Legacy /settings entry returned HTTP $status instead of redirecting to the Settings center" ;;
+          esac
+          expect_header '^location: .*/settings/overview[[:space:]]*$' "Legacy /settings entry did not redirect to /settings/overview"
+
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/settings-overview.html" -w '%{http_code}' "$base/settings/overview")" || fail "GET /settings/overview failed"
+          [ "$status" = "200" ] || fail "Settings center returned HTTP $status"
+          grep -q 'data-page-title="设置"' "$tmp/settings-overview.html" || fail "Settings center top bar title was not synchronized with the route"
+          grep -q '系统设置' "$tmp/settings-overview.html" || fail "Settings center heading was not rendered"
+          grep -q 'href="/settings/security"' "$tmp/settings-overview.html" || fail "Settings center did not expose account security"
+          grep -q 'href="/settings/carrier-connectors"' "$tmp/settings-overview.html" || fail "Settings center did not expose sync diagnostics"
+          grep -q '同步与诊断' "$tmp/settings-overview.html" || fail "Sync diagnostics was not renamed inside Settings"
+          grep -q 'href="/settings/notifications"' "$tmp/settings-overview.html" || fail "Settings center did not expose notification channels"
+          grep -q 'href="/settings/backup"' "$tmp/settings-overview.html" || fail "Settings center did not expose backup and restore"
+
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/settings-backup.html" -w '%{http_code}' "$base/settings/backup")" || fail "GET /settings/backup failed"
+          [ "$status" = "200" ] || fail "Backup and restore settings returned HTTP $status"
+          grep -q 'data-page-title="备份与恢复"' "$tmp/settings-backup.html" || fail "Backup and restore top bar title was not synchronized with the route"
+          grep -q '备份与恢复' "$tmp/settings-backup.html" || fail "Backup and restore heading was not rendered"
 
           echo "Application smoke test passed."
 
