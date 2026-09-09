@@ -1,0 +1,94 @@
+name: Verify Management UI Polish
+
+on:
+  workflow_run:
+    workflows: [Build and Publish Docker Image]
+    types: [completed]
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  management-ui-polish:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout verified source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Pull verified image
+        run: |
+          sha="${{ github.event.workflow_run.head_sha }}"
+          image="ghcr.io/aspeternity/simkeeper:sha-${sha:0:7}"
+          docker pull "$image"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Verify management page visual polish
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          container="simkeeper-management-ui-smoke"
+          base="http://127.0.0.1:18113"
+          cookies="$tmp/cookies"
+          password="$(openssl rand -hex 12)"
+
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            rm -rf "$tmp"
+          }
+          trap cleanup EXIT
+
+          fail() {
+            echo "::error::$1"
+            docker logs "$container" 2>&1 || true
+            exit 1
+          }
+
+          grep -Fq 'data-devices-polish="alpha.51.2"' 'src/app/(dashboard)/devices/page.tsx' || fail "Device polish marker missing"
+          grep -Fq 'data-device-toolbar="alpha.51.2"' 'src/app/(dashboard)/devices/page.tsx' || fail "Device toolbar marker missing"
+          grep -Fq 'data-carriers-polish="alpha.51.2"' 'src/app/(dashboard)/carriers/page.tsx' || fail "Carrier polish marker missing"
+          grep -Fq 'data-carrier-toolbar="alpha.51.2"' 'src/app/(dashboard)/carriers/page.tsx' || fail "Carrier toolbar marker missing"
+          grep -Fq 'data-services-polish="alpha.51.2"' 'src/app/(dashboard)/services/page.tsx' || fail "Service polish marker missing"
+          grep -Fq 'data-service-toolbar="alpha.51.2"' 'src/app/(dashboard)/services/page.tsx' || fail "Service toolbar marker missing"
+          grep -Fq '"version": "0.1.0-alpha.51.2"' package.json || fail "package version missing"
+          grep -Fq 'APP_VERSION = "0.1.0-alpha.51.2"' src/components/layout/navigation.ts || fail "app version missing"
+
+          mkdir -p "$tmp/data"
+          docker run -d --name "$container" -p 18113:3000 \
+            -e SIMKEEPER_COOKIE_SECURE=false \
+            -e PUID="$(id -u)" -e PGID="$(id -g)" \
+            -v "$tmp/data:/app/data" "$IMAGE" >/dev/null || fail "Unable to start SIMKeeper"
+
+          ready=0
+          for _ in $(seq 1 40); do
+            if curl -fsS --max-time 2 "$base/api/health" >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          [ "$ready" -eq 1 ] || fail "SIMKeeper did not become healthy"
+
+          curl -fsS -c "$cookies" -o /dev/null -X POST \
+            --data-urlencode 'username=managementuismoke' \
+            --data-urlencode "password=$password" \
+            --data-urlencode "confirmPassword=$password" \
+            "$base/api/auth/setup" || fail "Unable to create smoke administrator"
+
+          curl -fsS -b "$cookies" "$base/api/devices" > "$tmp/devices.json" || fail "Devices API failed"
+          curl -fsS -b "$cookies" "$base/api/carriers" > "$tmp/carriers.json" || fail "Carriers API failed"
+          curl -fsS -b "$cookies" "$base/api/services" > "$tmp/services.json" || fail "Services API failed"
+
+          curl -fsS -b "$cookies" "$base/devices" > "$tmp/devices.html" || fail "Devices page failed"
+          curl -fsS -b "$cookies" "$base/carriers" > "$tmp/carriers.html" || fail "Carriers page failed"
+          curl -fsS -b "$cookies" "$base/services" > "$tmp/services.html" || fail "Services page failed"
+
+          grep -Fq 'data-devices-polish="alpha.51.2"' "$tmp/devices.html" || fail "Device runtime polish marker missing"
+          grep -Fq 'data-carriers-polish="alpha.51.2"' "$tmp/carriers.html" || fail "Carrier runtime polish marker missing"
+          grep -Fq 'data-services-polish="alpha.51.2"' "$tmp/services.html" || fail "Service runtime polish marker missing"
+          grep -Fq '0.1.0-alpha.51.2' "$tmp/devices.html" || fail "alpha.51.2 runtime version missing"
