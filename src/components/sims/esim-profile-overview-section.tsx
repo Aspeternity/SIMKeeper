@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import QRCode from "qrcode";
 import {
   Check,
-  ChevronDown,
   Copy,
   Eye,
   EyeOff,
@@ -14,6 +13,8 @@ import {
   RefreshCw,
   ShieldCheck,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { CollapsibleSection } from "@/components/ui/collapsible-section";
 import {
   buildLpaString,
   getEsimProfileSourceLabel,
@@ -42,22 +43,24 @@ async function copyText(value: string) {
 function SecretValue({ label, value, copyable = true }: { label: string; value: string; copyable?: boolean }) {
   const [copied, setCopied] = useState(false);
   const canCopy = copyable && Boolean(value) && value !== "未记录";
+
   async function copy() {
     if (!canCopy) return;
     await copyText(value);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1200);
   }
+
   return (
-    <div className="rounded-xl bg-slate-50 px-3.5 py-3">
-      <div className="text-[11px] text-slate-400">{label}</div>
+    <div className="rounded-xl bg-surface-subtle px-3.5 py-3">
+      <div className="text-[11px] font-medium text-ink-muted">{label}</div>
       {canCopy ? (
-        <button type="button" onClick={() => void copy()} className="group mt-1 inline-flex max-w-full items-center gap-1.5 break-all text-left text-sm font-medium text-slate-700">
+        <button type="button" onClick={() => void copy()} className="group mt-1 inline-flex max-w-full items-center gap-1.5 break-all text-left text-sm font-medium text-ink-secondary transition hover:text-ink">
           <span>{value}</span>
-          {copied ? <Check className="h-3.5 w-3.5 shrink-0 text-emerald-600" /> : <Copy className="h-3.5 w-3.5 shrink-0 text-slate-300 opacity-0 transition group-hover:opacity-100" />}
+          {copied ? <Check className="h-3.5 w-3.5 shrink-0 text-emerald-600" /> : <Copy className="h-3.5 w-3.5 shrink-0 text-ink-muted opacity-0 transition group-hover:opacity-100" />}
         </button>
       ) : (
-        <div className="mt-1 break-all text-sm font-medium text-slate-700">{value || "未记录"}</div>
+        <div className="mt-1 break-all text-sm font-medium text-ink-secondary">{value || "未记录"}</div>
       )}
     </div>
   );
@@ -127,7 +130,7 @@ export function EsimProfileOverviewSection({
   }
 
   async function generateQr() {
-    let current = secrets;
+    const current = secrets;
     if (!current) {
       await reveal();
       return;
@@ -147,26 +150,18 @@ export function EsimProfileOverviewSection({
   }
 
   return (
-    <section className="space-y-3 border-t pt-6">
-      <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-        <button type="button" onClick={() => setOpen((value) => !value)} className="group flex min-w-0 flex-1 items-start gap-2 text-left" title={open ? "收起" : "展开"}>
-          <ChevronDown className={`mt-0.5 h-4 w-4 shrink-0 text-slate-400 transition-transform ${open ? "" : "-rotate-90"}`} />
-          <QrCode className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
-          <span className="min-w-0">
-            <span className="flex flex-wrap items-center gap-2 font-medium text-slate-900">
-              eSIM 配置
-              {summary ? <span className="rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700">已归档</span> : null}
-            </span>
-            <span className="mt-1 block text-xs font-normal leading-5 text-slate-400">保存激活代码、二维码和换机时可能需要的配置资料；敏感内容默认隐藏。</span>
-          </span>
-        </button>
-        <button type="button" onClick={onEdit} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50">
-          <Pencil className="h-3.5 w-3.5" />编辑 eSIM 配置
-        </button>
-      </div>
-
-      {open ? loading ? (
-        <div className="flex min-h-28 items-center justify-center rounded-2xl border border-dashed border-slate-200 text-sm text-slate-400"><Loader2 className="mr-2 h-4 w-4 animate-spin" />正在加载 eSIM 配置…</div>
+    <CollapsibleSection
+      title="eSIM 配置"
+      description="保存激活代码、二维码和换机资料；敏感内容默认隐藏。"
+      icon={<QrCode className="h-4 w-4" />}
+      open={open}
+      onToggle={() => setOpen((value) => !value)}
+      badge={summary ? <span className="rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700">已归档</span> : undefined}
+      action={<Button type="button" variant="secondary" size="sm" className="gap-1.5" onClick={onEdit}><Pencil className="h-3.5 w-3.5" />编辑 eSIM 配置</Button>}
+      dataAttribute="esim"
+    >
+      {loading ? (
+        <div className="flex min-h-28 items-center justify-center rounded-xl border border-dashed border-line text-sm text-ink-muted"><Loader2 className="mr-2 h-4 w-4 animate-spin" />正在加载 eSIM 配置…</div>
       ) : summary ? (
         <div className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-3">
@@ -175,16 +170,23 @@ export function EsimProfileOverviewSection({
             <SecretValue label="重复激活" value={getEsimReusePolicyLabel(summary.reusePolicy)} copyable={false} />
           </div>
 
-          <div className="rounded-xl border border-slate-200 p-4">
+          <div className="rounded-xl border border-line bg-surface p-4">
             <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
               <div>
-                <div className="flex items-center gap-2 text-sm font-medium text-slate-800"><ShieldCheck className="h-4 w-4 text-slate-400" />敏感激活信息</div>
-                <div className="mt-1 text-xs text-slate-400">只有主动点击后才会从服务器解密并发送到当前浏览器。</div>
+                <div className="flex items-center gap-2 text-sm font-medium text-ink"><ShieldCheck className="h-4 w-4 text-ink-muted" />敏感激活信息</div>
+                <div className="mt-1 text-xs text-ink-muted">只有主动点击后才会从服务器解密并发送到当前浏览器。</div>
               </div>
-              <button type="button" onClick={secrets ? () => { setSecrets(null); setGeneratedQr(""); setShowOriginal(false); } : () => void reveal()} disabled={revealing} className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="gap-1.5"
+                onClick={secrets ? () => { setSecrets(null); setGeneratedQr(""); setShowOriginal(false); } : () => void reveal()}
+                disabled={revealing}
+              >
                 {revealing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : secrets ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
                 {revealing ? "正在解密" : secrets ? "隐藏激活信息" : "显示激活信息"}
-              </button>
+              </Button>
             </div>
 
             {secrets ? (
@@ -197,12 +199,12 @@ export function EsimProfileOverviewSection({
                 </div>
 
                 <div className="flex flex-wrap gap-2">
-                  <button type="button" onClick={() => void generateQr()} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-slate-950 px-3 text-xs font-medium text-white transition hover:bg-slate-800"><RefreshCw className="h-3.5 w-3.5" />重新生成二维码</button>
-                  {secrets.originalQrDataUrl ? <button type="button" onClick={() => { setShowOriginal(true); setGeneratedQr(""); }} className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-700 transition hover:bg-slate-50"><QrCode className="h-3.5 w-3.5" />查看原始二维码</button> : null}
+                  <Button type="button" size="sm" className="gap-1.5" onClick={() => void generateQr()}><RefreshCw className="h-3.5 w-3.5" />重新生成二维码</Button>
+                  {secrets.originalQrDataUrl ? <Button type="button" variant="secondary" size="sm" className="gap-1.5" onClick={() => { setShowOriginal(true); setGeneratedQr(""); }}><QrCode className="h-3.5 w-3.5" />查看原始二维码</Button> : null}
                 </div>
 
                 {(generatedQr || (showOriginal && secrets.originalQrDataUrl)) ? (
-                  <div className="rounded-2xl border border-amber-200 bg-amber-50/50 p-4">
+                  <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4">
                     <div className="text-xs font-medium text-amber-800">{generatedQr ? "根据当前 LPA 信息重新生成" : "运营商原始二维码"}</div>
                     <div className="mt-3 flex justify-center rounded-xl bg-white p-4">
                       <img src={generatedQr || secrets.originalQrDataUrl} alt="eSIM 激活二维码" className="h-auto w-full max-w-[320px]" />
@@ -221,18 +223,18 @@ export function EsimProfileOverviewSection({
             )}
           </div>
 
-          {summary.notes ? <div className="rounded-xl bg-slate-50 px-4 py-3"><div className="text-[11px] text-slate-400">eSIM 配置备注</div><div className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-600">{summary.notes}</div></div> : null}
+          {summary.notes ? <div className="rounded-xl bg-surface-subtle px-4 py-3"><div className="text-[11px] font-medium text-ink-muted">eSIM 配置备注</div><div className="mt-1 whitespace-pre-wrap text-sm leading-6 text-ink-secondary">{summary.notes}</div></div> : null}
           {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
         </div>
       ) : (
-        <div className="rounded-2xl border border-dashed border-slate-200 px-5 py-7 text-center">
-          <QrCode className="mx-auto h-5 w-5 text-slate-300" />
-          <div className="mt-2 text-sm font-medium text-slate-600">还没有归档 eSIM 激活信息</div>
-          <p className="mt-1 text-xs text-slate-400">进入号码编辑后可以上传运营商二维码自动解析，或手动填写 SM-DP+ / Activation Code。</p>
+        <div className="rounded-xl border border-dashed border-line px-5 py-7 text-center">
+          <QrCode className="mx-auto h-5 w-5 text-ink-muted" />
+          <div className="mt-2 text-sm font-medium text-ink-secondary">还没有归档 eSIM 激活信息</div>
+          <p className="mt-1 text-xs text-ink-muted">进入号码编辑后可以上传运营商二维码自动解析，或手动填写 SM-DP+ / Activation Code。</p>
         </div>
-      ) : null}
+      )}
 
-      {open && error && !summary ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
-    </section>
+      {error && !summary ? <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
+    </CollapsibleSection>
   );
 }

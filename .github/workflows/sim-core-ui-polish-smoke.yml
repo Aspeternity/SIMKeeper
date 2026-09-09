@@ -1,0 +1,106 @@
+name: Verify SIM Core UI Polish
+
+on:
+  workflow_run:
+    workflows: [Build and Publish Docker Image]
+    types: [completed]
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  sim-core-ui-polish:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout verified source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Pull verified image
+        run: |
+          sha="${{ github.event.workflow_run.head_sha }}"
+          image="ghcr.io/aspeternity/simkeeper:sha-${sha:0:7}"
+          docker pull "$image"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Verify SIM list and detail polish
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          container="simkeeper-core-ui-smoke"
+          base="http://127.0.0.1:18112"
+          cookies="$tmp/cookies"
+          password="$(openssl rand -hex 12)"
+
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            rm -rf "$tmp"
+          }
+          trap cleanup EXIT
+
+          fail() {
+            echo "::error::$1"
+            docker logs "$container" 2>&1 || true
+            exit 1
+          }
+
+          grep -Fq 'data-sim-detail-polish="alpha.51.1"' src/components/sims/sim-overview-modal.tsx || fail "SIM detail polish marker missing"
+          grep -Fq 'data-sim-detail-summary="alpha.51.1"' src/components/sims/sim-overview-modal.tsx || fail "SIM detail summary marker missing"
+          grep -Fq 'data-collapsible-section' src/components/ui/collapsible-section.tsx || fail "Unified collapsible section missing"
+          grep -Fq 'dataAttribute="services"' src/components/services/service-overview-section.tsx || fail "Service detail section not migrated"
+          grep -Fq 'dataAttribute="timeline"' src/components/sims/sim-lifecycle-timeline-section.tsx || fail "Timeline detail section not migrated"
+          grep -Fq 'dataAttribute="keep-alive"' src/components/keep-alive/keep-alive-overview-section.tsx || fail "Keep-alive detail section not migrated"
+          grep -Fq 'dataAttribute="esim"' src/components/sims/esim-profile-overview-section.tsx || fail "eSIM detail section not migrated"
+
+          mkdir -p "$tmp/data"
+          docker run -d --name "$container" -p 18112:3000 \
+            -e SIMKEEPER_COOKIE_SECURE=false \
+            -e PUID="$(id -u)" -e PGID="$(id -g)" \
+            -v "$tmp/data:/app/data" "$IMAGE" >/dev/null || fail "Unable to start SIMKeeper"
+
+          ready=0
+          for _ in $(seq 1 40); do
+            if curl -fsS --max-time 2 "$base/api/health" >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          [ "$ready" -eq 1 ] || fail "SIMKeeper did not become healthy"
+
+          curl -fsS -c "$cookies" -o /dev/null -X POST \
+            --data-urlencode 'username=uismokeadmin' \
+            --data-urlencode "password=$password" \
+            --data-urlencode "confirmPassword=$password" \
+            "$base/api/auth/setup" || fail "Unable to create smoke administrator"
+
+          status="$(curl -sS -b "$cookies" -o "$tmp/carrier.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' \
+            --data '{"name":"UI Polish Carrier","countryCode":"PH","website":"","notes":""}' \
+            "$base/api/carriers")" || fail "Carrier creation failed"
+          [ "$status" = "201" ] || fail "Carrier creation returned HTTP $status"
+          carrier_id="$(jq -r '.carrier.id // empty' "$tmp/carrier.json")"
+          [ -n "$carrier_id" ] || fail "Carrier id missing"
+
+          jq -n --argjson carrierId "$carrier_id" '{
+            label:"UI Polish SIM",phoneNumber:"+639171234567",carrierId:$carrierId,deviceId:null,simType:"physical",iccid:"8986000000000000000",balance:25,currencyCode:"PHP",status:"active",activationDate:"2026-01-01",validUntil:"2027-01-01",
+            identityStatus:"unknown",identityName:"",identityDocumentType:"",identityDocumentTypeCustom:"",identityDocumentNumber:"",identityCountryCode:"",identityNotes:"",notes:"alpha.51.1 smoke",esimProfile:null
+          }' > "$tmp/sim.json"
+
+          status="$(curl -sS -b "$cookies" -o "$tmp/sim-response.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' --data-binary @"$tmp/sim.json" "$base/api/sims")" || fail "SIM creation failed"
+          [ "$status" = "201" ] || fail "SIM creation returned HTTP $status"
+
+          curl -fsS -b "$cookies" "$base/api/sims" > "$tmp/sims.json" || fail "SIM list API failed"
+          [ "$(jq -r '.sims | length' "$tmp/sims.json")" = "1" ] || fail "SIM list API did not return created SIM"
+          [ "$(jq -r '.sims[0].label' "$tmp/sims.json")" = "UI Polish SIM" ] || fail "SIM payload changed unexpectedly"
+
+          curl -fsS -b "$cookies" "$base/sims" > "$tmp/sims.html" || fail "SIM page failed"
+          grep -Fq 'data-sims-polish="alpha.51.1"' "$tmp/sims.html" || fail "SIM list polish marker missing"
+          grep -Fq 'data-sim-toolbar="alpha.51.1"' "$tmp/sims.html" || fail "SIM toolbar polish marker missing"
+          grep -Fq '0.1.0-alpha.51.1' "$tmp/sims.html" || fail "alpha.51.1 version missing"

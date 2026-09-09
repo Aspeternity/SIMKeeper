@@ -2,12 +2,27 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Archive, Loader2, MapPin, Pencil, Plus, ReceiptText, Search, Smartphone, Trash2 } from "lucide-react";
+import {
+  Archive,
+  CalendarDays,
+  ChevronRight,
+  CircleDollarSign,
+  Loader2,
+  MapPin,
+  Pencil,
+  Plus,
+  ReceiptText,
+  RotateCcw,
+  Search,
+  Smartphone,
+  Trash2,
+} from "lucide-react";
 import { SimDeleteModal } from "@/components/sims/sim-delete-modal";
 import { SimEditorModal } from "@/components/sims/sim-editor-modal";
 import { SimHealthBadge } from "@/components/sims/sim-health-badge";
 import { SimOverviewModal } from "@/components/sims/sim-overview-modal";
 import { TariffModal } from "@/components/sims/tariff-modal";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import type { DeviceRecord } from "@/lib/device-types";
@@ -56,19 +71,19 @@ function statusClass(status: string) {
 function smsPolicyClass(value: string | null) {
   switch (value) {
     case "free":
-      return "bg-emerald-50 text-emerald-700 ring-emerald-100";
+      return "text-emerald-700";
     case "charged":
-      return "bg-amber-50 text-amber-700 ring-amber-100";
+      return "text-amber-700";
     case "unavailable":
-      return "bg-rose-50 text-rose-700 ring-rose-100";
+      return "text-rose-700";
     default:
-      return "bg-slate-100 text-slate-500 ring-slate-200";
+      return "text-ink-muted";
   }
 }
 
 function planTypeLabel(value: string | null) {
-  if (value === "prepaid") return "储值 / 预付费";
-  if (value === "postpaid") return "月费 / 后付费";
+  if (value === "prepaid") return "预付费";
+  if (value === "postpaid") return "后付费";
   return null;
 }
 
@@ -99,6 +114,62 @@ function healthMatchesFilter(health: SimHealthItem | undefined, filter: string) 
   if (filter === "needs_attention") return health.healthStatus === "attention" || health.healthStatus === "setup";
   if (filter === "paused_inactive") return health.healthStatus === "paused" || health.healthStatus === "inactive";
   return health.healthStatus === filter;
+}
+
+function SummaryFilter({
+  label,
+  value,
+  active,
+  tone,
+  onClick,
+}: {
+  label: string;
+  value: number;
+  active: boolean;
+  tone: "success" | "warning" | "danger" | "neutral";
+  onClick: () => void;
+}) {
+  const numberClass = tone === "success"
+    ? "text-emerald-700"
+    : tone === "warning"
+      ? "text-amber-700"
+      : tone === "danger"
+        ? "text-rose-700"
+        : "text-ink-secondary";
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-2xl border px-4 py-3 text-left shadow-card transition-[border-color,background-color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:border-line-strong hover:shadow-floating ${active ? "border-brand bg-brand-soft ring-2 ring-brand-soft-strong" : "border-line bg-surface"}`}
+    >
+      <div className="text-xs font-medium text-ink-muted">{label}</div>
+      <div className={`mt-1.5 text-2xl font-semibold tabular-nums tracking-tight ${numberClass}`}>{value}</div>
+    </button>
+  );
+}
+
+function SelectFilter({
+  value,
+  onChange,
+  ariaLabel,
+  children,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  ariaLabel: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      aria-label={ariaLabel}
+      className="h-9 rounded-lg border border-line bg-surface px-3 text-xs text-ink-secondary outline-none transition focus:border-brand focus:ring-4 focus:ring-focus"
+    >
+      {children}
+    </select>
+  );
 }
 
 export default function SimsPage() {
@@ -155,10 +226,7 @@ export default function SimsPage() {
     void loadData();
   }, [loadData]);
 
-  const healthBySim = useMemo(
-    () => new Map(healthItems.map((item) => [item.simId, item])),
-    [healthItems],
-  );
+  const healthBySim = useMemo(() => new Map(healthItems.map((item) => [item.simId, item])), [healthItems]);
 
   const healthSummary = useMemo(() => ({
     healthy: healthItems.filter((item) => item.healthStatus === "healthy").length,
@@ -196,35 +264,41 @@ export default function SimsPage() {
     const value = query.trim().toLowerCase();
     return sims.filter((sim) => {
       const health = healthBySim.get(sim.id);
-      const matchesQuery =
-        !value ||
-        [
-          sim.label,
-          sim.phoneNumber || "",
-          sim.carrierName,
-          sim.country,
-          sim.countryCode,
-          sim.iccid || "",
-          sim.deviceName || "",
-          sim.notes || "",
-          sim.tariffPlanName || "",
-          sim.tariffUsageSummary || "",
-          health?.healthLabel || "",
-          health?.summary || "",
-          health?.primaryReason?.detail || "",
-        ].some((field) => field.toLowerCase().includes(value));
+      const matchesQuery = !value || [
+        sim.label,
+        sim.phoneNumber || "",
+        sim.carrierName,
+        sim.country,
+        sim.countryCode,
+        sim.iccid || "",
+        sim.deviceName || "",
+        sim.notes || "",
+        sim.tariffPlanName || "",
+        sim.tariffUsageSummary || "",
+        health?.healthLabel || "",
+        health?.summary || "",
+        health?.primaryReason?.detail || "",
+      ].some((field) => field.toLowerCase().includes(value));
       const matchesCountry = countryFilter === "all" || sim.countryCode.toUpperCase() === countryFilter;
       const matchesStatus = statusFilter === "all" || sim.status === statusFilter;
       const matchesHealth = healthMatchesFilter(health, healthFilter);
       const matchesCarrier = carrierFilter === "all" || sim.carrierId === Number(carrierFilter);
-      const matchesDevice =
-        deviceFilter === "all" ||
-        (deviceFilter === "unassigned" ? sim.deviceId === null : sim.deviceId === Number(deviceFilter));
+      const matchesDevice = deviceFilter === "all" || (deviceFilter === "unassigned" ? sim.deviceId === null : sim.deviceId === Number(deviceFilter));
       return matchesQuery && matchesCountry && matchesStatus && matchesHealth && matchesCarrier && matchesDevice;
     });
   }, [carrierFilter, countryFilter, deviceFilter, healthBySim, healthFilter, query, sims, statusFilter]);
 
   const tariffCount = useMemo(() => sims.filter((sim) => Boolean(sim.tariffId)).length, [sims]);
+  const hasFilters = Boolean(query.trim()) || countryFilter !== "all" || statusFilter !== "all" || healthFilter !== "all" || carrierFilter !== "all" || deviceFilter !== "all";
+
+  function clearFilters() {
+    setQuery("");
+    setCountryFilter("all");
+    setStatusFilter("all");
+    setHealthFilter("all");
+    setCarrierFilter("all");
+    setDeviceFilter("all");
+  }
 
   function openCreate() {
     if (!carriers.length) return;
@@ -238,247 +312,200 @@ export default function SimsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6">
-      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-        <div>
-          <div className="flex items-center gap-2 text-sm font-medium text-slate-500">
-            <Smartphone className="h-4 w-4" />
-            生命周期
-          </div>
-          <h2 className="mt-2 text-2xl font-semibold tracking-tight">号码管理</h2>
-          <p className="mt-1 text-sm text-slate-500">集中查看号码资料和统一 Health，快速定位有效期、余额、保号或运营商同步风险。</p>
+    <div className="mx-auto max-w-7xl space-y-5" data-sims-polish="alpha.51.1">
+      <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+        <div className="min-w-0">
+          <h2 className="text-2xl font-semibold tracking-tight text-ink">号码管理</h2>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-ink-secondary">集中管理实体 SIM 与 eSIM。正常状态保持克制，只有余额、有效期、保号或同步异常时才突出显示。</p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row">
-          <Link href="/sims/deleted" className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border bg-white px-4 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
-            <Archive className="h-4 w-4" />
-            删除记录
+          <Link href="/sims/deleted" className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-line bg-surface px-4 text-sm font-medium text-ink-secondary shadow-sm transition hover:border-line-strong hover:bg-surface-hover hover:text-ink">
+            <Archive className="h-4 w-4" />删除记录
           </Link>
           {carriers.length ? (
-            <button onClick={openCreate} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800">
-              <Plus className="h-4 w-4" />
-              新增号码
-            </button>
+            <Button onClick={openCreate} className="gap-2"><Plus className="h-4 w-4" />新增号码</Button>
           ) : (
-            <Link href="/carriers" className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800">
-              先添加运营商
-            </Link>
+            <Link href="/carriers" className="inline-flex h-10 items-center justify-center rounded-lg bg-brand px-4 text-sm font-medium text-brand-foreground shadow-sm transition hover:bg-brand-hover">先添加运营商</Link>
           )}
         </div>
-      </div>
+      </header>
 
       {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
 
       {!loading && carriers.length === 0 ? (
-        <Card className="border-dashed p-6">
+        <Card variant="subtle" className="border-dashed p-5">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <div className="font-medium">号码需要关联运营商</div>
-              <p className="mt-1 text-sm text-slate-500">先建立至少一个运营商，再录入号码。国家/地区和国际区号都会自动从运营商继承。</p>
+              <div className="font-medium text-ink">号码需要关联运营商</div>
+              <p className="mt-1 text-sm text-ink-secondary">先建立至少一个运营商，再录入号码。国家 / 地区和国际区号都会自动从运营商继承。</p>
             </div>
-            <Link href="/carriers" className="text-sm font-medium text-slate-950 underline underline-offset-4">前往运营商管理</Link>
+            <Link href="/carriers" className="text-sm font-medium text-brand hover:underline hover:underline-offset-4">前往运营商管理</Link>
           </div>
         </Card>
       ) : null}
 
       {!loading && sims.length ? (
-        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <button type="button" onClick={() => setHealthFilter("healthy")} className="rounded-xl border bg-white px-4 py-3 text-left transition hover:border-emerald-200 hover:bg-emerald-50/30">
-            <div className="text-xs text-slate-400">Health 正常</div>
-            <div className="mt-1 text-xl font-semibold text-emerald-700">{healthSummary.healthy}</div>
-          </button>
-          <button type="button" onClick={() => setHealthFilter("needs_attention")} className="rounded-xl border bg-white px-4 py-3 text-left transition hover:border-amber-200 hover:bg-amber-50/30">
-            <div className="text-xs text-slate-400">需要关注</div>
-            <div className="mt-1 text-xl font-semibold text-amber-700">{healthSummary.needsAttention}</div>
-          </button>
-          <button type="button" onClick={() => setHealthFilter("critical")} className="rounded-xl border bg-white px-4 py-3 text-left transition hover:border-rose-200 hover:bg-rose-50/30">
-            <div className="text-xs text-slate-400">紧急</div>
-            <div className="mt-1 text-xl font-semibold text-rose-700">{healthSummary.critical}</div>
-          </button>
-          <button type="button" onClick={() => setHealthFilter("paused_inactive")} className="rounded-xl border bg-white px-4 py-3 text-left transition hover:bg-slate-50">
-            <div className="text-xs text-slate-400">暂停 / 停用</div>
-            <div className="mt-1 text-xl font-semibold text-slate-600">{healthSummary.pausedInactive}</div>
-          </button>
+        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="号码健康快速筛选">
+          <SummaryFilter label="Health 正常" value={healthSummary.healthy} tone="success" active={healthFilter === "healthy"} onClick={() => setHealthFilter(healthFilter === "healthy" ? "all" : "healthy")} />
+          <SummaryFilter label="需要关注" value={healthSummary.needsAttention} tone="warning" active={healthFilter === "needs_attention"} onClick={() => setHealthFilter(healthFilter === "needs_attention" ? "all" : "needs_attention")} />
+          <SummaryFilter label="紧急" value={healthSummary.critical} tone="danger" active={healthFilter === "critical"} onClick={() => setHealthFilter(healthFilter === "critical" ? "all" : "critical")} />
+          <SummaryFilter label="暂停 / 停用" value={healthSummary.pausedInactive} tone="neutral" active={healthFilter === "paused_inactive"} onClick={() => setHealthFilter(healthFilter === "paused_inactive" ? "all" : "paused_inactive")} />
         </section>
       ) : null}
 
-      <Card className="overflow-hidden">
-        <div className="space-y-3 border-b p-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <div className="font-medium">号码列表</div>
-              <div className="mt-1 text-xs text-slate-400">显示 {filtered.length} / {sims.length} 个号码 · 已录入资费 {tariffCount} / {sims.length}</div>
-            </div>
-            <div className="relative w-full lg:w-80">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+      <Card className="p-4 sm:p-5" data-sim-toolbar="alpha.51.1">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0">
+            <div className="font-medium text-ink">全部号码</div>
+            <div className="mt-0.5 text-xs text-ink-muted">显示 <span className="tabular-nums">{filtered.length}</span> / {sims.length} · 已录入资费 {tariffCount} / {sims.length}</div>
+          </div>
+          <div className="flex w-full gap-2 lg:w-auto">
+            <div className="relative min-w-0 flex-1 lg:w-96">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-muted" />
               <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索号码、运营商、Health、套餐或 ICCID" className="pl-9" />
             </div>
-          </div>
-          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-            <select
-              value={countryFilter}
-              onChange={(event) => setCountryFilter(event.target.value)}
-              aria-label="按国家或地区筛选号码"
-              className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-slate-400"
-            >
-              <option value="all">全部国家/地区 · {sims.length}</option>
-              {countryOptions.map((country) => (
-                <option key={country.code} value={country.code}>
-                  {countryFlag(country.code)} {country.name} · {country.count}
-                </option>
-              ))}
-            </select>
-            <select value={healthFilter} onChange={(event) => setHealthFilter(event.target.value)} aria-label="按号码健康状态筛选" className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-slate-400">
-              <option value="all">全部 Health</option>
-              <option value="healthy">正常 · {healthSummary.healthy}</option>
-              <option value="needs_attention">需要关注 · {healthSummary.needsAttention}</option>
-              <option value="critical">紧急 · {healthSummary.critical}</option>
-              <option value="paused_inactive">暂停 / 停用 · {healthSummary.pausedInactive}</option>
-            </select>
-            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-slate-400">
-              <option value="all">全部号码状态</option>
-              {SIM_STATUSES.map((status) => <option key={status.value} value={status.value}>{status.label}</option>)}
-            </select>
-            <select value={carrierFilter} onChange={(event) => setCarrierFilter(event.target.value)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-slate-400">
-              <option value="all">全部运营商</option>
-              {carriers.map((carrier) => <option key={carrier.id} value={carrier.id}>{carrier.name} · {carrier.country}</option>)}
-            </select>
-            <select value={deviceFilter} onChange={(event) => setDeviceFilter(event.target.value)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-slate-400">
-              <option value="all">全部存放位置</option>
-              <option value="unassigned">未分配</option>
-              {devices.map((device) => <option key={device.id} value={device.id}>{device.name}</option>)}
-            </select>
+            {hasFilters ? (
+              <Button type="button" variant="ghost" size="icon" onClick={clearFilters} title="清除全部筛选" aria-label="清除全部筛选"><RotateCcw className="h-4 w-4" /></Button>
+            ) : null}
           </div>
         </div>
 
-        {loading ? (
-          <div className="flex min-h-72 items-center justify-center text-sm text-slate-500"><Loader2 className="mr-2 h-4 w-4 animate-spin" />正在加载号码…</div>
-        ) : filtered.length === 0 ? (
-          <div className="flex min-h-72 flex-col items-center justify-center px-6 text-center">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-500"><Smartphone className="h-5 w-5" /></div>
-            <p className="mt-4 text-sm font-medium">{sims.length ? "没有匹配的号码" : "还没有录入号码"}</p>
-            <p className="mt-1 max-w-md text-xs leading-5 text-slate-400">{sims.length ? "尝试调整搜索关键词、Health 或其他筛选条件。" : "录入第一张 SIM / eSIM 后，就可以继续维护资费和生命周期信息。"}</p>
-          </div>
-        ) : (
-          <div className="divide-y">
-            {filtered.map((sim) => {
-              const health = healthBySim.get(sim.id);
-              const hint = dateHint(sim);
-              const isDateOverdue = Boolean(sim.validUntil && sim.validUntil < todayDate());
-              const feeLabel = planFeeLabel(sim);
-              const typeLabel = planTypeLabel(sim.tariffPlanType);
-              const phoneDisplay = formatPhoneNumber(sim.phoneNumber, "未填写手机号");
-              return (
-                <div
-                  key={sim.id}
-                  role="button"
-                  tabIndex={0}
-                  aria-label={`查看 ${sim.label} 号码详情`}
-                  onClick={() => setOverviewSim(sim)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      setOverviewSim(sim);
-                    }
-                  }}
-                  className="cursor-pointer p-4 outline-none transition hover:bg-slate-50/70 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-slate-300"
-                >
-                  <div className="flex flex-col gap-4 xl:flex-row xl:items-center">
-                    <div className="flex min-w-0 flex-1 items-start gap-3">
-                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600"><Smartphone className="h-4 w-4" /></div>
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-medium text-slate-900 transition group-hover:text-slate-950">{sim.label}</span>
-                          {health ? <SimHealthBadge status={health.healthStatus} /> : null}
-                          <span className={`rounded-md px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ${statusClass(sim.status)}`}>{getSimStatusLabel(sim.status)}</span>
-                          {isDateOverdue && sim.status !== "expired" && sim.status !== "closed" ? <span className="rounded-md bg-rose-50 px-2 py-0.5 text-[11px] font-medium text-rose-700 ring-1 ring-inset ring-rose-100">有效期已过</span> : null}
-                          {sim.tariffId ? (
-                            <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600 ring-1 ring-inset ring-slate-200">{sim.tariffPlanName || "已录入资费"}</span>
-                          ) : (
-                            <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700 ring-1 ring-inset ring-amber-100">未录入资费</span>
-                          )}
-                        </div>
-                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-500">
-                          <span>{phoneDisplay}</span>
-                          <span>{sim.carrierName}</span>
-                          <span>{sim.country} · {sim.countryCode}</span>
-                          <span>{getSimTypeLabel(sim.simType)}</span>
-                          <span className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] ${sim.deviceId === null ? "bg-slate-50 text-slate-400" : "bg-sky-50 text-sky-700"}`}>
-                            <MapPin className="h-3 w-3" />{sim.deviceName || "未分配"}
-                          </span>
-                        </div>
-                        {health?.primaryReason ? (
-                          <div className={`mt-2 line-clamp-2 text-xs leading-5 ${health.healthStatus === "critical" ? "text-rose-600" : health.healthStatus === "attention" ? "text-amber-700" : "text-sky-700"}`}>
-                            <span className="font-medium">{health.primaryReason.title}</span>
-                            <span className="text-slate-400"> · {health.primaryReason.detail}</span>
-                          </div>
-                        ) : null}
-                        {sim.tariffId ? (
-                          <div className="mt-2 flex flex-wrap gap-1.5">
-                            {typeLabel ? <span className="rounded-md bg-indigo-50 px-2 py-1 text-[10px] font-medium text-indigo-700 ring-1 ring-inset ring-indigo-100">{typeLabel}</span> : null}
-                            {feeLabel ? <span className="rounded-md bg-sky-50 px-2 py-1 text-[10px] font-medium text-sky-700 ring-1 ring-inset ring-sky-100">{feeLabel}</span> : null}
-                            {sim.tariffAutoRenew === "yes" ? <span className="rounded-md bg-violet-50 px-2 py-1 text-[10px] font-medium text-violet-700 ring-1 ring-inset ring-violet-100">自动续订</span> : null}
-                            <span className={`rounded-md px-2 py-1 text-[10px] font-medium ring-1 ring-inset ${smsPolicyClass(sim.localIncomingSmsPolicy)}`}>本地收短信 {getSmsReceivePolicyLabel(sim.localIncomingSmsPolicy)}</span>
-                            <span className="rounded-md bg-slate-100 px-2 py-1 text-[10px] font-medium text-slate-600 ring-1 ring-inset ring-slate-200">{getRoamingAvailabilityLabel(sim.roamingAvailable)}</span>
-                            <span className={`rounded-md px-2 py-1 text-[10px] font-medium ring-1 ring-inset ${smsPolicyClass(sim.roamingIncomingSmsPolicy)}`}>漫游收短信 {getSmsReceivePolicyLabel(sim.roamingIncomingSmsPolicy)}</span>
-                            {sim.tariffVerifiedAt ? <span className="rounded-md bg-slate-50 px-2 py-1 text-[10px] text-slate-400 ring-1 ring-inset ring-slate-100">确认于 {sim.tariffVerifiedAt}</span> : null}
-                          </div>
-                        ) : null}
-                        {sim.tariffUsageSummary ? <div className="mt-1.5 line-clamp-1 text-xs text-slate-500">{sim.tariffUsageSummary}</div> : sim.notes ? <div className="mt-1.5 line-clamp-1 text-xs text-slate-400">{sim.notes}</div> : null}
+        <div className="mt-3 flex flex-wrap gap-2 border-t border-line pt-3">
+          <SelectFilter value={countryFilter} onChange={setCountryFilter} ariaLabel="按国家或地区筛选号码">
+            <option value="all">全部国家/地区 · {sims.length}</option>
+            {countryOptions.map((country) => <option key={country.code} value={country.code}>{countryFlag(country.code)} {country.name} · {country.count}</option>)}
+          </SelectFilter>
+          <SelectFilter value={healthFilter} onChange={setHealthFilter} ariaLabel="按号码健康状态筛选">
+            <option value="all">全部 Health</option>
+            <option value="healthy">正常 · {healthSummary.healthy}</option>
+            <option value="needs_attention">需要关注 · {healthSummary.needsAttention}</option>
+            <option value="critical">紧急 · {healthSummary.critical}</option>
+            <option value="paused_inactive">暂停 / 停用 · {healthSummary.pausedInactive}</option>
+          </SelectFilter>
+          <SelectFilter value={statusFilter} onChange={setStatusFilter} ariaLabel="按号码状态筛选">
+            <option value="all">全部号码状态</option>
+            {SIM_STATUSES.map((status) => <option key={status.value} value={status.value}>{status.label}</option>)}
+          </SelectFilter>
+          <SelectFilter value={carrierFilter} onChange={setCarrierFilter} ariaLabel="按运营商筛选">
+            <option value="all">全部运营商</option>
+            {carriers.map((carrier) => <option key={carrier.id} value={carrier.id}>{carrier.name} · {carrier.country}</option>)}
+          </SelectFilter>
+          <SelectFilter value={deviceFilter} onChange={setDeviceFilter} ariaLabel="按存放位置筛选">
+            <option value="all">全部存放位置</option>
+            <option value="unassigned">未分配</option>
+            {devices.map((device) => <option key={device.id} value={device.id}>{device.name}</option>)}
+          </SelectFilter>
+        </div>
+      </Card>
+
+      {loading ? (
+        <Card className="flex min-h-72 items-center justify-center text-sm text-ink-secondary"><Loader2 className="mr-2 h-4 w-4 animate-spin" />正在加载号码…</Card>
+      ) : filtered.length === 0 ? (
+        <Card className="flex min-h-72 flex-col items-center justify-center px-6 text-center">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-soft text-brand"><Smartphone className="h-5 w-5" /></div>
+          <p className="mt-4 text-sm font-medium text-ink">{sims.length ? "没有匹配的号码" : "还没有录入号码"}</p>
+          <p className="mt-1 max-w-md text-xs leading-5 text-ink-muted">{sims.length ? "尝试调整搜索关键词、Health 或其他筛选条件。" : "录入第一张 SIM / eSIM 后，就可以继续维护资费和生命周期信息。"}</p>
+          {sims.length && hasFilters ? <Button variant="secondary" size="sm" className="mt-4 gap-1.5" onClick={clearFilters}><RotateCcw className="h-3.5 w-3.5" />清除筛选</Button> : null}
+        </Card>
+      ) : (
+        <div className="grid gap-3 xl:grid-cols-2">
+          {filtered.map((sim) => {
+            const health = healthBySim.get(sim.id);
+            const hint = dateHint(sim);
+            const isDateOverdue = Boolean(sim.validUntil && sim.validUntil < todayDate());
+            const feeLabel = planFeeLabel(sim);
+            const typeLabel = planTypeLabel(sim.tariffPlanType);
+            const phoneDisplay = formatPhoneNumber(sim.phoneNumber, "未填写手机号");
+            const balanceDisplay = sim.balance === null ? "未记录" : `${sim.balance} ${sim.currencyCode || ""}`.trim();
+
+            return (
+              <Card
+                key={sim.id}
+                role="button"
+                tabIndex={0}
+                data-sim-card={sim.id}
+                aria-label={`查看 ${sim.label} 号码详情`}
+                onClick={() => setOverviewSim(sim)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    setOverviewSim(sim);
+                  }
+                }}
+                className="group cursor-pointer overflow-hidden p-0 outline-none transition-[border-color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:border-line-strong hover:shadow-floating focus-visible:ring-4 focus-visible:ring-focus"
+              >
+                <div className="p-4 sm:p-5">
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand-soft text-lg shadow-sm ring-1 ring-brand-soft-strong" aria-hidden="true">{countryFlag(sim.countryCode)}</div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="truncate font-semibold text-ink">{sim.label}</span>
+                        {health ? <SimHealthBadge status={health.healthStatus} /> : null}
+                        <span className={`rounded-md px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset ${statusClass(sim.status)}`}>{getSimStatusLabel(sim.status)}</span>
+                        {isDateOverdue && sim.status !== "expired" && sim.status !== "closed" ? <span className="rounded-md bg-rose-50 px-2 py-0.5 text-[10px] font-medium text-rose-700 ring-1 ring-inset ring-rose-100">有效期已过</span> : null}
+                      </div>
+                      <div className="mt-1 truncate text-base font-medium tabular-nums tracking-tight text-ink-secondary">{phoneDisplay}</div>
+                      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-muted">
+                        <span>{sim.carrierName}</span>
+                        <span aria-hidden="true">·</span>
+                        <span>{sim.country}</span>
+                        <span aria-hidden="true">·</span>
+                        <span>{getSimTypeLabel(sim.simType)}</span>
+                        <span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" />{sim.deviceName || "未分配"}</span>
                       </div>
                     </div>
+                    <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-ink-muted transition-transform duration-150 group-hover:translate-x-0.5 group-hover:text-brand" />
+                  </div>
 
-                    <div className="grid shrink-0 grid-cols-2 gap-3 sm:grid-cols-4 xl:w-[620px]">
-                      <div className="rounded-xl bg-slate-50 px-3 py-2.5">
-                        <div className="text-[11px] text-slate-400">余额</div>
-                        <div className="mt-1 text-sm font-medium text-slate-700">{sim.balance === null ? "未记录" : `${sim.balance} ${sim.currencyCode || ""}`}</div>
-                      </div>
-                      <div className="rounded-xl bg-slate-50 px-3 py-2.5">
-                        <div className="text-[11px] text-slate-400">有效期至</div>
-                        <div className={`mt-1 text-sm font-medium ${hint ? "text-amber-700" : "text-slate-700"}`}>{sim.validUntil || "未设置"}</div>
-                        {hint ? <div className="mt-0.5 text-[10px] text-amber-600">{hint}</div> : null}
-                      </div>
-                      <div className="rounded-xl bg-slate-50 px-3 py-2.5">
-                        <div className="text-[11px] text-slate-400">接验证码</div>
-                        <div className="mt-1 text-xs font-medium text-slate-700">本地：{sim.tariffId ? getSmsReceivePolicyLabel(sim.localIncomingSmsPolicy) : "未记录"}</div>
-                        <div className="mt-1 text-xs font-medium text-slate-600">漫游：{sim.tariffId ? getSmsReceivePolicyLabel(sim.roamingIncomingSmsPolicy) : "未记录"}</div>
-                      </div>
-                      <div className="col-span-2 flex flex-wrap items-center justify-end gap-2 sm:col-span-1">
-                        <button
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setTariffSim(sim);
-                          }}
-                          className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-700 transition hover:bg-white hover:text-slate-950"
-                        >
-                          <ReceiptText className="h-3.5 w-3.5" />资费
-                        </button>
-                        <button
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            openEdit(sim);
-                          }}
-                          className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium text-slate-600 transition hover:bg-white hover:text-slate-950"
-                        >
-                          <Pencil className="h-3.5 w-3.5" />编辑
-                        </button>
-                        <button
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setDeletingSim(sim);
-                          }}
-                          className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-rose-200 px-3 text-xs font-medium text-rose-600 transition hover:bg-rose-50"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />删除
-                        </button>
-                      </div>
+                  {health?.primaryReason ? (
+                    <div className={`mt-3 rounded-xl px-3 py-2 text-xs leading-5 ${health.healthStatus === "critical" ? "bg-rose-50 text-rose-700" : health.healthStatus === "attention" ? "bg-amber-50 text-amber-800" : "bg-sky-50 text-sky-700"}`}>
+                      <span className="font-medium">{health.primaryReason.title}</span>
+                      <span className="opacity-75"> · {health.primaryReason.detail}</span>
+                    </div>
+                  ) : null}
+
+                  <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    <div className="rounded-xl bg-surface-subtle px-3 py-2.5">
+                      <div className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-ink-muted"><CircleDollarSign className="h-3 w-3" />余额</div>
+                      <div className="mt-1 truncate text-sm font-semibold tabular-nums text-ink">{balanceDisplay}</div>
+                    </div>
+                    <div className="rounded-xl bg-surface-subtle px-3 py-2.5">
+                      <div className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-ink-muted"><CalendarDays className="h-3 w-3" />有效期</div>
+                      <div className={`mt-1 truncate text-sm font-semibold tabular-nums ${hint ? "text-amber-700" : "text-ink"}`}>{sim.validUntil || "未设置"}</div>
+                      {hint ? <div className="mt-0.5 text-[10px] text-amber-700">{hint}</div> : null}
+                    </div>
+                    <div className="col-span-2 rounded-xl bg-surface-subtle px-3 py-2.5 sm:col-span-1">
+                      <div className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-ink-muted"><ReceiptText className="h-3 w-3" />资费</div>
+                      <div className={`mt-1 truncate text-sm font-semibold ${sim.tariffId ? "text-ink" : "text-amber-700"}`}>{sim.tariffPlanName || "未录入资费"}</div>
+                      {sim.tariffId && (typeLabel || feeLabel) ? <div className="mt-0.5 truncate text-[10px] text-ink-muted">{[typeLabel, feeLabel].filter(Boolean).join(" · ")}</div> : null}
                     </div>
                   </div>
+
+                  {sim.tariffId ? (
+                    <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-ink-muted">
+                      <span className={smsPolicyClass(sim.localIncomingSmsPolicy)}>本地短信 {getSmsReceivePolicyLabel(sim.localIncomingSmsPolicy)}</span>
+                      <span className={smsPolicyClass(sim.roamingIncomingSmsPolicy)}>漫游短信 {getSmsReceivePolicyLabel(sim.roamingIncomingSmsPolicy)}</span>
+                      <span>{getRoamingAvailabilityLabel(sim.roamingAvailable)}</span>
+                      {sim.tariffAutoRenew === "yes" ? <span className="text-brand">自动续订</span> : null}
+                    </div>
+                  ) : null}
+
+                  {sim.tariffUsageSummary ? <div className="mt-2 line-clamp-1 text-xs text-ink-secondary">{sim.tariffUsageSummary}</div> : sim.notes ? <div className="mt-2 line-clamp-1 text-xs text-ink-muted">{sim.notes}</div> : null}
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </Card>
+
+                <div className="flex items-center justify-between gap-3 border-t border-line bg-surface-subtle/70 px-4 py-2.5 sm:px-5">
+                  <div className="min-w-0 truncate text-[11px] text-ink-muted">ICCID {sim.iccid || "未记录"}</div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <Button type="button" variant="ghost" size="sm" className="gap-1.5" onClick={(event) => { event.stopPropagation(); setTariffSim(sim); }}><ReceiptText className="h-3.5 w-3.5" />资费</Button>
+                    <Button type="button" variant="ghost" size="sm" className="gap-1.5" onClick={(event) => { event.stopPropagation(); openEdit(sim); }}><Pencil className="h-3.5 w-3.5" />编辑</Button>
+                    <Button type="button" variant="ghost" size="sm" className="gap-1.5 text-rose-600 hover:bg-rose-50 hover:text-rose-700" onClick={(event) => { event.stopPropagation(); setDeletingSim(sim); }}><Trash2 className="h-3.5 w-3.5" />删除</Button>
+                  </div>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
 
       {editorOpen ? (
         <SimEditorModal
