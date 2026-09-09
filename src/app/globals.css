@@ -186,6 +186,85 @@ header[data-page-title] button[aria-controls="topbar-attention-panel"][aria-expa
   scrollbar-gutter: stable;
 }
 
+.sim-security-polish .sim-security-account-panel > div,
+.sim-security-polish .sim-security-two-factor > div {
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  max-width: none !important;
+}
+
+.sim-security-polish .sim-security-account-panel > div > div:first-child {
+  display: none;
+}
+
+.sim-security-polish .sim-security-two-factor > div {
+  margin-top: 0 !important;
+}
+
+.sim-security-polish .text-slate-950,
+.sim-security-polish .text-slate-900,
+.sim-security-polish .text-slate-800,
+.sim-auth-shell .text-slate-950,
+.sim-auth-shell .text-slate-900,
+.sim-auth-shell .text-slate-800 {
+  color: var(--foreground) !important;
+}
+
+.sim-security-polish .text-slate-700,
+.sim-security-polish .text-slate-600,
+.sim-security-polish .text-slate-500,
+.sim-auth-shell .text-slate-700,
+.sim-auth-shell .text-slate-600,
+.sim-auth-shell .text-slate-500 {
+  color: var(--foreground-secondary) !important;
+}
+
+.sim-security-polish .text-slate-400,
+.sim-security-polish .text-slate-300,
+.sim-auth-shell .text-slate-400,
+.sim-auth-shell .text-slate-300 {
+  color: var(--foreground-muted) !important;
+}
+
+.sim-security-polish .bg-slate-100,
+.sim-security-polish .bg-slate-50,
+.sim-auth-shell .bg-slate-100,
+.sim-auth-shell .bg-slate-50 {
+  background-color: var(--surface-subtle) !important;
+}
+
+.sim-security-polish .border-slate-100,
+.sim-security-polish .border-slate-200,
+.sim-auth-shell .border-slate-100,
+.sim-auth-shell .border-slate-200 {
+  border-color: var(--border) !important;
+}
+
+.sim-security-polish .divide-slate-100 > :not([hidden]) ~ :not([hidden]),
+.sim-auth-shell .divide-slate-100 > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--border) !important;
+}
+
+.sim-auth-shell .bg-slate-950,
+.sim-auth-shell .bg-slate-900 {
+  background-color: var(--primary) !important;
+}
+
+.sim-auth-shell .bg-slate-950:hover,
+.sim-auth-shell .bg-slate-900:hover {
+  background-color: var(--primary-hover) !important;
+}
+
+.sim-security-polish .sim-card {
+  border-color: var(--border) !important;
+}
+
+.sim-security-polish .sim-card h3,
+.sim-security-polish .sim-card .text-lg,
+.sim-security-polish .sim-card .text-xl {
+  letter-spacing: -0.015em;
+}
+
 @keyframes sim-backdrop-in {
   from { opacity: 0; }
   to { opacity: 1; }

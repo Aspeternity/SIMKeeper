@@ -1,8 +1,8 @@
 import { redirect } from "next/navigation";
 import { KeyRound, ShieldCheck } from "lucide-react";
-import { SiteMark } from "@/components/branding/site-mark";
+import { AuthShell } from "@/components/auth/auth-shell";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { getPendingTwoFactorUser } from "@/lib/auth";
 import { getSiteSettings } from "@/lib/site-settings";
@@ -23,56 +23,53 @@ export default async function TwoFactorVerifyPage({
   const { error } = await searchParams;
 
   return (
-    <main className="flex min-h-screen items-center justify-center px-4 py-10">
-      <div className="w-full max-w-md">
-        <div className="mb-6 flex flex-col items-center text-center">
-          <div className="mb-4">
-            <SiteMark logoUrl={siteSettings.logoUrl} className="h-14 w-14 shadow-lg shadow-slate-300" iconClassName="h-7 w-7" />
-          </div>
-          <h1 className="text-3xl font-semibold tracking-tight">{siteSettings.siteName}</h1>
-          <p className="mt-2 text-sm text-slate-500">密码验证已通过，还需要完成第二步身份验证。</p>
+    <AuthShell
+      siteName={siteSettings.siteName}
+      siteDescription={siteSettings.siteDescription}
+      logoUrl={siteSettings.logoUrl}
+      icon={ShieldCheck}
+      eyebrow="双重验证"
+      title="输入动态验证码"
+      description="密码验证已通过。请完成第二步身份验证后进入管理后台。"
+      pageMarker="verify-alpha.51.7"
+    >
+      <div data-auth-verify-polish="alpha.51.7">
+        <div className="mb-5 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/70 px-3.5 py-3 text-xs font-medium text-emerald-700">
+          <ShieldCheck className="h-4 w-4 shrink-0" />
+          管理员密码已验证
         </div>
 
-        <Card className="p-6 sm:p-7">
-          <div className="mb-6">
-            <div className="mb-2 flex items-center gap-2 text-sm font-medium text-emerald-700">
-              <ShieldCheck className="h-4 w-4" />
-              双重验证
-            </div>
-            <h2 className="text-xl font-semibold">输入动态验证码</h2>
-            <p className="mt-2 text-sm leading-6 text-slate-500">
-              打开 Authenticator 应用输入当前 6 位验证码；如果手机不可用，也可以输入一枚尚未使用的恢复码。
-            </p>
+        {error ? (
+          <div className="mb-5 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm leading-6 text-rose-700">
+            {error}
           </div>
+        ) : null}
 
-          {error ? (
-            <div className="mb-5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">
-              {error}
-            </div>
-          ) : null}
+        <form action="/api/auth/2fa/verify" method="post" className="space-y-4">
+          <FormField
+            label="动态验证码或恢复码"
+            required
+            hint="可输入 Authenticator 当前 6 位验证码，或一枚尚未使用的恢复码。"
+          >
+            <Input
+              name="code"
+              inputMode="text"
+              autoComplete="one-time-code"
+              placeholder="123456 或 ABCD-EFGH-JKLM"
+              autoFocus
+              required
+              className="font-mono tracking-wide"
+            />
+          </FormField>
+          <Button className="h-11 w-full" type="submit">
+            <KeyRound className="mr-2 h-4 w-4" />验证并登录
+          </Button>
+        </form>
 
-          <form action="/api/auth/2fa/verify" method="post" className="space-y-4">
-            <label className="block space-y-2">
-              <span className="text-sm font-medium">动态验证码或恢复码</span>
-              <Input
-                name="code"
-                inputMode="text"
-                autoComplete="one-time-code"
-                placeholder="123456 或 ABCD-EFGH-JKLM"
-                autoFocus
-                required
-              />
-            </label>
-            <Button className="w-full" type="submit">
-              <KeyRound className="mr-2 h-4 w-4" />验证并登录
-            </Button>
-          </form>
-
-          <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs leading-5 text-slate-500">
-            验证会话 5 分钟后失效。恢复码每枚只能使用一次，使用后请在“设置 → 账号安全”查看剩余数量。
-          </div>
-        </Card>
+        <div className="mt-5 rounded-xl border border-line bg-surface-subtle px-3.5 py-3 text-xs leading-5 text-ink-muted">
+          验证会话 5 分钟后失效。恢复码每枚只能使用一次，使用后可在“设置 → 账号安全”查看剩余数量。
+        </div>
       </div>
-    </main>
+    </AuthShell>
   );
 }

@@ -1,0 +1,90 @@
+name: Verify Security Auth UI Polish
+
+on:
+  workflow_run:
+    workflows: [Build and Publish Docker Image]
+    types: [completed]
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  security-auth-ui-polish:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout verified source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Pull verified image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="${{ github.event.workflow_run.head_sha }}"
+          image="ghcr.io/aspeternity/simkeeper:sha-${sha:0:7}"
+          docker pull "$image"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Verify security and auth visual system
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          container="simkeeper-security-auth-ui-smoke"
+          base="http://127.0.0.1:18118"
+          cookies="$tmp/cookies"
+          password="security-ui-smoke-123"
+          expected_version="$(jq -r '.version' package.json)"
+
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            rm -rf "$tmp"
+          }
+          trap cleanup EXIT
+          fail() { echo "::error::$1"; docker logs "$container" 2>&1 || true; exit 1; }
+
+          grep -Fq 'data-auth-shell="alpha.51.7"' src/components/auth/auth-shell.tsx || fail "auth shell marker missing"
+          grep -Fq 'data-auth-login-polish="alpha.51.7"' 'src/app/(auth)/login/page.tsx' || fail "login polish marker missing"
+          grep -Fq 'data-auth-verify-polish="alpha.51.7"' 'src/app/(auth)/login/verify/page.tsx' || fail "2FA verify polish marker missing"
+          grep -Fq 'data-auth-setup-polish="alpha.51.7"' 'src/app/(auth)/setup/page.tsx' || fail "setup polish marker missing"
+          grep -Fq 'data-security-polish="alpha.51.7"' 'src/app/(dashboard)/security/page.tsx' || fail "security workspace polish marker missing"
+          grep -Fq "APP_VERSION = \"$expected_version\"" src/components/layout/navigation.ts || fail "app version mismatch"
+
+          mkdir -p "$tmp/data"
+          docker run -d --name "$container" -p 18118:3000 \
+            -e SIMKEEPER_COOKIE_SECURE=false \
+            -e PUID="$(id -u)" -e PGID="$(id -g)" \
+            -v "$tmp/data:/app/data" "$IMAGE" >/dev/null || fail "container start failed"
+
+          for _ in $(seq 1 40); do
+            curl -fsS "$base/api/health" >/dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -fsS "$base/api/health" >/dev/null || fail "health check failed"
+
+          curl -fsS "$base/setup" > "$tmp/setup.html" || fail "setup page failed"
+          grep -Fq 'data-auth-shell="alpha.51.7"' "$tmp/setup.html" || fail "auth shell missing from setup runtime"
+          grep -Fq 'data-auth-setup-polish="alpha.51.7"' "$tmp/setup.html" || fail "setup polish missing at runtime"
+          grep -Fq '创建或恢复 SIMKeeper' "$tmp/setup.html" || fail "setup heading missing"
+
+          curl -fsS -c "$cookies" -o /dev/null -X POST \
+            --data-urlencode 'username=securityuismoke' \
+            --data-urlencode "password=$password" \
+            --data-urlencode "confirmPassword=$password" \
+            "$base/api/auth/setup" || fail "unable to create smoke administrator"
+
+          curl -fsS "$base/login" > "$tmp/login.html" || fail "login page failed"
+          grep -Fq 'data-auth-shell="alpha.51.7"' "$tmp/login.html" || fail "auth shell missing from login runtime"
+          grep -Fq 'data-auth-login-polish="alpha.51.7"' "$tmp/login.html" || fail "login polish missing at runtime"
+          grep -Fq '管理后台' "$tmp/login.html" || fail "login eyebrow missing"
+
+          curl -fsS -b "$cookies" "$base/settings/security" > "$tmp/security.html" || fail "security settings page failed"
+          grep -Fq 'data-security-polish="alpha.51.7"' "$tmp/security.html" || fail "security polish missing at runtime"
+          grep -Fq '账号与安全' "$tmp/security.html" || fail "security heading missing"
+          grep -Fq 'TOTP 双重验证' "$tmp/security.html" || fail "TOTP panel missing"
+
+          echo "Security and auth UI polish smoke test passed"
