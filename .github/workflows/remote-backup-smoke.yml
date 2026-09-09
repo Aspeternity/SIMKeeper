@@ -1,0 +1,366 @@
+name: Verify Remote Backups
+
+on:
+  workflow_run:
+    workflows:
+      - Build and Publish Docker Image
+    types:
+      - completed
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  remote-backup-smoke:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull verified image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="${{ github.event.workflow_run.head_sha }}"
+          short="${sha:0:7}"
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          image="ghcr.io/${owner}/simkeeper:sha-${short}"
+          docker pull "$image"
+          echo "CURRENT_IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Verify encrypted WebDAV upload, scheduler, retention, and secret masking
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          container="simkeeper-remote-backup-smoke"
+          tmp="$(mktemp -d)"
+          data="$tmp/data"
+          dav_root="$tmp/webdav-root"
+          cookies="$tmp/cookies.txt"
+          base="http://127.0.0.1:3000"
+          dav="http://127.0.0.1:18093/"
+          mkdir -p "$data" "$dav_root"
+
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            if [ -n "${DAV_PID:-}" ]; then kill "$DAV_PID" >/dev/null 2>&1 || true; fi
+            rm -rf "$tmp"
+          }
+          trap cleanup EXIT
+
+          fail() {
+            echo "::error::$1"
+            docker logs "$container" 2>&1 || true
+            if [ -f "$tmp/webdav.log" ]; then
+              echo "----- WebDAV log -----"
+              cat "$tmp/webdav.log" || true
+            fi
+            for file in "$tmp"/*.json; do
+              [ -f "$file" ] || continue
+              echo "----- $file -----"
+              cat "$file" || true
+              echo
+            done
+            exit 1
+          }
+
+          cat > "$tmp/webdav_server.py" <<'PY'
+          import base64
+          import html
+          import os
+          import pathlib
+          import urllib.parse
+          from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+          ROOT = pathlib.Path(os.environ["DAV_ROOT"]).resolve()
+          EXPECTED = "Basic " + base64.b64encode(b"backupuser:backuppass").decode("ascii")
+
+          def target_path(raw_path):
+              decoded = urllib.parse.unquote(urllib.parse.urlsplit(raw_path).path)
+              relative = decoded.lstrip("/")
+              candidate = (ROOT / relative).resolve()
+              if candidate != ROOT and ROOT not in candidate.parents:
+                  raise ValueError("path traversal")
+              return candidate
+
+          class Handler(BaseHTTPRequestHandler):
+              server_version = "SIMKeeperSmokeDAV/1.0"
+
+              def log_message(self, fmt, *args):
+                  print("%s - %s" % (self.command, fmt % args), flush=True)
+
+              def auth(self):
+                  if self.headers.get("Authorization") == EXPECTED:
+                      return True
+                  self.send_response(401)
+                  self.send_header("WWW-Authenticate", 'Basic realm="SIMKeeper Smoke"')
+                  self.send_header("Content-Length", "0")
+                  self.end_headers()
+                  return False
+
+              def send_empty(self, status):
+                  self.send_response(status)
+                  self.send_header("Content-Length", "0")
+                  self.end_headers()
+
+              def do_MKCOL(self):
+                  if not self.auth(): return
+                  path = target_path(self.path)
+                  if path.exists():
+                      self.send_empty(405)
+                      return
+                  if not path.parent.exists():
+                      self.send_empty(409)
+                      return
+                  path.mkdir()
+                  self.send_empty(201)
+
+              def do_PUT(self):
+                  if not self.auth(): return
+                  path = target_path(self.path)
+                  if not path.parent.exists():
+                      self.send_empty(409)
+                      return
+                  length = int(self.headers.get("Content-Length", "0"))
+                  body = self.rfile.read(length)
+                  existed = path.exists()
+                  path.write_bytes(body)
+                  self.send_empty(204 if existed else 201)
+
+              def do_GET(self):
+                  if not self.auth(): return
+                  path = target_path(self.path)
+                  if not path.is_file():
+                      self.send_empty(404)
+                      return
+                  body = path.read_bytes()
+                  self.send_response(200)
+                  self.send_header("Content-Type", "application/octet-stream")
+                  self.send_header("Content-Length", str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+
+              def do_DELETE(self):
+                  if not self.auth(): return
+                  path = target_path(self.path)
+                  if not path.exists():
+                      self.send_empty(404)
+                      return
+                  if path.is_dir():
+                      try:
+                          path.rmdir()
+                      except OSError:
+                          self.send_empty(409)
+                          return
+                  else:
+                      path.unlink()
+                  self.send_empty(204)
+
+              def do_PROPFIND(self):
+                  if not self.auth(): return
+                  path = target_path(self.path)
+                  if not path.exists():
+                      self.send_empty(404)
+                      return
+                  request_path = urllib.parse.urlsplit(self.path).path
+                  if not request_path.endswith("/"):
+                      request_path += "/"
+                  hrefs = [request_path]
+                  if path.is_dir() and self.headers.get("Depth", "0") != "0":
+                      for child in sorted(path.iterdir()):
+                          href = request_path + urllib.parse.quote(child.name)
+                          if child.is_dir(): href += "/"
+                          hrefs.append(href)
+                  responses = []
+                  for href in hrefs:
+                      child = target_path(href)
+                      length = child.stat().st_size if child.is_file() else 0
+                      responses.append(
+                          "<d:response><d:href>%s</d:href><d:propstat><d:prop>"
+                          "<d:getcontentlength>%d</d:getcontentlength>"
+                          "</d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>"
+                          % (html.escape(href), length)
+                      )
+                  body = ("<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+                          "<d:multistatus xmlns:d=\"DAV:\">%s</d:multistatus>" % "".join(responses)).encode("utf-8")
+                  self.send_response(207)
+                  self.send_header("Content-Type", "application/xml; charset=utf-8")
+                  self.send_header("Content-Length", str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+
+          ROOT.mkdir(parents=True, exist_ok=True)
+          ThreadingHTTPServer(("127.0.0.1", 18093), Handler).serve_forever()
+          PY
+
+          DAV_ROOT="$dav_root" python3 "$tmp/webdav_server.py" > "$tmp/webdav.log" 2>&1 &
+          DAV_PID=$!
+          for _ in $(seq 1 20); do
+            if curl -sS -u backupuser:backuppass -X PROPFIND -H 'Depth: 0' -o /dev/null -w '%{http_code}' "$dav" | grep -q '^207$'; then
+              break
+            fi
+            sleep 0.5
+          done
+          kill -0 "$DAV_PID" 2>/dev/null || fail "WebDAV smoke server did not start"
+
+          docker run -d \
+            --name "$container" \
+            --network host \
+            -e SIMKEEPER_COOKIE_SECURE=false \
+            -e PUID="$(id -u)" \
+            -e PGID="$(id -g)" \
+            -v "$data:/app/data" \
+            "$CURRENT_IMAGE" >/dev/null || fail "Unable to start SIMKeeper container"
+
+          ready=0
+          for _ in $(seq 1 45); do
+            if curl -fsS --max-time 2 "$base/api/health" >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          [ "$ready" -eq 1 ] || fail "SIMKeeper did not become healthy"
+
+          status="$(curl -sS --max-time 10 -c "$cookies" -o /dev/null -w '%{http_code}' \
+            -X POST \
+            --data-urlencode 'username=backupadmin' \
+            --data-urlencode 'password=backup-test-123' \
+            --data-urlencode 'confirmPassword=backup-test-123' \
+            "$base/api/auth/setup")" || fail "Setup failed"
+          [ "$status" = "303" ] || fail "Setup returned HTTP $status"
+
+          curl -fsS --max-time 10 -b "$cookies" "$base/api/system/database" > "$tmp/database.json" \
+            || fail "Database health endpoint failed"
+          [ "$(jq -r '.database.schemaVersion' "$tmp/database.json")" = "3" ] || fail "Remote backup image did not start on schema v3"
+
+          # Save a disabled draft first so testing cannot race the scheduler.
+          jq -n --arg endpoint "$dav" '{
+            enabled:false,
+            endpoint:$endpoint,
+            remotePath:"/SIMKeeper",
+            username:"backupuser",
+            password:"backuppass",
+            backupPassphrase:"offsite-secret-123",
+            scheduleFrequency:"daily",
+            scheduleWeekday:0,
+            scheduleHour:0,
+            scheduleMinute:0,
+            scheduleTimezone:"UTC",
+            retentionCount:2
+          }' > "$tmp/config-disabled.json"
+
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/config-save.json" -w '%{http_code}' \
+            -X PATCH -H 'Content-Type: application/json' --data-binary @"$tmp/config-disabled.json" \
+            "$base/api/remote-backups")" || fail "Saving remote backup config failed"
+          [ "$status" = "200" ] || fail "Remote backup config returned HTTP $status"
+          jq -e '.config.passwordConfigured == true and .config.passphraseConfigured == true and .config.enabled == false' "$tmp/config-save.json" >/dev/null \
+            || fail "Saved secret/config flags are incorrect"
+
+          # Test the current target. This must write, read-verify, and remove a disposable probe.
+          jq -n --arg endpoint "$dav" '{action:"test",endpoint:$endpoint,remotePath:"/SIMKeeper",username:"backupuser"}' > "$tmp/test-request.json"
+          status="$(curl -sS --max-time 30 -b "$cookies" -o "$tmp/test-response.json" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' --data-binary @"$tmp/test-request.json" \
+            "$base/api/remote-backups")" || fail "WebDAV test request failed"
+          [ "$status" = "200" ] || fail "WebDAV connection test returned HTTP $status"
+          [ "$(jq -r '.ok' "$tmp/test-response.json")" = "true" ] || fail "WebDAV connection test did not pass"
+          if find "$dav_root" -type f -name '.simkeeper-write-test-*' | grep -q .; then
+            fail "WebDAV probe file was not removed after testing"
+          fi
+
+          # Reading config must never expose either stored secret.
+          curl -fsS --max-time 10 -b "$cookies" "$base/api/remote-backups" > "$tmp/overview-before.json" \
+            || fail "Remote backup overview failed"
+          jq -e '.config.passwordConfigured == true and .config.passphraseConfigured == true' "$tmp/overview-before.json" >/dev/null \
+            || fail "Stored secret flags disappeared"
+          if grep -Fq 'backuppass' "$tmp/overview-before.json" || grep -Fq 'offsite-secret-123' "$tmp/overview-before.json"; then
+            fail "Remote backup API exposed a stored secret"
+          fi
+
+          # Enable with secret fields omitted. The saved encrypted values must be preserved.
+          jq -n --arg endpoint "$dav" '{
+            enabled:true,
+            endpoint:$endpoint,
+            remotePath:"/SIMKeeper",
+            username:"backupuser",
+            scheduleFrequency:"daily",
+            scheduleWeekday:0,
+            scheduleHour:0,
+            scheduleMinute:0,
+            scheduleTimezone:"UTC",
+            retentionCount:2
+          }' > "$tmp/config-enabled.json"
+          status="$(curl -sS --max-time 10 -b "$cookies" -o "$tmp/config-enabled-response.json" -w '%{http_code}' \
+            -X PATCH -H 'Content-Type: application/json' --data-binary @"$tmp/config-enabled.json" \
+            "$base/api/remote-backups")" || fail "Enabling scheduler failed"
+          [ "$status" = "200" ] || fail "Enabling scheduler returned HTTP $status"
+          jq -e '.config.enabled == true and .config.passwordConfigured == true and .config.passphraseConfigured == true' "$tmp/config-enabled-response.json" >/dev/null \
+            || fail "Enabling scheduler did not preserve encrypted secrets"
+
+          # 00:00 UTC is already past on normal workflow execution, so alpha.48 catch-up should run promptly.
+          scheduled=0
+          for _ in $(seq 1 40); do
+            curl -fsS --max-time 10 -b "$cookies" "$base/api/remote-backups" > "$tmp/scheduled-poll.json" || true
+            if jq -e '.runs | any(.trigger == "scheduled" and .status == "success")' "$tmp/scheduled-poll.json" >/dev/null 2>&1; then
+              scheduled=1
+              break
+            fi
+            sleep 1
+          done
+          [ "$scheduled" -eq 1 ] || fail "Scheduled WebDAV backup did not catch up"
+
+          # Add two manual backups. Retention must leave only the two newest remote files.
+          for n in 1 2; do
+            status="$(curl -sS --max-time 40 -b "$cookies" -o "$tmp/manual-$n.json" -w '%{http_code}' \
+              -X POST -H 'Content-Type: application/json' --data '{"action":"run"}' \
+              "$base/api/remote-backups")" || fail "Manual remote backup $n failed"
+            [ "$status" = "200" ] || fail "Manual remote backup $n returned HTTP $status"
+            jq -e '.ok == true and .result.remoteName != null and .result.localBackupName != null' "$tmp/manual-$n.json" >/dev/null \
+              || fail "Manual remote backup $n did not return verified backup metadata"
+          done
+
+          curl -fsS --max-time 10 -b "$cookies" "$base/api/remote-backups" > "$tmp/overview-after.json" \
+            || fail "Remote backup overview after runs failed"
+          jq -e '.runs | any(.trigger == "scheduled" and .status == "success") and any(.trigger == "manual" and .status == "success")' "$tmp/overview-after.json" >/dev/null \
+            || fail "Remote backup run history is incomplete"
+          [ "$(jq '[.runs[] | select(.status == "success")] | length' "$tmp/overview-after.json")" -ge 3 ] \
+            || fail "Expected at least three successful remote backup runs"
+
+          mapfile -t remote_files < <(find "$dav_root/SIMKeeper" -maxdepth 1 -type f -name 'simkeeper-secure-backup-*.simkeeper-backup' -print | sort)
+          [ "${#remote_files[@]}" -eq 2 ] || fail "Remote retention expected 2 secure backups but found ${#remote_files[@]}"
+
+          for file in "${remote_files[@]}"; do
+            jq -e '.format == "simkeeper-encrypted-portable-backup" and .encryption.cipher == "aes-256-gcm" and (.ciphertext | length > 0)' "$file" >/dev/null \
+              || fail "Remote file is not an encrypted SIMKeeper portable backup: $file"
+            if grep -Fq 'credentialSecret' "$file" || grep -Fq 'remote_backup_config_v1' "$file"; then
+              fail "Remote encrypted envelope leaked plaintext backup content: $file"
+            fi
+          done
+
+          # Every successful run must first have produced a local backup in the persistent volume.
+          python3 - "$tmp/overview-after.json" "$data/backups" <<'PY'
+          import json, pathlib, sys
+          overview = json.load(open(sys.argv[1], encoding="utf-8"))
+          backup_dir = pathlib.Path(sys.argv[2])
+          successes = [run for run in overview["runs"] if run["status"] == "success"]
+          assert successes, "no successful runs"
+          for run in successes:
+              name = run.get("localBackupName")
+              assert name, run
+              assert (backup_dir / name).is_file(), f"missing local backup before upload: {name}"
+          PY
+
+          if grep -Fq 'backuppass' "$tmp/overview-after.json" || grep -Fq 'offsite-secret-123' "$tmp/overview-after.json"; then
+            fail "Remote backup overview exposed a stored secret after execution"
+          fi
+
+          echo "Remote backup smoke checks passed."

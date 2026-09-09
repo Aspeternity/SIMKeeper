@@ -1,5 +1,6 @@
 import { DatabaseBackup } from "lucide-react";
 import BackupSettingsContent from "@/components/settings/backup-settings-page";
+import RemoteBackupSettings from "@/components/settings/remote-backup-settings";
 
 export default function BackupSettingsPage() {
   return (
@@ -10,9 +11,10 @@ export default function BackupSettingsPage() {
         </div>
         <h2 className="mt-2 text-2xl font-semibold tracking-tight">备份与恢复</h2>
         <p className="mt-1 text-sm text-slate-500">
-          本地备份用于快速回滚；加密可移植备份用于重装、迁移和离机保存。
+          本地快照用于快速回滚；加密可移植备份与自动 WebDAV 异地备份用于迁移和灾难恢复。
         </p>
       </div>
+      <RemoteBackupSettings />
       <div className="[&>div>div:first-child]:hidden">
         <BackupSettingsContent />
       </div>

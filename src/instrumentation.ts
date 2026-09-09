@@ -14,6 +14,7 @@ export async function register() {
   const globalState = globalThis as typeof globalThis & {
     __simkeeperNotificationSchedulerStarted?: boolean;
     __simkeeperCarrierConnectorSchedulerStarted?: boolean;
+    __simkeeperRemoteBackupSchedulerStarted?: boolean;
   };
 
   if (!globalState.__simkeeperNotificationSchedulerStarted) {
@@ -35,5 +36,11 @@ export async function register() {
     ensureCarrierBalanceProjection();
     ensureCarrierConnectorDiagnosticTables();
     startCarrierConnectorScheduler();
+  }
+
+  if (!globalState.__simkeeperRemoteBackupSchedulerStarted) {
+    globalState.__simkeeperRemoteBackupSchedulerStarted = true;
+    const { startRemoteBackupScheduler } = await import("@/lib/remote-backups");
+    startRemoteBackupScheduler();
   }
 }

@@ -10,6 +10,8 @@ const IV_BYTES = 12;
 const SECRET_PATH = path.join(dataDir, ".credential-secret");
 const ESIM_AAD = Buffer.from("SIMKeeper/eSIM/v1", "utf8");
 const CARRIER_CONNECTOR_AAD = Buffer.from("SIMKeeper/carrier-connector/v1", "utf8");
+const REMOTE_BACKUP_PASSWORD_AAD = Buffer.from("SIMKeeper/remote-backup/webdav-password/v1", "utf8");
+const REMOTE_BACKUP_PASSPHRASE_AAD = Buffer.from("SIMKeeper/remote-backup/passphrase/v1", "utf8");
 
 function readSecretBuffer() {
   fs.mkdirSync(dataDir, { recursive: true });
@@ -91,6 +93,30 @@ export function decryptCarrierConnectorCredential(value: string | null | undefin
     value,
     CARRIER_CONNECTOR_AAD,
     "运营商连接凭据无法解密；请确认恢复时同时保留了对应的凭据密钥",
+  );
+}
+
+export function encryptRemoteBackupPassword(value: string | null | undefined) {
+  return encryptWithAad(value, REMOTE_BACKUP_PASSWORD_AAD);
+}
+
+export function decryptRemoteBackupPassword(value: string | null | undefined) {
+  return decryptWithAad(
+    value,
+    REMOTE_BACKUP_PASSWORD_AAD,
+    "WebDAV 凭据无法解密；请重新保存异地备份密码",
+  );
+}
+
+export function encryptRemoteBackupPassphrase(value: string | null | undefined) {
+  return encryptWithAad(value, REMOTE_BACKUP_PASSPHRASE_AAD);
+}
+
+export function decryptRemoteBackupPassphrase(value: string | null | undefined) {
+  return decryptWithAad(
+    value,
+    REMOTE_BACKUP_PASSPHRASE_AAD,
+    "自动异地备份口令无法解密；请重新保存备份口令",
   );
 }
 

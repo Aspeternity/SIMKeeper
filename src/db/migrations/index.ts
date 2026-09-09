@@ -3,6 +3,7 @@ import path from "node:path";
 import type Database from "better-sqlite3";
 import { alpha46BaselineMigration } from "./001_alpha46_baseline";
 import { queryIndexAuditMigration } from "./002_query_indexes";
+import { remoteBackupRunsMigration } from "./003_remote_backup_runs";
 import type { DatabaseMigration } from "./types";
 
 const MIGRATION_BACKUP_PREFIX = "simkeeper-pre-migration-";
@@ -11,6 +12,7 @@ const MAX_MIGRATION_BACKUPS = 8;
 export const DATABASE_MIGRATIONS: DatabaseMigration[] = [
   alpha46BaselineMigration,
   queryIndexAuditMigration,
+  remoteBackupRunsMigration,
 ];
 
 export const DATABASE_SCHEMA_VERSION = DATABASE_MIGRATIONS.at(-1)?.version ?? 0;
