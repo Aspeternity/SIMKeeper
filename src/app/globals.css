@@ -146,6 +146,46 @@ header[data-page-title] button[aria-controls="topbar-attention-panel"][aria-expa
   animation: sim-modal-in 170ms ease-out both;
 }
 
+.sim-modal-stage > .sim-card {
+  border-color: var(--border) !important;
+  border-radius: 1.25rem !important;
+  box-shadow: var(--shadow-floating) !important;
+}
+
+.sim-modal-stage select:not([multiple]),
+.sim-modal-stage textarea {
+  border-color: var(--border) !important;
+  border-radius: 0.5rem !important;
+  background-color: var(--surface) !important;
+  color: var(--foreground-secondary) !important;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.035);
+}
+
+.sim-modal-stage select:not([multiple]):focus,
+.sim-modal-stage textarea:focus {
+  border-color: var(--primary) !important;
+  box-shadow: 0 0 0 4px var(--focus-ring) !important;
+  outline: none !important;
+}
+
+.sim-modal-stage textarea::placeholder {
+  color: var(--foreground-muted);
+}
+
+.sim-dialog {
+  isolation: isolate;
+}
+
+.sim-dialog-header,
+.sim-dialog-footer {
+  backdrop-filter: blur(12px);
+}
+
+.sim-dialog-body {
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
 @keyframes sim-backdrop-in {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -154,6 +194,21 @@ header[data-page-title] button[aria-controls="topbar-attention-panel"][aria-expa
 @keyframes sim-modal-in {
   from { opacity: 0; transform: translateY(6px) scale(0.992); }
   to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (max-width: 639px) {
+  .sim-modal-stage {
+    padding: 0.5rem;
+  }
+
+  .sim-dialog {
+    max-height: calc(100dvh - 1rem);
+    border-radius: 1.125rem;
+  }
+
+  .sim-dialog-footer > button {
+    min-height: 44px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
