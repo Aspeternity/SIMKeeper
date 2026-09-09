@@ -9,40 +9,61 @@ function tone(item: AttentionItem) {
   return "border-sky-200 bg-sky-50/70 text-sky-800";
 }
 
+function iconTone(item: AttentionItem) {
+  if (item.priority === "critical") return "bg-rose-100 text-rose-600";
+  if (item.priority === "attention") return "bg-amber-100 text-amber-700";
+  return "bg-sky-100 text-sky-700";
+}
+
 export function BackupAttentionPanel({ items }: { items: AttentionItem[] }) {
   if (!items.length) return null;
 
+  const criticalCount = items.filter((item) => item.priority === "critical").length;
+
   return (
-    <Card className="overflow-hidden" id="backup-health">
-      <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-4">
-        <div>
-          <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
-            <CloudCog className="h-4 w-4 text-slate-400" />系统维护事项
+    <Card className="overflow-hidden" id="backup-health" data-processing-center-maintenance="alpha.51.6">
+      <div className="flex flex-col gap-4 border-b border-line px-5 py-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-soft text-brand">
+            <CloudCog className="h-4.5 w-4.5" />
           </div>
-          <p className="mt-1 text-xs leading-5 text-slate-400">异地备份异常属于实例级系统事项，不会伪装成某张 SIM 的生命周期任务。</p>
+          <div>
+            <div className="text-sm font-semibold text-ink">系统维护事项</div>
+            <p className="mt-1 max-w-2xl text-xs leading-5 text-ink-muted">
+              异地备份异常属于实例级系统事项，不会伪装成某张 SIM 的生命周期任务。
+            </p>
+          </div>
         </div>
-        <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-600">{items.length}</span>
+        <div className="flex flex-wrap gap-2 text-[11px] font-semibold">
+          {criticalCount ? <span className="rounded-lg bg-rose-50 px-2.5 py-1.5 text-rose-700 ring-1 ring-inset ring-rose-100">严重 {criticalCount}</span> : null}
+          <span className="rounded-lg border border-line bg-surface-subtle px-2.5 py-1.5 text-ink-secondary">共 {items.length} 项</span>
+        </div>
       </div>
-      <div className="divide-y divide-slate-100">
+
+      <div className="grid gap-3 bg-surface-subtle p-4 sm:p-5">
         {items.map((item) => (
-          <div key={item.key} className="p-4 sm:p-5">
-            <div className={`rounded-xl border px-4 py-3 ${tone(item)}`}>
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2 text-sm font-semibold">
-                    {item.priority === "critical" ? <AlertTriangle className="h-4 w-4 shrink-0" /> : <ShieldCheck className="h-4 w-4 shrink-0" />}
-                    {item.title}
-                  </div>
-                  <p className="mt-1 text-xs leading-5 opacity-80">{item.detail}</p>
-                  <div className="mt-2 text-[11px] opacity-70">{item.subjectMeta} · {item.relativeLabel}</div>
+          <div key={item.key} className={`rounded-2xl border px-4 py-4 ${tone(item)}`}>
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className="flex min-w-0 items-start gap-3">
+                <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${iconTone(item)}`}>
+                  {item.priority === "critical" ? <AlertTriangle className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}
                 </div>
-                <Link
-                  href={item.href}
-                  className="inline-flex h-8 shrink-0 items-center justify-center rounded-lg bg-white/80 px-3 text-xs font-medium text-slate-700 ring-1 ring-inset ring-slate-200 transition hover:bg-white"
-                >
-                  {item.actionLabel}
-                </Link>
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold">{item.title}</div>
+                  <p className="mt-1 text-xs leading-5 opacity-80">{item.detail}</p>
+                  <div className="mt-2 flex flex-wrap gap-x-2 gap-y-1 text-[11px] opacity-70">
+                    <span>{item.subjectMeta}</span>
+                    <span>·</span>
+                    <span>{item.relativeLabel}</span>
+                  </div>
+                </div>
               </div>
+              <Link
+                href={item.href}
+                className="inline-flex h-9 shrink-0 items-center justify-center rounded-xl border border-white/70 bg-white/80 px-3.5 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-white"
+              >
+                {item.actionLabel}
+              </Link>
             </div>
           </div>
         ))}
