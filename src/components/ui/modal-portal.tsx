@@ -22,6 +22,17 @@ export function ModalPortal({
     };
   }, []);
 
+  useEffect(() => {
+    if (!onBackdropClick) return;
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      onBackdropClick?.();
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onBackdropClick]);
+
   if (!mounted) return null;
 
   function handleBackdropMouseDown(event: MouseEvent<HTMLDivElement>) {
@@ -31,8 +42,9 @@ export function ModalPortal({
 
   return createPortal(
     <div
-      className="sim-modal-backdrop fixed inset-0 z-[100] h-[100dvh] overflow-y-auto bg-slate-950/30 backdrop-blur-[2px]"
+      className="sim-modal-backdrop fixed inset-0 z-[100] h-[100dvh] overflow-y-auto bg-slate-950/35 backdrop-blur-[3px]"
       onMouseDown={handleBackdropMouseDown}
+      data-modal-foundation="alpha.51.3"
     >
       <div
         className="sim-modal-stage flex min-h-full w-full items-start justify-center p-3 sm:items-center sm:p-5"
