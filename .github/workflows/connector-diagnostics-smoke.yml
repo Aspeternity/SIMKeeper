@@ -1,0 +1,141 @@
+name: Verify Connector Diagnostics
+
+on:
+  workflow_run:
+    workflows:
+      - Build and Publish Docker Image
+    types:
+      - completed
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  connector-diagnostics-smoke:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull verified image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="${{ github.event.workflow_run.head_sha }}"
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/simkeeper:sha-${sha:0:7}"
+          docker pull "$image"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Verify provider capabilities, retry and diagnostic history
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          container="simkeeper-connector-diagnostics-smoke"
+          base="http://127.0.0.1:18101"
+          cookies="$tmp/cookies"
+
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            rm -rf "$tmp" || true
+          }
+          trap cleanup EXIT
+
+          fail() {
+            echo "::error::$1"
+            docker logs "$container" 2>&1 || true
+            exit 1
+          }
+
+          mkdir -p "$tmp/data"
+          docker run -d \
+            --name "$container" \
+            -p 18101:3000 \
+            -e SIMKEEPER_COOKIE_SECURE=false \
+            -e PUID="$(id -u)" \
+            -e PGID="$(id -g)" \
+            -v "$tmp/data:/app/data" \
+            "$IMAGE" >/dev/null || fail "container start failed"
+
+          for _ in $(seq 1 40); do
+            curl -fsS "$base/api/health" >/dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -fsS "$base/api/health" >/dev/null || fail "health check failed"
+
+          curl -fsS -c "$cookies" -o /dev/null \
+            -X POST \
+            --data-urlencode 'username=diagnosticsadmin' \
+            --data-urlencode 'password=diagnostics-test-123' \
+            --data-urlencode 'confirmPassword=diagnostics-test-123' \
+            "$base/api/auth/setup" || fail "setup failed"
+
+          curl -fsS -b "$cookies" "$base/api/sims/balance-source" > "$tmp/providers.json" \
+            || fail "provider metadata request failed"
+          [ "$(jq -r '.providers[] | select(.id == "csl") | .maturity' "$tmp/providers.json")" = "stable" ] \
+            || fail "csl maturity missing"
+          [ "$(jq -r '.providers[] | select(.id == "csl") | .capabilities.simValidity' "$tmp/providers.json")" = "true" ] \
+            || fail "csl SIM validity capability missing"
+          [ "$(jq -r '.providers[] | select(.id == "globe") | .maturity' "$tmp/providers.json")" = "experimental" ] \
+            || fail "Globe maturity missing"
+          [ "$(jq -r '.providers[] | select(.id == "globe") | .capabilities.automaticSync' "$tmp/providers.json")" = "true" ] \
+            || fail "Globe automatic sync capability missing"
+
+          curl -fsS -b "$cookies" -H 'Content-Type: application/json' \
+            -d '{"name":"Diagnostics Carrier","countryCode":"PH","website":"","notes":""}' \
+            "$base/api/carriers" > "$tmp/carrier.json" || fail "carrier creation failed"
+          carrier_id="$(jq -r '.carrier.id' "$tmp/carrier.json")"
+
+          jq -n --argjson carrierId "$carrier_id" '{
+            label:"Diagnostics SIM",phoneNumber:"",carrierId:$carrierId,deviceId:null,
+            simType:"physical",iccid:"",balance:5,currencyCode:"PHP",
+            lowBalanceEnabled:false,lowBalanceThreshold:null,status:"active",
+            activationDate:"",validUntil:"",identityStatus:"unknown",identityName:"",
+            identityDocumentType:"",identityDocumentTypeCustom:"",identityDocumentNumber:"",
+            identityCountryCode:"",identityNotes:"",notes:"",esimProfile:null
+          }' > "$tmp/sim.json"
+          curl -fsS -b "$cookies" -H 'Content-Type: application/json' \
+            --data-binary @"$tmp/sim.json" "$base/api/sims" > "$tmp/sim-result.json" \
+            || fail "SIM creation failed"
+          sim_id="$(jq -r '.sim.id' "$tmp/sim-result.json")"
+
+          jq -n --argjson simId "$sim_id" '{
+            name:"Diagnostics Mock",
+            provider:"mock",
+            syncIntervalMinutes:360,
+            simIds:[$simId],
+            providerConfig:{balance:12.5,currencyCode:"PHP",balanceValidUntil:"2027-09-09",accountStatus:"active",simulateFailure:false},
+            credentials:{testToken:"diagnostics-secret"}
+          }' > "$tmp/connector.json"
+          curl -fsS -b "$cookies" -H 'Content-Type: application/json' \
+            --data-binary @"$tmp/connector.json" "$base/api/carrier-connectors" > "$tmp/connector-result.json" \
+            || fail "mock connector creation failed"
+          connector_id="$(jq -r '.connector.id' "$tmp/connector-result.json")"
+
+          curl -fsS -b "$cookies" -X POST -H 'Content-Type: application/json' \
+            -d "{\"connectorId\":$connector_id}" "$base/api/carrier-connectors/sync" > "$tmp/first-sync.json" \
+            || fail "initial sync failed"
+
+          curl -fsS -b "$cookies" -X POST -H 'Content-Type: application/json' \
+            -d "{\"connectorId\":$connector_id}" "$base/api/carrier-connectors/retry" > "$tmp/retry.json" \
+            || fail "diagnostic retry failed"
+          [ "$(jq -r '.ok' "$tmp/retry.json")" = "true" ] || fail "diagnostic retry did not succeed"
+
+          curl -fsS -b "$cookies" "$base/settings/carrier-connectors" > "$tmp/diagnostics.html" \
+            || fail "diagnostics page failed"
+          grep -Fq 'data-connector-diagnostics-version="alpha.45"' "$tmp/diagnostics.html" \
+            || fail "diagnostics marker missing"
+          grep -Fq 'Provider 支持能力' "$tmp/diagnostics.html" || fail "capability section missing"
+          grep -Fq 'Diagnostics Mock' "$tmp/diagnostics.html" || fail "connector card missing"
+          grep -Fq '同步成功' "$tmp/diagnostics.html" || fail "sync attempt history missing"
+          grep -Fq '立即重试' "$tmp/diagnostics.html" || fail "retry control missing"
+
+          echo "Connector diagnostics smoke test passed"
