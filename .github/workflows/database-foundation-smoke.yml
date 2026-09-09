@@ -25,7 +25,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Pull alpha.48 and alpha.46 images
+      - name: Pull current and alpha.46 images
         shell: bash
         run: |
           set -euo pipefail
@@ -104,7 +104,7 @@ jobs:
             [ "$status" = "303" ] || fail "Login returned HTTP $status"
           }
 
-          # Build a real alpha.46 database first. It must not know schema_migrations yet.
+          # Build a real alpha.46 database first. It predates formal migrations.
           start_container "$LEGACY_IMAGE" "$legacy_data"
           status="$(curl -sS --max-time 10 -c "$cookies" -o /dev/null -w '%{http_code}' \
             -X POST \
@@ -155,24 +155,27 @@ jobs:
           import sqlite3, sys
           db = sqlite3.connect(sys.argv[1])
           tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+          columns = {row[1] for row in db.execute("PRAGMA table_info(users)")}
           assert "schema_migrations" not in tables, tables
           assert "remote_backup_runs" not in tables, tables
+          assert "security_events" not in tables, tables
+          assert "totp_enabled_at" not in columns, columns
           assert db.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 1
           assert db.execute("SELECT label FROM sim_cards").fetchone()[0] == "Alpha46 Migration SIM"
           db.close()
           PY
 
-          # First alpha.48 start must back up the old DB, migrate transactionally, and keep data.
+          # First current start must snapshot the old DB and migrate it through schema v4.
           start_container "$CURRENT_IMAGE" "$legacy_data"
           login
           curl -fsS --max-time 10 -b "$cookies" "$base/api/system/database" > "$tmp/database-upgraded.json" \
             || fail "Database health endpoint failed after upgrade"
-          [ "$(jq -r '.database.schemaVersion' "$tmp/database-upgraded.json")" = "3" ] || fail "Schema version is not v3 after upgrade"
-          [ "$(jq -r '.database.expectedSchemaVersion' "$tmp/database-upgraded.json")" = "3" ] || fail "Expected schema version is not v3"
+          [ "$(jq -r '.database.schemaVersion' "$tmp/database-upgraded.json")" = "4" ] || fail "Schema version is not v4 after upgrade"
+          [ "$(jq -r '.database.expectedSchemaVersion' "$tmp/database-upgraded.json")" = "4" ] || fail "Expected schema version is not v4"
           [ "$(jq -r '.database.pendingMigrations | length' "$tmp/database-upgraded.json")" = "0" ] || fail "Pending migrations remain after upgrade"
           [ "$(jq -r '.database.quickCheck.status' "$tmp/database-upgraded.json")" = "ok" ] || fail "SQLite quick_check did not pass"
           [ "$(jq -r '.database.foreignKeyViolations' "$tmp/database-upgraded.json")" = "0" ] || fail "Foreign key violations detected"
-          jq -e '[.database.migrations[].name] | index("alpha46_baseline") != null and index("query_index_audit") != null and index("remote_backup_runs") != null' \
+          jq -e '[.database.migrations[].name] | index("alpha46_baseline") != null and index("query_index_audit") != null and index("remote_backup_runs") != null and index("two_factor_security") != null' \
             "$tmp/database-upgraded.json" >/dev/null || fail "Migration history is incomplete"
           [ "$(jq -r '.database.preMigrationBackups.count' "$tmp/database-upgraded.json")" -ge 1 ] || fail "Pre-migration backup was not created"
 
@@ -181,36 +184,42 @@ jobs:
           jq -e '.sims | any(.label == "Alpha46 Migration SIM" and .balance == 88.5 and .validUntil == "2027-01-01")' \
             "$tmp/sims-after-upgrade.json" >/dev/null || fail "Legacy SIM data changed during migration"
 
-          mapfile -t migration_backups < <(find "$legacy_data/backups" -maxdepth 1 -type f -name 'simkeeper-pre-migration-v0-to-v3-*.db' -print | sort)
-          [ "${#migration_backups[@]}" -eq 1 ] || fail "Expected exactly one v0-to-v3 pre-migration backup"
+          mapfile -t migration_backups < <(find "$legacy_data/backups" -maxdepth 1 -type f -name 'simkeeper-pre-migration-v0-to-v4-*.db' -print | sort)
+          [ "${#migration_backups[@]}" -eq 1 ] || fail "Expected exactly one v0-to-v4 pre-migration backup"
           backup_db="${migration_backups[0]}"
 
-          python3 - "$backup_db" <<'PY'
+          python3 - "$legacy_data/simkeeper.db" "$backup_db" <<'PY'
           import sqlite3, sys
-          db = sqlite3.connect(sys.argv[1])
-          tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-          assert "schema_migrations" not in tables, "backup was taken after migration metadata was created"
-          assert "remote_backup_runs" not in tables, "backup was taken after v3 migration"
-          assert db.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 1
-          assert db.execute("SELECT label FROM sim_cards").fetchone()[0] == "Alpha46 Migration SIM"
-          db.close()
+          current = sqlite3.connect(sys.argv[1])
+          backup = sqlite3.connect(sys.argv[2])
+          tables = {row[0] for row in current.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+          columns = {row[1] for row in current.execute("PRAGMA table_info(users)")}
+          assert "security_events" in tables
+          assert {"totp_secret_ciphertext", "totp_enabled_at", "totp_recovery_hashes"}.issubset(columns)
+          assert current.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 4
+          backup_tables = {row[0] for row in backup.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+          assert "schema_migrations" not in backup_tables
+          assert "security_events" not in backup_tables
+          assert backup.execute("SELECT label FROM sim_cards").fetchone()[0] == "Alpha46 Migration SIM"
+          current.close()
+          backup.close()
           PY
 
           before_restart="$(find "$legacy_data/backups" -maxdepth 1 -type f -name 'simkeeper-pre-migration-*.db' | wc -l | tr -d ' ')"
           docker rm -f "$container" >/dev/null 2>&1 || true
 
-          # Second alpha.48 start must be idempotent and must not create another migration snapshot.
+          # Restart is idempotent and does not create a second migration snapshot.
           start_container "$CURRENT_IMAGE" "$legacy_data"
           login
           curl -fsS --max-time 10 -b "$cookies" "$base/api/system/database" > "$tmp/database-restarted.json" \
             || fail "Database health endpoint failed after restart"
           after_restart="$(find "$legacy_data/backups" -maxdepth 1 -type f -name 'simkeeper-pre-migration-*.db' | wc -l | tr -d ' ')"
           [ "$before_restart" = "$after_restart" ] || fail "Restart created an unnecessary migration backup"
-          [ "$(jq -r '.database.schemaVersion' "$tmp/database-restarted.json")" = "3" ] || fail "Schema version changed after restart"
-          [ "$(jq -r '.database.migrations | length' "$tmp/database-restarted.json")" = "3" ] || fail "Migration history was duplicated after restart"
+          [ "$(jq -r '.database.schemaVersion' "$tmp/database-restarted.json")" = "4" ] || fail "Schema version changed after restart"
+          [ "$(jq -r '.database.migrations | length' "$tmp/database-restarted.json")" = "4" ] || fail "Migration history was duplicated after restart"
           docker rm -f "$container" >/dev/null 2>&1 || true
 
-          # A new alpha.48 installation should migrate an empty DB without creating an upgrade snapshot.
+          # A fresh current installation reaches v4 without an upgrade snapshot.
           start_container "$CURRENT_IMAGE" "$fresh_data"
           status="$(curl -sS --max-time 10 -c "$cookies" -o /dev/null -w '%{http_code}' \
             -X POST \
@@ -221,7 +230,7 @@ jobs:
           [ "$status" = "303" ] || fail "Fresh setup returned HTTP $status"
           curl -fsS --max-time 10 -b "$cookies" "$base/api/system/database" > "$tmp/database-fresh.json" \
             || fail "Fresh database health endpoint failed"
-          [ "$(jq -r '.database.schemaVersion' "$tmp/database-fresh.json")" = "3" ] || fail "Fresh database did not reach schema v3"
+          [ "$(jq -r '.database.schemaVersion' "$tmp/database-fresh.json")" = "4" ] || fail "Fresh database did not reach schema v4"
           [ "$(jq -r '.database.preMigrationBackups.count' "$tmp/database-fresh.json")" = "0" ] || fail "Fresh database created an unnecessary migration backup"
           [ "$(jq -r '.database.status' "$tmp/database-fresh.json")" = "healthy" ] || fail "Fresh database health is not healthy"
 

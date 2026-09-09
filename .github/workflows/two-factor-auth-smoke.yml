@@ -1,0 +1,180 @@
+name: Verify Two-Factor Authentication
+
+on:
+  workflow_run:
+    workflows:
+      - Build and Publish Docker Image
+    types:
+      - completed
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  two-factor-auth-smoke:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Pull verified image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="${{ github.event.workflow_run.head_sha }}"
+          echo "IMAGE=ghcr.io/aspeternity/simkeeper:sha-${sha:0:7}" >> "$GITHUB_ENV"
+          docker pull "ghcr.io/aspeternity/simkeeper:sha-${sha:0:7}"
+
+      - name: Verify TOTP, recovery codes, and session enforcement
+        shell: bash
+        run: |
+          set -euo pipefail
+          container="simkeeper-two-factor-smoke"
+          tmp="$(mktemp -d)"
+          base="http://127.0.0.1:18098"
+          primary="$tmp/primary.cookies"
+          secondary="$tmp/secondary.cookies"
+          recovery_login="$tmp/recovery.cookies"
+
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            rm -rf "$tmp" || true
+          }
+          trap cleanup EXIT
+          fail() { echo "::error::$1"; docker logs "$container" 2>&1 || true; exit 1; }
+
+          totp() {
+            node - "$1" <<'NODE'
+          const crypto = require('crypto');
+          const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+          const secret = process.argv[2].toUpperCase().replace(/=+$/g, '').replace(/\s+/g, '');
+          let bits = 0;
+          let buffer = 0;
+          const bytes = [];
+          for (const ch of secret) {
+            const index = alphabet.indexOf(ch);
+            if (index < 0) process.exit(2);
+            buffer = (buffer << 5) | index;
+            bits += 5;
+            if (bits >= 8) {
+              bytes.push((buffer >>> (bits - 8)) & 0xff);
+              bits -= 8;
+            }
+          }
+          const counter = Math.floor(Date.now() / 1000 / 30);
+          const counterBuffer = Buffer.alloc(8);
+          counterBuffer.writeBigUInt64BE(BigInt(counter));
+          const digest = crypto.createHmac('sha1', Buffer.from(bytes)).update(counterBuffer).digest();
+          const offset = digest[digest.length - 1] & 0x0f;
+          const binary = ((digest[offset] & 0x7f) << 24) |
+            ((digest[offset + 1] & 0xff) << 16) |
+            ((digest[offset + 2] & 0xff) << 8) |
+            (digest[offset + 3] & 0xff);
+          console.log(String(binary % 1000000).padStart(6, '0'));
+          NODE
+          }
+
+          mkdir -p "$tmp/data"
+          docker run -d \
+            --name "$container" \
+            -p 18098:3000 \
+            -e SIMKEEPER_COOKIE_SECURE=false \
+            -e PUID="$(id -u)" \
+            -e PGID="$(id -g)" \
+            -v "$tmp/data:/app/data" \
+            "$IMAGE" >/dev/null || fail "container start failed"
+
+          for _ in $(seq 1 45); do curl -fsS "$base/api/health" >/dev/null 2>&1 && break; sleep 1; done
+          curl -fsS "$base/api/health" >/dev/null || fail "health check failed"
+
+          curl -fsS -c "$primary" -o /dev/null -X POST \
+            --data-urlencode 'username=alpha49admin' \
+            --data-urlencode 'password=two-factor-smoke-123' \
+            --data-urlencode 'confirmPassword=two-factor-smoke-123' \
+            "$base/api/auth/setup" || fail "setup failed"
+
+          curl -fsS -b "$primary" -c "$primary" \
+            -H 'Content-Type: application/json' \
+            -d '{"action":"beginTotpSetup","currentPassword":"two-factor-smoke-123"}' \
+            "$base/api/account" > "$tmp/begin.json" || fail "TOTP setup start failed"
+
+          secret="$(jq -r '.setup.secret // empty' "$tmp/begin.json")"
+          setup_token="$(jq -r '.setup.setupToken // empty' "$tmp/begin.json")"
+          [ -n "$secret" ] || fail "TOTP secret missing"
+          [ -n "$setup_token" ] || fail "TOTP setup token missing"
+          jq -e '.setup.qrDataUrl | startswith("data:image/png;base64,")' "$tmp/begin.json" >/dev/null || fail "TOTP QR data URL missing"
+
+          code="$(totp "$secret")"
+          jq -n \
+            --arg action 'confirmTotpSetup' \
+            --arg currentPassword 'two-factor-smoke-123' \
+            --arg setupToken "$setup_token" \
+            --arg code "$code" \
+            '{action:$action,currentPassword:$currentPassword,setupToken:$setupToken,code:$code}' > "$tmp/confirm-payload.json"
+
+          curl -fsS -b "$primary" -c "$primary" \
+            -H 'Content-Type: application/json' \
+            --data-binary @"$tmp/confirm-payload.json" \
+            "$base/api/account" > "$tmp/confirm.json" || fail "TOTP enable failed"
+          [ "$(jq -r '.twoFactor.enabled' "$tmp/confirm.json")" = "true" ] || fail "TOTP was not enabled"
+          [ "$(jq -r '.recoveryCodes | length' "$tmp/confirm.json")" = "10" ] || fail "recovery code count mismatch"
+          recovery_code="$(jq -r '.recoveryCodes[0]' "$tmp/confirm.json")"
+
+          curl -fsS -b "$primary" "$base/api/account" > "$tmp/account-enabled.json" || fail "primary session did not survive TOTP enable"
+          [ "$(jq -r '.twoFactor.enabled' "$tmp/account-enabled.json")" = "true" ] || fail "account endpoint does not report TOTP enabled"
+          [ "$(jq -r '.twoFactor.recoveryCodesRemaining' "$tmp/account-enabled.json")" = "10" ] || fail "initial recovery count mismatch"
+
+          rm -f "$secondary" "$tmp/login.headers"
+          status="$(curl -sS -c "$secondary" -D "$tmp/login.headers" -o /dev/null -w '%{http_code}' -X POST \
+            --data-urlencode 'username=alpha49admin' \
+            --data-urlencode 'password=two-factor-smoke-123' \
+            "$base/api/auth/login")"
+          [ "$status" = "303" ] || fail "password login did not return 303"
+          grep -qi '^location: /login/verify' "$tmp/login.headers" || fail "TOTP login did not enter verification step"
+          unauthorized="$(curl -sS -b "$secondary" -o /dev/null -w '%{http_code}' "$base/api/account")"
+          [ "$unauthorized" = "401" ] || fail "pending TOTP cookie incorrectly granted a full session"
+
+          code="$(totp "$secret")"
+          curl -fsS -b "$secondary" -c "$secondary" -o /dev/null -X POST \
+            --data-urlencode "code=$code" \
+            "$base/api/auth/2fa/verify" || fail "TOTP login verification failed"
+          curl -fsS -b "$secondary" "$base/api/account" >/dev/null || fail "TOTP verified session was not established"
+
+          rm -f "$recovery_login"
+          curl -fsS -c "$recovery_login" -o /dev/null -X POST \
+            --data-urlencode 'username=alpha49admin' \
+            --data-urlencode 'password=two-factor-smoke-123' \
+            "$base/api/auth/login" || fail "recovery login password step failed"
+          curl -fsS -b "$recovery_login" -c "$recovery_login" -o /dev/null -X POST \
+            --data-urlencode "code=$recovery_code" \
+            "$base/api/auth/2fa/verify" || fail "recovery code login failed"
+          curl -fsS -b "$recovery_login" "$base/api/account" > "$tmp/account-after-recovery.json" || fail "recovery-code session not established"
+          [ "$(jq -r '.twoFactor.recoveryCodesRemaining' "$tmp/account-after-recovery.json")" = "9" ] || fail "recovery code was not consumed"
+
+          code="$(totp "$secret")"
+          jq -n --arg code "$code" '{action:"regenerateRecoveryCodes",currentPassword:"two-factor-smoke-123",code:$code}' > "$tmp/regenerate-payload.json"
+          curl -fsS -b "$primary" -c "$primary" -H 'Content-Type: application/json' \
+            --data-binary @"$tmp/regenerate-payload.json" "$base/api/account" > "$tmp/regenerate.json" || fail "recovery regeneration failed"
+          [ "$(jq -r '.recoveryCodes | length' "$tmp/regenerate.json")" = "10" ] || fail "regenerated recovery count mismatch"
+
+          code="$(totp "$secret")"
+          jq -n --arg code "$code" '{action:"disableTotp",currentPassword:"two-factor-smoke-123",code:$code}' > "$tmp/disable-payload.json"
+          curl -fsS -b "$primary" -c "$primary" -H 'Content-Type: application/json' \
+            --data-binary @"$tmp/disable-payload.json" "$base/api/account" > "$tmp/disable.json" || fail "TOTP disable failed"
+          [ "$(jq -r '.twoFactor.enabled' "$tmp/disable.json")" = "false" ] || fail "TOTP remained enabled after disable"
+          curl -fsS -b "$primary" "$base/api/account" >/dev/null || fail "primary session did not survive TOTP disable"
+
+          rm -f "$secondary" "$tmp/login-disabled.headers"
+          curl -fsS -c "$secondary" -D "$tmp/login-disabled.headers" -o /dev/null -X POST \
+            --data-urlencode 'username=alpha49admin' \
+            --data-urlencode 'password=two-factor-smoke-123' \
+            "$base/api/auth/login" || fail "password-only login after TOTP disable failed"
+          grep -qi '^location: /' "$tmp/login-disabled.headers" || fail "password-only login did not return to dashboard"
+          curl -fsS -b "$secondary" "$base/api/account" >/dev/null || fail "password-only session not established after TOTP disable"
+
+          curl -fsS -b "$secondary" "$base/settings/security" | grep -q 'TOTP 双重验证' || fail "security page does not expose TOTP settings"
+          curl -fsS -b "$secondary" "$base/api/account" > "$tmp/final-account.json" || fail "final account fetch failed"
+          jq -e '.securityEvents | length > 0' "$tmp/final-account.json" >/dev/null || fail "security event history is empty"
+
+          echo "Two-factor authentication smoke checks passed."

@@ -20,8 +20,8 @@ import { ensureSimArchiveTable } from "@/lib/sim-archives";
 import { dropSimLifecycleTriggers, ensureSimLifecycleTables } from "@/lib/sim-lifecycle";
 
 export const BACKUP_FORMAT = "simkeeper-portable-backup";
-export const BACKUP_FORMAT_VERSION = 4;
-export const BACKUP_SCHEMA_VERSION = 2;
+export const BACKUP_FORMAT_VERSION = 5;
+export const BACKUP_SCHEMA_VERSION = 3;
 export const DEFAULT_BACKUP_RETENTION = 20;
 export const MIN_BACKUP_RETENTION = 1;
 export const MAX_BACKUP_RETENTION = 100;
@@ -51,7 +51,7 @@ const BACKUP_SCHEMA_V1_TABLES = [
   "notification_deliveries",
 ] as const;
 
-export const BACKUP_TABLES = [
+const BACKUP_SCHEMA_V2_TABLES = [
   "users",
   "settings",
   "carriers",
@@ -76,6 +76,11 @@ export const BACKUP_TABLES = [
   "sim_bound_services",
   "notification_channels",
   "notification_deliveries",
+] as const;
+
+export const BACKUP_TABLES = [
+  ...BACKUP_SCHEMA_V2_TABLES,
+  "security_events",
 ] as const;
 
 const DELETE_ORDER = [...BACKUP_TABLES].reverse();
@@ -332,8 +337,11 @@ export function parseBackupPayload(value: unknown): BackupPayload {
   const connectorHasCredential = tables.carrier_connectors.some(
     (row) => typeof row.credentials_encrypted === "string" && row.credentials_encrypted.length > 0,
   );
+  const userHasTotpCredential = tables.users.some(
+    (row) => typeof row.totp_secret_ciphertext === "string" && row.totp_secret_ciphertext.length > 0,
+  );
   if (
-    (tables.sim_esim_profiles.length || connectorHasCredential)
+    (tables.sim_esim_profiles.length || connectorHasCredential || userHasTotpCredential)
     && typeof raw.credentialSecret !== "string"
   ) {
     throw new Error("备份包含加密凭据，但缺少对应的凭据密钥，无法安全恢复");
@@ -345,6 +353,14 @@ export function parseBackupPayload(value: unknown): BackupPayload {
     : 0;
   if (formatVersion >= 4 && schemaVersion < 1) {
     throw new Error("备份 Schema 版本无效");
+  }
+  if (formatVersion >= 5 && schemaVersion < 3) {
+    throw new Error("备份格式 v5 必须包含账号安全 Schema v3");
+  }
+  if (schemaVersion > BACKUP_SCHEMA_VERSION) {
+    throw new Error(
+      `这份备份使用 Schema v${schemaVersion}，当前 SIMKeeper 仅支持到 v${BACKUP_SCHEMA_VERSION}；请先升级 SIMKeeper 再恢复`,
+    );
   }
 
   const normalized: Omit<BackupPayload, "integrity"> = {
@@ -371,17 +387,22 @@ export function parseBackupPayload(value: unknown): BackupPayload {
       throw new Error("备份缺少完整性校验信息");
     }
 
-    // Schema v1 backups were signed before lifecycle and connector-attempt history
-    // became portable tables. Reconstruct exactly that original table object so
-    // alpha.40-alpha.45 backups keep validating after the schema grows.
-    const integrityPayload = schemaVersion < 2
-      ? {
+    // Older schemas were signed before newer portable tables existed. Reconstruct
+    // exactly the historical table object so alpha.40-alpha.48 backups continue
+    // to validate after account-security history becomes portable.
+    const integrityTableNames = schemaVersion < 2
+      ? BACKUP_SCHEMA_V1_TABLES
+      : schemaVersion < 3
+        ? BACKUP_SCHEMA_V2_TABLES
+        : BACKUP_TABLES;
+    const integrityPayload = integrityTableNames === BACKUP_TABLES
+      ? normalized
+      : {
           ...normalized,
           tables: Object.fromEntries(
-            BACKUP_SCHEMA_V1_TABLES.map((table) => [table, tables[table]]),
+            integrityTableNames.map((table) => [table, tables[table]]),
           ),
-        } as Omit<BackupPayload, "integrity">
-      : normalized;
+        } as Omit<BackupPayload, "integrity">;
     const expected = computeBackupDigest(integrityPayload);
     if (!digestMatches(rawIntegrity.digest, expected)) {
       throw new Error("备份完整性校验失败，文件可能已损坏或被修改");

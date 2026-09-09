@@ -9,10 +9,14 @@ import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { db, dataDir } from "@/db";
 import { users } from "@/db/schema";
+import { isTwoFactorEnabled } from "@/lib/totp";
 
 export const SESSION_COOKIE_NAME = "simkeeper_session";
+export const TWO_FACTOR_PENDING_COOKIE_NAME = "simkeeper_2fa_pending";
 export const SESSION_MAX_AGE_DAYS = 30;
+export const TWO_FACTOR_PENDING_MAX_AGE_MINUTES = 5;
 const SESSION_MAX_AGE = 60 * 60 * 24 * SESSION_MAX_AGE_DAYS;
+const TWO_FACTOR_PENDING_MAX_AGE = 60 * TWO_FACTOR_PENDING_MAX_AGE_MINUTES;
 const SESSION_SECRET_BYTES = 48;
 const PASSWORD_MIN_CHARACTERS = 10;
 const PASSWORD_MAX_BYTES = 72;
@@ -157,15 +161,34 @@ export async function authenticate(username: string, password: string) {
   const ok = await bcrypt.compare(password, user.passwordHash);
   if (!ok) return null;
 
-  return { id: user.id, username: user.username };
+  return {
+    id: user.id,
+    username: user.username,
+    twoFactorEnabled: isTwoFactorEnabled(user.id),
+  };
 }
 
-export async function createSessionToken(user: { id: number; username: string }) {
-  return new SignJWT({ username: user.username })
+export async function createSessionToken(
+  user: { id: number; username: string },
+  options?: { twoFactorVerified?: boolean },
+) {
+  return new SignJWT({
+    username: user.username,
+    twoFactorVerified: options?.twoFactorVerified === true,
+  })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(String(user.id))
     .setIssuedAt()
     .setExpirationTime(`${SESSION_MAX_AGE_DAYS}d`)
+    .sign(getSecret());
+}
+
+export async function createTwoFactorPendingToken(user: { id: number; username: string }) {
+  return new SignJWT({ username: user.username, purpose: "two-factor" })
+    .setProtectedHeader({ alg: "HS256" })
+    .setSubject(String(user.id))
+    .setIssuedAt()
+    .setExpirationTime(`${TWO_FACTOR_PENDING_MAX_AGE_MINUTES}m`)
     .sign(getSecret());
 }
 
@@ -183,11 +206,42 @@ export function getSessionCookieOptions() {
   };
 }
 
+export function getTwoFactorPendingCookieOptions() {
+  return {
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: isSessionCookieSecure(),
+    path: "/",
+    maxAge: TWO_FACTOR_PENDING_MAX_AGE,
+  };
+}
+
 export async function verifySessionToken(token: string) {
   try {
     const { payload } = await jwtVerify(token, getSecret());
     const id = Number(payload.sub);
     if (!Number.isInteger(id) || id <= 0) return null;
+
+    const user =
+      db
+        .select({ id: users.id, username: users.username })
+        .from(users)
+        .where(eq(users.id, id))
+        .get() ?? null;
+    if (!user) return null;
+    if (isTwoFactorEnabled(id) && payload.twoFactorVerified !== true) return null;
+    return user;
+  } catch {
+    return null;
+  }
+}
+
+export async function verifyTwoFactorPendingToken(token: string) {
+  try {
+    const { payload } = await jwtVerify(token, getSecret());
+    const id = Number(payload.sub);
+    if (!Number.isInteger(id) || id <= 0 || payload.purpose !== "two-factor") return null;
+    if (!isTwoFactorEnabled(id)) return null;
 
     return (
       db
@@ -207,4 +261,11 @@ export async function getCurrentUser() {
   if (!token) return null;
 
   return verifySessionToken(token);
+}
+
+export async function getPendingTwoFactorUser() {
+  const store = await cookies();
+  const token = store.get(TWO_FACTOR_PENDING_COOKIE_NAME)?.value;
+  if (!token) return null;
+  return verifyTwoFactorPendingToken(token);
 }

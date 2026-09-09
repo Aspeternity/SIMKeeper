@@ -12,6 +12,9 @@ const ESIM_AAD = Buffer.from("SIMKeeper/eSIM/v1", "utf8");
 const CARRIER_CONNECTOR_AAD = Buffer.from("SIMKeeper/carrier-connector/v1", "utf8");
 const REMOTE_BACKUP_PASSWORD_AAD = Buffer.from("SIMKeeper/remote-backup/webdav-password/v1", "utf8");
 const REMOTE_BACKUP_PASSPHRASE_AAD = Buffer.from("SIMKeeper/remote-backup/passphrase/v1", "utf8");
+const TOTP_SECRET_AAD = Buffer.from("SIMKeeper/totp/secret/v1", "utf8");
+const TOTP_SETUP_AAD = Buffer.from("SIMKeeper/totp/setup/v1", "utf8");
+const TOTP_RECOVERY_CONTEXT = Buffer.from("SIMKeeper/totp/recovery/v1\0", "utf8");
 
 function readSecretBuffer() {
   fs.mkdirSync(dataDir, { recursive: true });
@@ -118,6 +121,34 @@ export function decryptRemoteBackupPassphrase(value: string | null | undefined) 
     REMOTE_BACKUP_PASSPHRASE_AAD,
     "自动异地备份口令无法解密；请重新保存备份口令",
   );
+}
+
+export function encryptTotpSecret(value: string | null | undefined) {
+  return encryptWithAad(value, TOTP_SECRET_AAD);
+}
+
+export function decryptTotpSecret(value: string | null | undefined) {
+  return decryptWithAad(
+    value,
+    TOTP_SECRET_AAD,
+    "双重验证密钥无法解密；请确认 data/.credential-secret 与数据库来自同一实例备份",
+  );
+}
+
+export function encryptTotpSetupPayload(value: string) {
+  return encryptWithAad(value, TOTP_SETUP_AAD) ?? "";
+}
+
+export function decryptTotpSetupPayload(value: string) {
+  return decryptWithAad(value, TOTP_SETUP_AAD, "双重验证配置已失效，请重新开始配置");
+}
+
+export function hashTotpRecoveryCode(value: string) {
+  return crypto
+    .createHmac("sha256", readSecretBuffer())
+    .update(TOTP_RECOVERY_CONTEXT)
+    .update(value, "utf8")
+    .digest("hex");
 }
 
 export function exportCredentialSecret() {

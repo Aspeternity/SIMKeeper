@@ -241,7 +241,7 @@ jobs:
 
           curl -fsS --max-time 10 -b "$cookies" "$base/api/system/database" > "$tmp/database.json" \
             || fail "Database health endpoint failed"
-          [ "$(jq -r '.database.schemaVersion' "$tmp/database.json")" = "3" ] || fail "Remote backup image did not start on schema v3"
+          [ "$(jq -r '.database.schemaVersion' "$tmp/database.json")" = "4" ] || fail "Remote backup image did not start on schema v4"
 
           # Save a disabled draft first so testing cannot race the scheduler.
           jq -n --arg endpoint "$dav" '{
@@ -306,7 +306,7 @@ jobs:
           jq -e '.config.enabled == true and .config.passwordConfigured == true and .config.passphraseConfigured == true' "$tmp/config-enabled-response.json" >/dev/null \
             || fail "Enabling scheduler did not preserve encrypted secrets"
 
-          # 00:00 UTC is already past on normal workflow execution, so alpha.48 catch-up should run promptly.
+          # 00:00 UTC is already past on normal workflow execution, so alpha.49 catch-up should run promptly.
           scheduled=0
           for _ in $(seq 1 40); do
             curl -fsS --max-time 10 -b "$cookies" "$base/api/remote-backups" > "$tmp/scheduled-poll.json" || true

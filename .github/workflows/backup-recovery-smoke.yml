@@ -71,7 +71,8 @@ jobs:
           curl -fsS -b "$cookies" -H 'Content-Type: application/json' \
             -d '{"action":"create"}' "$base/api/backups" > "$tmp/local.json" || fail "local backup create failed"
           [ "$(jq -r '.backup.validation' "$tmp/local.json")" = "verified" ] || fail "local backup is not integrity verified"
-          [ "$(jq -r '.backup.formatVersion' "$tmp/local.json")" = "4" ] || fail "local backup format is not v4"
+          [ "$(jq -r '.backup.formatVersion' "$tmp/local.json")" = "5" ] || fail "local backup format is not v5"
+          [ "$(jq -r '.backup.schemaVersion' "$tmp/local.json")" = "3" ] || fail "local backup schema is not v3"
 
           jq -n --arg passphrase "$passphrase" '{action:"exportEncrypted",passphrase:$passphrase}' > "$tmp/export-request.json"
           curl -fsS -b "$cookies" -H 'Content-Type: application/json' --data-binary @"$tmp/export-request.json" "$base/api/backups" > "$tmp/secure.simkeeper-backup" || fail "encrypted export failed"
