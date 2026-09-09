@@ -1,5 +1,5 @@
 import { DatabaseBackup } from "lucide-react";
-import LegacyBackupPage from "../page";
+import BackupSettingsContent from "@/components/settings/backup-settings-page";
 
 export default function BackupSettingsPage() {
   return (
@@ -14,7 +14,7 @@ export default function BackupSettingsPage() {
         </p>
       </div>
       <div className="[&>div>div:first-child]:hidden">
-        <LegacyBackupPage />
+        <BackupSettingsContent />
       </div>
     </div>
   );
