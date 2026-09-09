@@ -37,7 +37,7 @@ const sections = [
     icon: Send,
   },
   {
-    href: "/settings",
+    href: "/settings/backup",
     title: "备份与恢复",
     description: "创建本地备份、导出加密备份并执行安全恢复。",
     icon: DatabaseBackup,
