@@ -1,10 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Link2, Loader2, X } from "lucide-react";
-import { Card } from "@/components/ui/card";
+import { Link2, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogAlert, DialogBody, DialogFooter, DialogHeader } from "@/components/ui/dialog";
+import { FormField, FormGrid, FormSection } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
-import { ModalPortal } from "@/components/ui/modal-portal";
+import { Select } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import {
   SERVICE_BINDING_STATUSES,
   SERVICE_BINDING_TYPES,
@@ -101,97 +104,89 @@ export function ServiceBindingModal({
   }
 
   return (
-    <ModalPortal onBackdropClick={saving ? undefined : onClose}>
-      <Card className="flex w-full max-w-3xl flex-col overflow-hidden shadow-2xl sm:max-h-[calc(100dvh-2rem)]">
-        <div className="flex shrink-0 items-start justify-between gap-4 border-b bg-white px-5 py-4 sm:px-6">
-          <div>
-            <div className="flex items-center gap-2 text-sm font-medium text-slate-500"><Link2 className="h-4 w-4" />绑定服务</div>
-            <h3 className="mt-1 text-xl font-semibold text-slate-900">{binding ? "编辑绑定服务" : "新增绑定服务"}</h3>
-            <p className="mt-1 text-xs leading-5 text-slate-400">记录号码与账号/业务之间的绑定关系。不要在这里保存密码、验证码、恢复码或其他秘密凭据。</p>
-          </div>
-          <button type="button" onClick={onClose} disabled={saving} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"><X className="h-4 w-4" /></button>
-        </div>
+    <Dialog onClose={onClose} busy={saving} size="lg" dataAttribute="service-binding-editor">
+      <DialogHeader
+        eyebrow="绑定服务"
+        icon={<Link2 className="h-4 w-4" />}
+        title={binding ? "编辑绑定服务" : "新增绑定服务"}
+        description="记录号码与账号或业务之间的依赖关系。不要在这里保存密码、验证码、恢复码或其他秘密凭据。"
+        onClose={onClose}
+        busy={saving}
+      />
 
-        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto bg-white px-5 py-5 sm:px-6">
-          {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
+      <DialogBody className="space-y-5">
+        {error ? <DialogAlert>{error}</DialogAlert> : null}
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="space-y-1.5 sm:col-span-2">
-              <span className="text-sm font-medium text-slate-700">号码</span>
-              <select value={form.simId} onChange={(event) => update("simId", event.target.value)} className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-400">
-                <option value="">请选择号码</option>
-                {sims.map((sim) => <option key={sim.id} value={sim.id}>{sim.label} · {sim.phoneNumber || "未填写号码"} · {sim.carrierName}</option>)}
-              </select>
-              {selectedSim ? <div className="text-xs text-slate-400">{selectedSim.country} · {selectedSim.countryCode}</div> : null}
-            </label>
+        <FormSection title="绑定对象" description="先确认使用哪一张号码，再记录服务与账号信息。">
+          <FormField
+            label="号码"
+            required
+            hint={selectedSim ? `${selectedSim.country} · ${selectedSim.countryCode}` : "请选择需要记录绑定关系的号码。"}
+          >
+            <Select value={form.simId} onChange={(event) => update("simId", event.target.value)}>
+              <option value="">请选择号码</option>
+              {sims.map((sim) => <option key={sim.id} value={sim.id}>{sim.label} · {sim.phoneNumber || "未填写号码"} · {sim.carrierName}</option>)}
+            </Select>
+          </FormField>
+        </FormSection>
 
-            <label className="space-y-1.5">
-              <span className="text-sm font-medium text-slate-700">服务名称</span>
+        <FormSection title="服务信息" description="服务名称与用途会用于筛选、处理中心和号码详情展示。">
+          <FormGrid>
+            <FormField label="服务名称" required>
               <Input value={form.serviceName} onChange={(event) => update("serviceName", event.target.value)} placeholder="例如 Telegram、Apple ID、银行" />
-            </label>
-
-            <label className="space-y-1.5">
-              <span className="text-sm font-medium text-slate-700">服务分类</span>
-              <select value={form.category} onChange={(event) => update("category", event.target.value)} className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-400">
+            </FormField>
+            <FormField label="服务分类">
+              <Select value={form.category} onChange={(event) => update("category", event.target.value)}>
                 {SERVICE_CATEGORIES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-              </select>
-            </label>
-
-            <label className="space-y-1.5">
-              <span className="text-sm font-medium text-slate-700">号码用途</span>
-              <select value={form.bindingType} onChange={(event) => update("bindingType", event.target.value)} className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-400">
+              </Select>
+            </FormField>
+            <FormField label="号码用途">
+              <Select value={form.bindingType} onChange={(event) => update("bindingType", event.target.value)}>
                 {SERVICE_BINDING_TYPES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-              </select>
-            </label>
-
-            <label className="space-y-1.5">
-              <span className="text-sm font-medium text-slate-700">账号标识</span>
-              <Input value={form.accountIdentifier} onChange={(event) => update("accountIdentifier", event.target.value)} placeholder="可选：邮箱、用户名、账号尾号等" />
-            </label>
-
-            <label className="space-y-1.5">
-              <span className="text-sm font-medium text-slate-700">重要程度</span>
-              <select value={form.importance} onChange={(event) => update("importance", event.target.value)} className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-400">
+              </Select>
+            </FormField>
+            <FormField label="账号标识" hint="仅保存可公开辨认的账号信息，不保存密码或恢复秘密。">
+              <Input value={form.accountIdentifier} onChange={(event) => update("accountIdentifier", event.target.value)} placeholder="邮箱、用户名、账号尾号等" />
+            </FormField>
+            <FormField label="重要程度">
+              <Select value={form.importance} onChange={(event) => update("importance", event.target.value)}>
                 {SERVICE_IMPORTANCE_LEVELS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-              </select>
-            </label>
-
-            <label className="space-y-1.5">
-              <span className="text-sm font-medium text-slate-700">绑定状态</span>
-              <select value={form.status} onChange={(event) => update("status", event.target.value)} className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-400">
+              </Select>
+            </FormField>
+            <FormField label="绑定状态">
+              <Select value={form.status} onChange={(event) => update("status", event.target.value)}>
                 {SERVICE_BINDING_STATUSES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-              </select>
-            </label>
+              </Select>
+            </FormField>
+          </FormGrid>
 
-            <label className="space-y-1.5 sm:col-span-2">
-              <span className="text-sm font-medium text-slate-700">服务网址</span>
-              <Input value={form.website} onChange={(event) => update("website", event.target.value)} placeholder="可选：https://" />
-            </label>
+          <FormField label="服务网址">
+            <Input value={form.website} onChange={(event) => update("website", event.target.value)} placeholder="可选：https://" />
+          </FormField>
+        </FormSection>
 
-            <label className="space-y-1.5">
-              <span className="text-sm font-medium text-slate-700">绑定日期</span>
+        <FormSection title="维护记录" description="日期和备注用于以后判断是否需要重新核验或迁移。">
+          <FormGrid>
+            <FormField label="绑定日期">
               <Input type="date" value={form.boundAt} onChange={(event) => update("boundAt", event.target.value)} />
-            </label>
-
-            <label className="space-y-1.5">
-              <span className="text-sm font-medium text-slate-700">最后确认日期</span>
+            </FormField>
+            <FormField label="最后确认日期">
               <Input type="date" value={form.verifiedAt} onChange={(event) => update("verifiedAt", event.target.value)} />
-            </label>
+            </FormField>
+          </FormGrid>
+          <FormField label="备注">
+            <Textarea value={form.notes} onChange={(event) => update("notes", event.target.value)} rows={4} placeholder="可记录换绑入口、客服要求、解绑注意事项等" />
+          </FormField>
+        </FormSection>
+      </DialogBody>
 
-            <label className="space-y-1.5 sm:col-span-2">
-              <span className="text-sm font-medium text-slate-700">备注</span>
-              <textarea value={form.notes} onChange={(event) => update("notes", event.target.value)} rows={4} placeholder="可记录换绑入口、客服要求、解绑注意事项等" className="w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none transition placeholder:text-slate-300 focus:border-slate-400" />
-            </label>
-          </div>
-        </div>
-
-        <div className="flex shrink-0 items-center justify-end gap-2 border-t bg-white px-5 py-4 sm:px-6">
-          <button type="button" onClick={onClose} disabled={saving} className="h-10 rounded-xl border px-4 text-sm font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-50">取消</button>
-          <button type="button" onClick={() => void save()} disabled={saving || !form.simId || !form.serviceName.trim()} className="inline-flex h-10 items-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}{binding ? "保存修改" : "添加绑定"}
-          </button>
-        </div>
-      </Card>
-    </ModalPortal>
+      <DialogFooter>
+        <Button type="button" variant="secondary" onClick={onClose} disabled={saving}>取消</Button>
+        <Button type="button" onClick={() => void save()} disabled={saving || !form.simId || !form.serviceName.trim()} className="gap-2">
+          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
+          {binding ? "保存修改" : "添加绑定"}
+        </Button>
+      </DialogFooter>
+    </Dialog>
   );
 }
