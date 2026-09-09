@@ -1,0 +1,89 @@
+name: Verify Dashboard Customizer UI Polish
+
+on:
+  workflow_run:
+    workflows:
+      - Build and Publish Docker Image
+    types:
+      - completed
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  dashboard-customizer-ui-polish:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout verified source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Pull verified image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="${{ github.event.workflow_run.head_sha }}"
+          image="ghcr.io/aspeternity/simkeeper:sha-${sha:0:7}"
+          docker pull "$image"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Verify dashboard personalization workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          container="simkeeper-dashboard-customizer-ui-smoke"
+          base="http://127.0.0.1:18120"
+          cookies="$tmp/cookies"
+          expected_version="$(jq -r '.version' package.json)"
+
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            rm -rf "$tmp"
+          }
+          trap cleanup EXIT
+          fail() { echo "::error::$1"; docker logs "$container" 2>&1 || true; exit 1; }
+
+          grep -Fq 'data-settings-dashboard-polish="alpha.51.9"' src/components/dashboard/dashboard-customizer.tsx || fail "dashboard settings polish marker missing"
+          grep -Fq 'data-dashboard-layout-summary="alpha.51.9"' src/components/dashboard/dashboard-customizer.tsx || fail "dashboard summary marker missing"
+          grep -Fq 'data-dashboard-module-workspace="alpha.51.9"' src/components/dashboard/dashboard-customizer.tsx || fail "dashboard module workspace marker missing"
+          grep -Fq 'data-dashboard-focus-workspace="alpha.51.9"' src/components/dashboard/dashboard-customizer.tsx || fail "dashboard focus workspace marker missing"
+          grep -Fq 'data-dashboard-action-bar="alpha.51.9"' src/components/dashboard/dashboard-customizer.tsx || fail "dashboard action bar marker missing"
+          grep -Fq "APP_VERSION = \"$expected_version\"" src/components/layout/navigation.ts || fail "app version mismatch"
+
+          mkdir -p "$tmp/data"
+          docker run -d \
+            --name "$container" \
+            -p 18120:3000 \
+            -e SIMKEEPER_COOKIE_SECURE=false \
+            -e PUID="$(id -u)" \
+            -e PGID="$(id -g)" \
+            -v "$tmp/data:/app/data" \
+            "$IMAGE" >/dev/null || fail "container start failed"
+
+          for _ in $(seq 1 40); do
+            curl -fsS "$base/api/health" >/dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -fsS "$base/api/health" >/dev/null || fail "health check failed"
+
+          curl -fsS -c "$cookies" -o /dev/null -X POST \
+            --data-urlencode 'username=dashboarduismoke' \
+            --data-urlencode 'password=dashboard-ui-smoke-123' \
+            --data-urlencode 'confirmPassword=dashboard-ui-smoke-123' \
+            "$base/api/auth/setup" || fail "setup failed"
+
+          curl -fsS -b "$cookies" "$base/settings/dashboard" > "$tmp/page.html" || fail "dashboard personalization page failed"
+          grep -Fq 'data-dashboard-customizer="alpha.44"' "$tmp/page.html" || fail "legacy dashboard customizer marker missing at runtime"
+          grep -Fq 'data-settings-dashboard-polish="alpha.51.9"' "$tmp/page.html" || fail "dashboard settings polish marker missing at runtime"
+          grep -Fq '概览个性化' "$tmp/page.html" || fail "dashboard personalization heading missing"
+          grep -Fq '模块布局' "$tmp/page.html" || fail "module layout section missing"
+          grep -Fq '重点号码' "$tmp/page.html" || fail "focused SIM section missing"
+          grep -Fq '保存设置' "$tmp/page.html" || fail "save action missing"
+
+          echo "Dashboard customizer UI polish smoke test passed."
