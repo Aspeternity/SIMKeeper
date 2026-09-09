@@ -36,6 +36,7 @@ jobs:
           base="http://127.0.0.1:18113"
           cookies="$tmp/cookies"
           password="$(openssl rand -hex 12)"
+          expected_version="$(jq -r '.version' package.json)"
 
           cleanup() {
             docker rm -f "$container" >/dev/null 2>&1 || true
@@ -55,8 +56,7 @@ jobs:
           grep -Fq 'data-carrier-toolbar="alpha.51.2"' 'src/app/(dashboard)/carriers/page.tsx' || fail "Carrier toolbar marker missing"
           grep -Fq 'data-services-polish="alpha.51.2"' 'src/app/(dashboard)/services/page.tsx' || fail "Service polish marker missing"
           grep -Fq 'data-service-toolbar="alpha.51.2"' 'src/app/(dashboard)/services/page.tsx' || fail "Service toolbar marker missing"
-          grep -Fq '"version": "0.1.0-alpha.51.2"' package.json || fail "package version missing"
-          grep -Fq 'APP_VERSION = "0.1.0-alpha.51.2"' src/components/layout/navigation.ts || fail "app version missing"
+          grep -Fq "APP_VERSION = \"$expected_version\"" src/components/layout/navigation.ts || fail "app version does not match package version"
 
           mkdir -p "$tmp/data"
           docker run -d --name "$container" -p 18113:3000 \
@@ -91,4 +91,4 @@ jobs:
           grep -Fq 'data-devices-polish="alpha.51.2"' "$tmp/devices.html" || fail "Device runtime polish marker missing"
           grep -Fq 'data-carriers-polish="alpha.51.2"' "$tmp/carriers.html" || fail "Carrier runtime polish marker missing"
           grep -Fq 'data-services-polish="alpha.51.2"' "$tmp/services.html" || fail "Service runtime polish marker missing"
-          grep -Fq '0.1.0-alpha.51.2' "$tmp/devices.html" || fail "alpha.51.2 runtime version missing"
+          grep -Fq "$expected_version" "$tmp/devices.html" || fail "application version missing from management pages"
