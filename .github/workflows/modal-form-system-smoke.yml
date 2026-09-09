@@ -1,0 +1,92 @@
+name: Verify Modal Form System
+
+on:
+  workflow_run:
+    workflows: [Build and Publish Docker Image]
+    types: [completed]
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  modal-form-system:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout verified source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Pull verified image
+        run: |
+          sha="${{ github.event.workflow_run.head_sha }}"
+          image="ghcr.io/aspeternity/simkeeper:sha-${sha:0:7}"
+          docker pull "$image"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Verify dialog and form foundation
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          container="simkeeper-modal-form-smoke"
+          base="http://127.0.0.1:18114"
+          cookies="$tmp/cookies"
+          password="$(openssl rand -hex 12)"
+          expected_version="$(jq -r '.version' package.json)"
+
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            rm -rf "$tmp"
+          }
+          trap cleanup EXIT
+
+          fail() {
+            echo "::error::$1"
+            docker logs "$container" 2>&1 || true
+            exit 1
+          }
+
+          grep -Fq 'data-dialog-system="alpha.51.3"' src/components/ui/dialog.tsx || fail "Dialog foundation marker missing"
+          grep -Fq 'data-modal-foundation="alpha.51.3"' src/components/ui/modal-portal.tsx || fail "Modal portal marker missing"
+          grep -Fq 'export function FormField' src/components/ui/form-field.tsx || fail "FormField primitive missing"
+          grep -Fq 'export function FormSection' src/components/ui/form-field.tsx || fail "FormSection primitive missing"
+          grep -Fq 'export function Select' src/components/ui/select.tsx || fail "Select primitive missing"
+          grep -Fq 'export function Textarea' src/components/ui/textarea.tsx || fail "Textarea primitive missing"
+          grep -Fq 'dataAttribute="device-editor"' src/components/devices/device-editor-modal.tsx || fail "Device editor not migrated"
+          grep -Fq 'dataAttribute="service-binding-editor"' src/components/services/service-binding-modal.tsx || fail "Service binding editor not migrated"
+          grep -Fq 'dataAttribute="keep-alive-rule-editor"' src/components/keep-alive/keep-alive-rule-modal.tsx || fail "Keep-alive rule editor not migrated"
+          grep -Fq 'dataAttribute="keep-alive-event-editor"' src/components/keep-alive/keep-alive-event-modal.tsx || fail "Keep-alive event editor not migrated"
+          grep -Fq "APP_VERSION = \"$expected_version\"" src/components/layout/navigation.ts || fail "app version does not match package version"
+
+          mkdir -p "$tmp/data"
+          docker run -d --name "$container" -p 18114:3000 \
+            -e SIMKEEPER_COOKIE_SECURE=false \
+            -e PUID="$(id -u)" -e PGID="$(id -g)" \
+            -v "$tmp/data:/app/data" "$IMAGE" >/dev/null || fail "Unable to start SIMKeeper"
+
+          ready=0
+          for _ in $(seq 1 40); do
+            if curl -fsS --max-time 2 "$base/api/health" >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          [ "$ready" -eq 1 ] || fail "SIMKeeper did not become healthy"
+
+          curl -fsS -c "$cookies" -o /dev/null -X POST \
+            --data-urlencode 'username=modalformsmoke' \
+            --data-urlencode "password=$password" \
+            --data-urlencode "confirmPassword=$password" \
+            "$base/api/auth/setup" || fail "Unable to create smoke administrator"
+
+          for route in /devices /services /history /sims; do
+            safe="$(echo "$route" | tr '/' '_' | sed 's/^_//')"
+            curl -fsS -b "$cookies" "$base$route" > "$tmp/$safe.html" || fail "Route $route failed"
+          done
+
+          grep -Fq "$expected_version" "$tmp/devices.html" || fail "application version missing from runtime"
