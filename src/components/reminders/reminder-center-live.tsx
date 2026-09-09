@@ -1,7 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { ProcessingCenterMeta } from "@/components/reminders/processing-center-meta";
+import { ProcessingCenterSummary } from "@/components/reminders/processing-center-summary";
 import { ReminderCenter } from "@/components/reminders/reminder-center";
+import styles from "@/components/reminders/reminder-center-polish.module.css";
 import type { ReminderActionRecord } from "@/lib/reminder-action-types";
 import { REMINDER_STATE_CHANGED_EVENT, type ReminderItem } from "@/lib/reminders";
 
@@ -60,5 +63,13 @@ export function ReminderCenterLive({
     };
   }, [refresh]);
 
-  return <ReminderCenter reminders={reminders} history={history} />;
+  return (
+    <div className={`${styles.root} space-y-6`} data-processing-center-polish="alpha.51.6">
+      <ProcessingCenterSummary reminders={reminders} />
+      <ProcessingCenterMeta active={reminders.length} history={history.length} />
+      <div className={styles.body} data-processing-center-body="alpha.51.6">
+        <ReminderCenter reminders={reminders} history={history} />
+      </div>
+    </div>
+  );
 }
