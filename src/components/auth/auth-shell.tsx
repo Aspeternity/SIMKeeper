@@ -58,7 +58,7 @@ export function AuthShell({
             {highlights.map((item) => {
               const HighlightIcon = item.icon;
               return (
-                <div key={item.label} className="flex items-start gap-3 rounded-2xl border border-brand/10 bg-surface/70 p-4 backdrop-blur-sm">
+                <div key={item.label} className="flex items-start gap-3 rounded-2xl border border-line bg-surface p-4 shadow-sm">
                   <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-soft-strong text-brand">
                     <HighlightIcon className="h-4 w-4" />
                   </div>
