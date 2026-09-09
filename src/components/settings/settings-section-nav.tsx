@@ -2,17 +2,29 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Cable, DatabaseBackup } from "lucide-react";
+import {
+  Activity,
+  DatabaseBackup,
+  LayoutDashboard,
+  Settings2,
+  ShieldCheck,
+  Send,
+} from "lucide-react";
 
 const items = [
-  { href: "/settings", label: "备份与维护", icon: DatabaseBackup },
-  { href: "/settings/carrier-connectors", label: "运营商连接", icon: Cable },
+  { href: "/settings/overview", label: "设置首页", icon: Settings2 },
+  { href: "/settings/dashboard", label: "概览个性化", icon: LayoutDashboard },
+  { href: "/settings/security", label: "账号安全", icon: ShieldCheck },
+  { href: "/settings/carrier-connectors", label: "同步与诊断", icon: Activity },
+  { href: "/settings/notifications", label: "通知渠道", icon: Send },
+  { href: "/settings", label: "备份与恢复", icon: DatabaseBackup },
 ];
 
 export function SettingsSectionNav() {
   const pathname = usePathname();
+
   return (
-    <nav className="mb-6 flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-white p-2">
+    <nav className="mb-6 flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-white p-2" aria-label="设置导航">
       {items.map((item) => {
         const active = item.href === "/settings"
           ? pathname === "/settings"
