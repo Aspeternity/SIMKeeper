@@ -89,7 +89,7 @@ function distribution(rows: AssetRow[], keyOf: (row: AssetRow) => string, labelO
   return [...values.values()].sort((left, right) => right.count - left.count || left.label.localeCompare(right.label, "zh-CN"));
 }
 
-export function getDashboardInsights(): DashboardInsights {
+export function getDashboardInsights(distributionLimit: 3 | 6 | 10 = 6): DashboardInsights {
   const sims = sqlite.prepare(`
     SELECT s.id, s.label, s.phone_number, s.status, s.sim_type, s.device_id, s.carrier_id,
            c.name AS carrier_name, c.country, c.country_code
@@ -139,8 +139,8 @@ export function getDashboardInsights(): DashboardInsights {
       unassignedDevice: managed.filter((sim) => sim.device_id === null).length,
       missingPhoneNumber: managed.filter((sim) => !sim.phone_number?.trim()).length,
     },
-    countryDistribution: distribution(managed, (sim) => sim.country_code.toUpperCase(), (sim) => sim.country).slice(0, 6),
-    carrierDistribution: distribution(managed, (sim) => String(sim.carrier_id), (sim) => sim.carrier_name).slice(0, 6),
+    countryDistribution: distribution(managed, (sim) => sim.country_code.toUpperCase(), (sim) => sim.country).slice(0, distributionLimit),
+    carrierDistribution: distribution(managed, (sim) => String(sim.carrier_id), (sim) => sim.carrier_name).slice(0, distributionLimit),
     recentActivities: recentRows.map((row) => ({
       id: row.id,
       simId: row.sim_id,
