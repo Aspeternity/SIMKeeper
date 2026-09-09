@@ -8,8 +8,8 @@ import {
   type ReminderStatus,
 } from "@/lib/reminders";
 
-export type AttentionSource = "lifecycle" | "carrier_connector" | "balance";
-export type AttentionKind = ReminderKind | "connector_health";
+export type AttentionSource = "lifecycle" | "carrier_connector" | "balance" | "backup";
+export type AttentionKind = ReminderKind | "connector_health" | "backup_health";
 export type AttentionPriority = "critical" | "attention" | "watch" | "setup";
 export type AttentionSection = "now" | "soon" | "setup";
 
@@ -21,8 +21,8 @@ export type AttentionItem = {
   priority: AttentionPriority;
   priorityLabel: string;
   section: AttentionSection;
-  subjectType: "sim";
-  subjectId: number;
+  subjectType: "sim" | "system";
+  subjectId: number | null;
   subjectLabel: string;
   subjectMeta: string;
   title: string;
@@ -101,17 +101,19 @@ export function reminderToAttentionItem(reminder: ReminderItem): AttentionItem {
   };
 }
 
+export function sortAttentionItems(items: AttentionItem[]) {
+  return [...items].sort((a, b) => {
+    const priorityDiff = priorityRank[a.priority] - priorityRank[b.priority];
+    if (priorityDiff !== 0) return priorityDiff;
+    if (!a.dueDate && !b.dueDate) return a.subjectLabel.localeCompare(b.subjectLabel);
+    if (!a.dueDate) return 1;
+    if (!b.dueDate) return -1;
+    return a.dueDate.localeCompare(b.dueDate) || a.subjectLabel.localeCompare(b.subjectLabel);
+  });
+}
+
 export function buildAttentionItems(reminders: ReminderItem[]) {
-  return reminders
-    .map(reminderToAttentionItem)
-    .sort((a, b) => {
-      const priorityDiff = priorityRank[a.priority] - priorityRank[b.priority];
-      if (priorityDiff !== 0) return priorityDiff;
-      if (!a.dueDate && !b.dueDate) return a.subjectLabel.localeCompare(b.subjectLabel);
-      if (!a.dueDate) return 1;
-      if (!b.dueDate) return -1;
-      return a.dueDate.localeCompare(b.dueDate) || a.subjectLabel.localeCompare(b.subjectLabel);
-    });
+  return sortAttentionItems(reminders.map(reminderToAttentionItem));
 }
 
 export function getAttentionSummary(items: AttentionItem[]) {

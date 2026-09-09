@@ -4,9 +4,10 @@ import { SiteMark } from "@/components/branding/site-mark";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
 import { Card } from "@/components/ui/card";
-import { buildAttentionItems } from "@/lib/attention-items";
+import { buildAttentionItems, sortAttentionItems } from "@/lib/attention-items";
 import { getCurrentUser, hasAdmin } from "@/lib/auth";
 import { getUnifiedReminderItems } from "@/lib/current-reminders";
+import { getRemoteBackupAttentionItems } from "@/lib/remote-backups";
 import { getSiteSettings } from "@/lib/site-settings";
 
 export const runtime = "nodejs";
@@ -36,7 +37,7 @@ function AuthGate({
         <h1 className="text-xl font-semibold">{needsSetup ? "需要完成首次初始化" : "需要登录"}</h1>
         <p className="mt-2 text-sm leading-6 text-slate-500">
           {needsSetup
-            ? "当前实例尚未创建管理员账户。完成初始化后即可进入管理后台。"
+            ? "当前实例尚未创建管理员账户。完成初始化或从异地备份恢复后即可进入管理后台。"
             : "当前浏览器没有有效的登录会话。"}
         </p>
         {siteDescription ? <p className="mt-2 text-xs leading-5 text-slate-400">{siteDescription}</p> : null}
@@ -45,7 +46,7 @@ function AuthGate({
           className="mt-6 inline-flex h-10 w-full items-center justify-center rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800"
         >
           {needsSetup ? <ShieldCheck className="mr-2 h-4 w-4" /> : <LogIn className="mr-2 h-4 w-4" />}
-          {needsSetup ? "创建管理员" : "前往登录"}
+          {needsSetup ? "初始化 / 恢复" : "前往登录"}
         </Link>
       </Card>
     </main>
@@ -78,7 +79,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
     );
   }
 
-  const attentionItems = buildAttentionItems(getUnifiedReminderItems());
+  const attentionItems = sortAttentionItems([
+    ...buildAttentionItems(getUnifiedReminderItems()),
+    ...getRemoteBackupAttentionItems(),
+  ]);
 
   return (
     <div className="flex min-h-screen bg-slate-50" data-reminder-count={attentionItems.length}>

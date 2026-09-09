@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ShieldCheck } from "lucide-react";
 import { SiteMark } from "@/components/branding/site-mark";
+import { RemoteRecoverySetup } from "@/components/auth/remote-recovery-setup";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -35,32 +36,23 @@ export default async function SetupPage({
               <ShieldCheck className="h-4 w-4" />
               首次初始化
             </div>
-            <h2 className="text-xl font-semibold">创建管理员账户</h2>
+            <h2 className="text-xl font-semibold">创建或恢复 SIMKeeper</h2>
           </div>
 
           {initialized ? (
             <div className="space-y-4">
               <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm leading-6 text-emerald-800">
-                此实例已经完成初始化，不会再次创建管理员账户。
+                此实例已经完成初始化，不会再次创建管理员账户或开放未登录灾难恢复入口。
               </div>
-              <Link
-                href="/login"
-                className="inline-flex h-10 w-full items-center justify-center rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800"
-              >
-                前往登录
-              </Link>
+              <Link href="/login" className="inline-flex h-10 w-full items-center justify-center rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800">前往登录</Link>
             </div>
           ) : (
             <>
               <p className="mb-5 text-sm leading-6 text-slate-500">
-                账户信息保存在本机 SQLite 数据库中，不需要在 Compose 里预设用户名和密码。
+                新安装可以创建管理员；如果这是灾难恢复后的空实例，也可以直接从 WebDAV 加密备份恢复原管理员、2FA、SIM/eSIM、运营商和设置。
               </p>
 
-              {error ? (
-                <div className="mb-5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">
-                  {error}
-                </div>
-              ) : null}
+              {error ? <div className="mb-5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">{error}</div> : null}
 
               <form action="/api/auth/setup" method="post" className="space-y-4">
                 <label className="block space-y-2">
@@ -78,6 +70,8 @@ export default async function SetupPage({
                 </label>
                 <Button className="mt-2 w-full" type="submit">创建管理员</Button>
               </form>
+
+              <RemoteRecoverySetup />
             </>
           )}
         </Card>

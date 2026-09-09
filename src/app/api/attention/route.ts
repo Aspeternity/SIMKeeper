@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
-import { buildAttentionItems, getAttentionSummary } from "@/lib/attention-items";
+import { buildAttentionItems, getAttentionSummary, sortAttentionItems } from "@/lib/attention-items";
 import { getCurrentUser } from "@/lib/auth";
 import { getUnifiedReminderItems } from "@/lib/current-reminders";
+import { getRemoteBackupAttentionItems } from "@/lib/remote-backups";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,6 +14,9 @@ export async function GET() {
     return NextResponse.json({ error: "登录状态已失效，请重新登录" }, { status: 401 });
   }
 
-  const items = buildAttentionItems(getUnifiedReminderItems());
+  const items = sortAttentionItems([
+    ...buildAttentionItems(getUnifiedReminderItems()),
+    ...getRemoteBackupAttentionItems(),
+  ]);
   return NextResponse.json({ items, summary: getAttentionSummary(items) });
 }

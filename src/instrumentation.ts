@@ -40,7 +40,10 @@ export async function register() {
 
   if (!globalState.__simkeeperRemoteBackupSchedulerStarted) {
     globalState.__simkeeperRemoteBackupSchedulerStarted = true;
-    const { startRemoteBackupScheduler } = await import("@/lib/remote-backups");
+    const { getRemoteBackupConfig, startRemoteBackupScheduler } = await import("@/lib/remote-backups");
+    // Materialize the stable instance identity before the first alpha.50 backup
+    // snapshot so the ID itself is part of the portable backup.
+    getRemoteBackupConfig();
     startRemoteBackupScheduler();
   }
 }
