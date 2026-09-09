@@ -28,8 +28,10 @@ export async function register() {
       startCarrierConnectorScheduler,
     } = await import("@/lib/carrier-connectors/store");
     const { ensureCarrierBalanceProjection } = await import("@/lib/carrier-connectors/balance-projection");
+    const { ensureCarrierConnectorDiagnosticTables } = await import("@/lib/carrier-connectors/diagnostics");
     ensureCarrierConnectorTables();
     ensureCarrierBalanceProjection();
+    ensureCarrierConnectorDiagnosticTables();
     startCarrierConnectorScheduler();
   }
 }
