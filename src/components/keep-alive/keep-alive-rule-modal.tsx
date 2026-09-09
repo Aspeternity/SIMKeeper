@@ -1,10 +1,13 @@
 "use client";
 
 import { FormEvent, useMemo, useState } from "react";
-import { Loader2, ShieldCheck, X } from "lucide-react";
-import { Card } from "@/components/ui/card";
+import { Loader2, ShieldCheck } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogAlert, DialogBody, DialogFooter, DialogHeader } from "@/components/ui/dialog";
+import { FormField, FormGrid, FormSection } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
-import { ModalPortal } from "@/components/ui/modal-portal";
+import { Select } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import {
   KEEP_ALIVE_ACTIVITY_TYPES,
   KEEP_ALIVE_DUE_DATE_SOURCES,
@@ -96,144 +99,143 @@ export function KeepAliveRuleModal({
   }
 
   return (
-    <ModalPortal onBackdropClick={saving ? undefined : onClose}>
-      <Card className="w-full max-w-2xl overflow-hidden shadow-2xl">
-        <div className="flex items-start justify-between gap-4 border-b bg-white px-6 py-5">
-          <div>
-            <div className="flex items-center gap-2 text-sm font-medium text-slate-500"><ShieldCheck className="h-4 w-4" />保号规则</div>
-            <h3 className="mt-1 text-lg font-semibold text-slate-900">{rule ? "编辑规则" : "新增规则"}</h3>
-            <p className="mt-1 text-xs text-slate-400">{simLabel} · 一张卡可以同时配置多条独立规则。</p>
-          </div>
-          <button type="button" onClick={onClose} disabled={saving} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"><X className="h-4 w-4" /></button>
-        </div>
+    <Dialog onClose={onClose} busy={saving} size="lg" dataAttribute="keep-alive-rule-editor">
+      <DialogHeader
+        eyebrow="保号规则"
+        icon={<ShieldCheck className="h-4 w-4" />}
+        title={rule ? "编辑规则" : "新增规则"}
+        description={`${simLabel} · 一张卡可以同时配置多条独立规则。`}
+        onClose={onClose}
+        busy={saving}
+      />
 
-        <form onSubmit={submit} className="space-y-5 bg-white p-6">
-          <label className="block space-y-1.5 text-sm">
-            <span className="font-medium text-slate-700">规则名称</span>
-            <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：号码有效期、活跃要求" autoFocus required />
-          </label>
+      <form onSubmit={submit} className="contents">
+        <DialogBody className="space-y-5">
+          {error ? <DialogAlert>{error}</DialogAlert> : null}
 
-          <div className="space-y-2">
-            <div className="text-sm font-medium text-slate-700">下一次日期来源</div>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {KEEP_ALIVE_DUE_DATE_SOURCES.map((item) => (
-                <label key={item.value} className={`cursor-pointer rounded-xl border px-4 py-3 transition ${dueDateSource === item.value ? "border-slate-900 bg-slate-50" : "border-slate-200 hover:bg-slate-50"}`}>
-                  <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
-                    <input type="radio" name="dueDateSource" checked={dueDateSource === item.value} onChange={() => setDueDateSource(item.value)} />
-                    {item.label}
-                  </div>
-                  <div className="mt-1 pl-5 text-xs leading-5 text-slate-400">
-                    {item.value === "sim_validity"
-                      ? "用于充值/续期延长号码有效期的规则；日期始终跟随号码管理里的“有效期至”。"
-                      : "用于 90 天活跃、定期短信等独立要求；单独维护自己的下一次操作日期。"}
-                  </div>
-                </label>
-              ))}
-            </div>
-          </div>
+          <FormSection title="规则基础" description="定义规则名称、日期来源与刷新周期。">
+            <FormField label="规则名称" required>
+              <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：号码有效期、活跃要求" autoFocus required />
+            </FormField>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="space-y-1.5 text-sm">
-              <span className="font-medium text-slate-700">保号周期</span>
-              <div className="grid grid-cols-[1fr_120px] gap-2">
-                <Input value={intervalValue} onChange={(event) => setIntervalValue(event.target.value)} type="number" min="1" step="1" inputMode="numeric" placeholder="例如 180" required />
-                <select value={intervalUnit} onChange={(event) => setIntervalUnit(event.target.value)} className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400">
-                  {KEEP_ALIVE_INTERVAL_UNITS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-                </select>
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-ink-secondary">下一次日期来源</div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {KEEP_ALIVE_DUE_DATE_SOURCES.map((item) => (
+                  <label
+                    key={item.value}
+                    className={`cursor-pointer rounded-xl border px-4 py-3 transition ${
+                      dueDateSource === item.value
+                        ? "border-brand bg-brand-soft ring-2 ring-focus"
+                        : "border-line bg-surface hover:border-line-strong hover:bg-surface-hover"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 text-sm font-medium text-ink-secondary">
+                      <input type="radio" name="dueDateSource" checked={dueDateSource === item.value} onChange={() => setDueDateSource(item.value)} />
+                      {item.label}
+                    </div>
+                    <div className="mt-1 pl-5 text-xs leading-5 text-ink-muted">
+                      {item.value === "sim_validity"
+                        ? "用于充值或续期延长号码有效期的规则；日期始终跟随号码管理里的“有效期至”。"
+                        : "用于 90 天活跃、定期短信等独立要求；单独维护自己的下一次操作日期。"}
+                    </div>
+                  </label>
+                ))}
               </div>
-            </label>
-            <label className="space-y-1.5 text-sm">
-              <span className="font-medium text-slate-700">{dueDateSource === "sim_validity" ? "号码有效期（自动同步）" : "当前下次操作日期"}</span>
-              <Input
-                value={dueDateSource === "sim_validity" ? simValidUntil || "" : nextDueDate}
-                onChange={(event) => setNextDueDate(event.target.value)}
-                type="date"
-                disabled={dueDateSource === "sim_validity"}
-              />
-              <div className="text-xs text-slate-400">
-                {dueDateSource === "sim_validity"
+            </div>
+
+            <FormGrid>
+              <FormField label="保号周期" required>
+                <div className="grid grid-cols-[1fr_120px] gap-2">
+                  <Input value={intervalValue} onChange={(event) => setIntervalValue(event.target.value)} type="number" min="1" step="1" inputMode="numeric" placeholder="例如 180" required />
+                  <Select value={intervalUnit} onChange={(event) => setIntervalUnit(event.target.value)}>
+                    {KEEP_ALIVE_INTERVAL_UNITS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                  </Select>
+                </div>
+              </FormField>
+              <FormField
+                label={dueDateSource === "sim_validity" ? "号码有效期（自动同步）" : "当前下次操作日期"}
+                hint={dueDateSource === "sim_validity"
                   ? simValidUntil
                     ? "来自号码管理；修改号码“有效期至”后这里会立即同步。"
                     : "当前号码尚未设置“有效期至”，请先在号码管理中填写。"
                   : "可手动初始化；留空时会尝试根据最近一次真正满足规则条件的活动计算。"}
-              </div>
-            </label>
-          </div>
+              >
+                <Input
+                  value={dueDateSource === "sim_validity" ? simValidUntil || "" : nextDueDate}
+                  onChange={(event) => setNextDueDate(event.target.value)}
+                  type="date"
+                  disabled={dueDateSource === "sim_validity"}
+                />
+              </FormField>
+            </FormGrid>
+          </FormSection>
 
-          <div className="space-y-2">
-            <div>
-              <div className="text-sm font-medium text-slate-700">哪些活动可以刷新这条规则</div>
-              <div className="mt-1 text-xs text-slate-400">当前：{actionSummary}</div>
-            </div>
+          <FormSection title="满足条件" description={`当前可刷新规则的活动：${actionSummary}`}>
             <div className="grid gap-2 sm:grid-cols-2">
               {KEEP_ALIVE_ACTIVITY_TYPES.filter((item) => item.value !== "other").map((item) => (
-                <label key={item.value} className="flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-600 transition hover:bg-slate-50">
-                  <input type="checkbox" checked={qualifyingActions.includes(item.value)} onChange={() => toggleAction(item.value)} className="h-4 w-4 rounded border-slate-300" />
+                <label key={item.value} className="flex cursor-pointer items-center gap-2 rounded-xl border border-line bg-surface px-3 py-2.5 text-sm text-ink-secondary transition hover:border-line-strong hover:bg-surface-hover">
+                  <input type="checkbox" checked={qualifyingActions.includes(item.value)} onChange={() => toggleAction(item.value)} className="h-4 w-4 rounded border-line-strong accent-brand" />
                   {item.label}
                 </label>
               ))}
             </div>
-          </div>
 
-          {rechargeEnabled ? (
-            <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
-              <div className="text-sm font-medium text-slate-700">充值要求</div>
-              <p className="mt-1 text-xs leading-5 text-slate-400">可设置一次充值至少达到多少才算满足保号规则。留空表示任意金额充值都有效。</p>
-              <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_160px]">
-                <label className="space-y-1.5 text-sm">
-                  <span className="text-xs font-medium text-slate-600">最低充值金额</span>
-                  <Input value={minimumRechargeAmount} onChange={(event) => setMinimumRechargeAmount(event.target.value)} type="number" min="0.000001" step="any" inputMode="decimal" placeholder="例如 20" />
-                </label>
-                <label className="space-y-1.5 text-sm">
-                  <span className="text-xs font-medium text-slate-600">充值币种</span>
-                  <select value={rechargeCurrencyCode} onChange={(event) => setRechargeCurrencyCode(event.target.value)} disabled={!minimumRechargeAmount} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400 disabled:bg-slate-100 disabled:text-slate-400">
-                    {CURRENCIES.map((currency) => <option key={currency.code} value={currency.code}>{currency.code} · {currency.label}</option>)}
-                  </select>
-                </label>
+            {rechargeEnabled ? (
+              <div className="rounded-xl border border-line bg-surface-subtle p-4">
+                <div className="text-sm font-semibold text-ink">充值要求</div>
+                <p className="mt-1 text-xs leading-5 text-ink-muted">可设置一次充值至少达到多少才算满足保号规则。留空表示任意金额充值都有效。</p>
+                <FormGrid className="mt-3">
+                  <FormField label="最低充值金额">
+                    <Input value={minimumRechargeAmount} onChange={(event) => setMinimumRechargeAmount(event.target.value)} type="number" min="0.000001" step="any" inputMode="decimal" placeholder="例如 20" />
+                  </FormField>
+                  <FormField label="充值币种">
+                    <Select value={rechargeCurrencyCode} onChange={(event) => setRechargeCurrencyCode(event.target.value)} disabled={!minimumRechargeAmount}>
+                      {CURRENCIES.map((currency) => <option key={currency.code} value={currency.code}>{currency.code} · {currency.label}</option>)}
+                    </Select>
+                  </FormField>
+                </FormGrid>
+                {minimumRechargeAmount ? <div className="mt-2 text-xs font-medium text-ink-muted">当前要求：单次充值至少 {rechargeCurrencyCode} {minimumRechargeAmount}</div> : null}
               </div>
-              {minimumRechargeAmount ? <div className="mt-2 text-xs font-medium text-slate-500">当前要求：单次充值至少 {rechargeCurrencyCode} {minimumRechargeAmount}</div> : null}
-            </div>
-          ) : null}
+            ) : null}
+          </FormSection>
 
-          <div className="grid gap-4 sm:grid-cols-3">
-            <label className="space-y-1.5 text-sm">
-              <span className="font-medium text-slate-700">提前提醒</span>
-              <div className="flex h-10 overflow-hidden rounded-xl border border-slate-200 bg-white">
-                <input value={warningDays} onChange={(event) => setWarningDays(event.target.value)} type="number" min="0" max="365" className="min-w-0 flex-1 px-3 text-sm outline-none" />
-                <span className="flex items-center border-l bg-slate-50 px-3 text-xs text-slate-500">天</span>
-              </div>
-            </label>
-            <label className="space-y-1.5 text-sm">
-              <span className="font-medium text-slate-700">宽限期</span>
-              <div className="flex h-10 overflow-hidden rounded-xl border border-slate-200 bg-white">
-                <input value={gracePeriodDays} onChange={(event) => setGracePeriodDays(event.target.value)} type="number" min="0" max="365" className="min-w-0 flex-1 px-3 text-sm outline-none" />
-                <span className="flex items-center border-l bg-slate-50 px-3 text-xs text-slate-500">天</span>
-              </div>
-            </label>
-            <label className="space-y-1.5 text-sm">
-              <span className="font-medium text-slate-700">规则状态</span>
-              <select value={enabled ? "enabled" : "disabled"} onChange={(event) => setEnabled(event.target.value === "enabled")} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-slate-400">
-                <option value="enabled">启用</option>
-                <option value="disabled">停用</option>
-              </select>
-            </label>
-          </div>
+          <FormSection title="提醒与状态" description="设置提前提醒、宽限期以及规则是否参与当前生命周期计算。">
+            <FormGrid columns={3}>
+              <FormField label="提前提醒">
+                <div className="flex h-10 overflow-hidden rounded-lg border border-line bg-surface shadow-sm focus-within:border-brand focus-within:ring-4 focus-within:ring-focus">
+                  <input value={warningDays} onChange={(event) => setWarningDays(event.target.value)} type="number" min="0" max="365" className="min-w-0 flex-1 bg-transparent px-3 text-sm text-ink outline-none" />
+                  <span className="flex items-center border-l border-line bg-surface-subtle px-3 text-xs text-ink-muted">天</span>
+                </div>
+              </FormField>
+              <FormField label="宽限期">
+                <div className="flex h-10 overflow-hidden rounded-lg border border-line bg-surface shadow-sm focus-within:border-brand focus-within:ring-4 focus-within:ring-focus">
+                  <input value={gracePeriodDays} onChange={(event) => setGracePeriodDays(event.target.value)} type="number" min="0" max="365" className="min-w-0 flex-1 bg-transparent px-3 text-sm text-ink outline-none" />
+                  <span className="flex items-center border-l border-line bg-surface-subtle px-3 text-xs text-ink-muted">天</span>
+                </div>
+              </FormField>
+              <FormField label="规则状态">
+                <Select value={enabled ? "enabled" : "disabled"} onChange={(event) => setEnabled(event.target.value === "enabled")}>
+                  <option value="enabled">启用</option>
+                  <option value="disabled">停用</option>
+                </Select>
+              </FormField>
+            </FormGrid>
 
-          <label className="block space-y-1.5 text-sm">
-            <span className="font-medium text-slate-700">规则备注</span>
-            <textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={2} placeholder="可记录运营商原文、特殊限制或核实来源等" className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100" />
-          </label>
+            <FormField label="规则备注">
+              <Textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={2} placeholder="可记录运营商原文、特殊限制或核实来源等" />
+            </FormField>
+          </FormSection>
+        </DialogBody>
 
-          {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
-
-          <div className="flex justify-end gap-2 border-t pt-5">
-            <button type="button" onClick={onClose} disabled={saving} className="h-10 rounded-xl border px-4 text-sm font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-50">取消</button>
-            <button type="submit" disabled={saving} className="inline-flex h-10 min-w-28 items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-60">
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}保存规则
-            </button>
-          </div>
-        </form>
-      </Card>
-    </ModalPortal>
+        <DialogFooter>
+          <Button type="button" variant="secondary" onClick={onClose} disabled={saving}>取消</Button>
+          <Button type="submit" disabled={saving} className="min-w-28 gap-2">
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            保存规则
+          </Button>
+        </DialogFooter>
+      </form>
+    </Dialog>
   );
 }
