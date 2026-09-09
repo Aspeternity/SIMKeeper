@@ -19,6 +19,17 @@ export type CarrierConnectorHealthStatus =
   | "paused"
   | "pending";
 
+export type CarrierConnectorProviderMaturity = "experimental" | "beta" | "stable";
+
+export type CarrierConnectorCapabilities = {
+  automaticSync: boolean;
+  balance: boolean;
+  balanceValidity: boolean;
+  simValidity: boolean;
+  accountStatus: boolean;
+  multiSim: boolean;
+};
+
 export type ConnectorAccountStatus =
   | "active"
   | "suspended"
@@ -54,8 +65,9 @@ export type CarrierConnectorProviderPublic = {
   id: string;
   label: string;
   description: string;
-  maturity?: "stable" | "experimental";
+  maturity?: CarrierConnectorProviderMaturity;
   availabilityNote?: string;
+  capabilities?: CarrierConnectorCapabilities;
   configFields: ConnectorConfigField[];
   credentialFields: ConnectorCredentialField[];
   minLinkedSims?: number;
@@ -130,9 +142,32 @@ export const CONNECTOR_HEALTH_STATUS_LABELS: Record<CarrierConnectorHealthStatus
   pending: "等待首次同步",
 };
 
+export const CONNECTOR_PROVIDER_MATURITY_LABELS: Record<CarrierConnectorProviderMaturity, string> = {
+  experimental: "实验性",
+  beta: "Beta",
+  stable: "稳定",
+};
+
+export const CONNECTOR_CAPABILITY_LABELS: Array<{
+  key: keyof CarrierConnectorCapabilities;
+  label: string;
+}> = [
+  { key: "automaticSync", label: "自动同步" },
+  { key: "balance", label: "余额" },
+  { key: "balanceValidity", label: "余额有效期" },
+  { key: "simValidity", label: "号码有效期" },
+  { key: "accountStatus", label: "账户状态" },
+  { key: "multiSim", label: "多号码连接" },
+];
+
 export function getConnectorHealthStatusLabel(value: CarrierConnectorHealthStatus | string | null | undefined) {
   if (!value) return "未知";
   return CONNECTOR_HEALTH_STATUS_LABELS[value as CarrierConnectorHealthStatus] ?? "未知";
+}
+
+export function getConnectorProviderMaturityLabel(value: CarrierConnectorProviderMaturity | string | null | undefined) {
+  if (!value) return "未标记";
+  return CONNECTOR_PROVIDER_MATURITY_LABELS[value as CarrierConnectorProviderMaturity] ?? "未标记";
 }
 
 export function getConnectorAccountStatusLabel(value: string | null | undefined) {
