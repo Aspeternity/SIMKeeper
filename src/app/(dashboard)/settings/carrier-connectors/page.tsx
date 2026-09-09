@@ -10,6 +10,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { ConnectorRetryButton } from "@/components/carrier-connectors/connector-retry-button";
+import { SettingsPageHeader } from "@/components/settings/settings-page-header";
 import { Card } from "@/components/ui/card";
 import { listCarrierConnectorAttempts } from "@/lib/carrier-connectors/diagnostics";
 import { listCarrierConnectorProviders } from "@/lib/carrier-connectors/registry";
@@ -53,7 +54,7 @@ function healthClass(status: string) {
   if (status === "retrying" || status === "pending") return "bg-amber-50 text-amber-700 ring-amber-100";
   if (status === "authentication" || status === "error") return "bg-rose-50 text-rose-700 ring-rose-100";
   if (status === "stale") return "bg-orange-50 text-orange-700 ring-orange-100";
-  return "bg-slate-100 text-slate-600 ring-slate-200";
+  return "bg-surface-subtle text-ink-secondary ring-line";
 }
 
 function maturityClass(maturity: string | undefined) {
@@ -84,128 +85,201 @@ export default function CarrierConnectorsDiagnosticsPage() {
   const failed = connectors.filter((connector) => ["authentication", "error"].includes(connector.healthStatus)).length;
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6" data-connector-diagnostics-version="alpha.45">
-      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-        <div>
-          <div className="flex items-center gap-2 text-sm font-medium text-slate-500">
-            <Activity className="h-4 w-4" />同步健康
+    <div
+      className="space-y-7"
+      data-connector-diagnostics-version="alpha.45"
+      data-connector-diagnostics-polish="alpha.51.5"
+    >
+      <SettingsPageHeader
+        icon={Activity}
+        eyebrow="同步健康"
+        title="运营商同步诊断"
+        description="集中查看 Provider 能力、连接健康、自动重试与同步历史。只有真实可用的自动同步字段才参与对应提醒，手工维护的数据不会被误判为自动监控。"
+        actions={(
+          <Link
+            href="/sims"
+            className="inline-flex h-10 items-center justify-center rounded-xl border border-line bg-surface px-4 text-sm font-medium text-ink transition hover:bg-surface-subtle"
+          >
+            返回号码管理
+          </Link>
+        )}
+      />
+
+      <section className="grid gap-4 sm:grid-cols-3" aria-label="同步健康概览">
+        <Card className="relative overflow-hidden p-5">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="text-sm font-medium text-ink-secondary">正常连接</div>
+              <div className="mt-2 text-3xl font-semibold tracking-tight text-ink">{healthy}</div>
+            </div>
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
+              <CheckCircle2 className="h-4.5 w-4.5" />
+            </div>
           </div>
-          <h2 className="mt-2 text-2xl font-semibold tracking-tight">运营商同步诊断</h2>
-          <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-500">
-            Provider 能力、成熟度、同步健康与自动重试集中在这里。手工余额不会因为存在实验性 Provider 而被误判为可自动监控。
-          </p>
-        </div>
-        <Link href="/sims" className="inline-flex h-10 items-center justify-center rounded-xl border bg-white px-4 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
-          返回号码管理
-        </Link>
-      </div>
+          <div className="mt-4 border-t border-line pt-3 text-xs leading-5 text-ink-muted">
+            最近同步成功，且数据仍在新鲜度窗口内。
+          </div>
+        </Card>
 
-      <section className="grid gap-4 sm:grid-cols-3">
-        <Card className="p-5">
-          <div className="flex items-center justify-between"><span className="text-sm text-slate-500">正常连接</span><CheckCircle2 className="h-4 w-4 text-emerald-600" /></div>
-          <div className="mt-3 text-3xl font-semibold tracking-tight">{healthy}</div>
-          <div className="mt-1 text-xs text-slate-400">最近同步成功且数据仍在新鲜度窗口</div>
+        <Card className="relative overflow-hidden p-5">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="text-sm font-medium text-ink-secondary">需要关注</div>
+              <div className="mt-2 text-3xl font-semibold tracking-tight text-ink">{attention}</div>
+            </div>
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
+              <Clock3 className="h-4.5 w-4.5" />
+            </div>
+          </div>
+          <div className="mt-4 border-t border-line pt-3 text-xs leading-5 text-ink-muted">
+            等待首次同步、正在自动重试，或最近数据已经过期。
+          </div>
         </Card>
-        <Card className="p-5">
-          <div className="flex items-center justify-between"><span className="text-sm text-slate-500">需要关注</span><Clock3 className="h-4 w-4 text-amber-600" /></div>
-          <div className="mt-3 text-3xl font-semibold tracking-tight">{attention}</div>
-          <div className="mt-1 text-xs text-slate-400">等待首次同步、自动重试或数据已经过期</div>
-        </Card>
-        <Card className="p-5">
-          <div className="flex items-center justify-between"><span className="text-sm text-slate-500">需要处理</span><AlertTriangle className="h-4 w-4 text-rose-600" /></div>
-          <div className="mt-3 text-3xl font-semibold tracking-tight">{failed}</div>
-          <div className="mt-1 text-xs text-slate-400">认证失效或不可自动恢复的同步错误</div>
+
+        <Card className="relative overflow-hidden p-5">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="text-sm font-medium text-ink-secondary">需要处理</div>
+              <div className="mt-2 text-3xl font-semibold tracking-tight text-ink">{failed}</div>
+            </div>
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-50 text-rose-600">
+              <AlertTriangle className="h-4.5 w-4.5" />
+            </div>
+          </div>
+          <div className="mt-4 border-t border-line pt-3 text-xs leading-5 text-ink-muted">
+            认证失效，或出现无法继续自动恢复的同步错误。
+          </div>
         </Card>
       </section>
 
-      <section className="space-y-3">
-        <div>
-          <h3 className="text-base font-semibold text-slate-900">Provider 支持能力</h3>
-          <p className="mt-1 text-xs leading-5 text-slate-400">能力声明决定哪些自动化功能可以启用；不支持的字段继续由用户手动维护。</p>
+      <section className="space-y-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-semibold text-ink">
+              <RadioTower className="h-4 w-4 text-brand" />
+              Provider 支持能力
+            </div>
+            <p className="mt-1 text-xs leading-5 text-ink-muted">
+              能力声明决定哪些字段可以由运营商自动维护；未支持的字段继续保留手动输入。
+            </p>
+          </div>
+          <div className="text-xs text-ink-muted">当前提供 {providers.length} 个真实 Provider</div>
         </div>
-        <div className="grid gap-4 lg:grid-cols-3">
-          {providers.map((provider) => (
-            <Card key={provider.id} className="p-5">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <RadioTower className="h-4 w-4 text-slate-400" />
-                    <span className="font-semibold text-slate-900">{provider.label}</span>
+
+        <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+          {providers.map((provider) => {
+            const supportedCapabilityCount = CONNECTOR_CAPABILITY_LABELS.filter((capability) =>
+              Boolean(provider.capabilities?.[capability.key]),
+            ).length;
+
+            return (
+              <Card key={provider.id} className="flex h-full flex-col p-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-soft text-brand">
+                      <RadioTower className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="font-semibold text-ink">{provider.label}</div>
+                      <div className="mt-1 text-[11px] font-medium text-ink-muted">
+                        支持 {supportedCapabilityCount}/{CONNECTOR_CAPABILITY_LABELS.length} 项能力
+                      </div>
+                    </div>
                   </div>
-                  <p className="mt-2 text-xs leading-5 text-slate-500">{provider.description}</p>
+                  <span className={`shrink-0 rounded-lg px-2.5 py-1 text-[10px] font-semibold ring-1 ring-inset ${maturityClass(provider.maturity)}`}>
+                    {getConnectorProviderMaturityLabel(provider.maturity)}
+                  </span>
                 </div>
-                <span className={`shrink-0 rounded-md px-2 py-1 text-[10px] font-medium ring-1 ${maturityClass(provider.maturity)}`}>
-                  {getConnectorProviderMaturityLabel(provider.maturity)}
-                </span>
-              </div>
 
-              <div className="mt-4 flex flex-wrap gap-2">
-                {CONNECTOR_CAPABILITY_LABELS.map((capability) => {
-                  const supported = Boolean(provider.capabilities?.[capability.key]);
-                  return (
-                    <span
-                      key={capability.key}
-                      className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium ring-1 ${supported ? "bg-emerald-50 text-emerald-700 ring-emerald-100" : "bg-slate-50 text-slate-400 ring-slate-100"}`}
-                    >
-                      {supported ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
-                      {capability.label}
-                    </span>
-                  );
-                })}
-              </div>
+                <p className="mt-4 text-xs leading-5 text-ink-secondary">{provider.description}</p>
 
-              {provider.availabilityNote ? (
-                <div className="mt-4 rounded-xl bg-amber-50 px-3 py-2 text-[11px] leading-5 text-amber-700">
-                  {provider.availabilityNote}
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {CONNECTOR_CAPABILITY_LABELS.map((capability) => {
+                    const supported = Boolean(provider.capabilities?.[capability.key]);
+                    return (
+                      <span
+                        key={capability.key}
+                        className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[10px] font-medium ring-1 ring-inset ${supported ? "bg-emerald-50 text-emerald-700 ring-emerald-100" : "bg-surface-subtle text-ink-muted ring-line"}`}
+                      >
+                        {supported ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
+                        {capability.label}
+                      </span>
+                    );
+                  })}
                 </div>
-              ) : null}
-            </Card>
-          ))}
+
+                {provider.availabilityNote ? (
+                  <div className="mt-auto pt-4">
+                    <div className="rounded-xl border border-amber-100 bg-amber-50/70 px-3 py-2.5 text-[11px] leading-5 text-amber-800">
+                      {provider.availabilityNote}
+                    </div>
+                  </div>
+                ) : null}
+              </Card>
+            );
+          })}
         </div>
       </section>
 
-      <section className="space-y-3">
-        <div>
-          <h3 className="text-base font-semibold text-slate-900">连接诊断</h3>
-          <p className="mt-1 text-xs leading-5 text-slate-400">每个连接显示真实调度和错误状态；“立即重试”会使用当前已加密保存的凭据发起一次同步。</p>
+      <section className="space-y-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-semibold text-ink">
+              <ShieldCheck className="h-4 w-4 text-brand" />
+              连接诊断
+            </div>
+            <p className="mt-1 text-xs leading-5 text-ink-muted">
+              每个连接都显示真实调度、错误状态与最近同步尝试；“立即重试”会使用当前加密保存的凭据发起同步。
+            </p>
+          </div>
+          <div className="text-xs text-ink-muted">共 {connectors.length} 个自动同步连接</div>
         </div>
 
         {!connectors.length ? (
-          <Card className="p-8 text-center">
-            <DatabaseZap className="mx-auto h-8 w-8 text-slate-300" />
-            <div className="mt-3 text-sm font-medium text-slate-700">当前没有自动同步连接</div>
-            <p className="mt-1 text-xs text-slate-400">在号码编辑中的“余额来源”选择自动同步后，这里会出现对应诊断信息。</p>
+          <Card className="px-6 py-12 text-center">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-surface-subtle text-ink-muted">
+              <DatabaseZap className="h-5 w-5" />
+            </div>
+            <div className="mt-4 text-sm font-semibold text-ink">当前没有自动同步连接</div>
+            <p className="mx-auto mt-1 max-w-lg text-xs leading-5 text-ink-muted">
+              在号码编辑中的“余额来源”选择自动同步后，这里会出现对应连接、同步健康和诊断历史。
+            </p>
           </Card>
         ) : (
           <div className="space-y-4">
             {connectors.map((connector) => {
               const attempts = listCarrierConnectorAttempts(connector.id, 8);
               const provider = providers.find((item) => item.id === connector.provider);
+
               return (
-                <Card key={connector.id} className="overflow-hidden">
-                  <div className="flex flex-col gap-4 border-b px-5 py-4 lg:flex-row lg:items-start lg:justify-between">
+                <Card key={connector.id} className="overflow-hidden" data-connector-health={connector.healthStatus}>
+                  <div className="flex flex-col gap-4 bg-surface-subtle/45 px-5 py-5 lg:flex-row lg:items-start lg:justify-between">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-semibold text-slate-900">{connector.name}</span>
-                        <span className="text-xs text-slate-400">{connector.providerLabel}</span>
-                        <span className={`rounded-md px-2 py-0.5 text-[10px] font-medium ring-1 ${healthClass(connector.healthStatus)}`}>
+                        <span className="text-base font-semibold text-ink">{connector.name}</span>
+                        <span className="text-xs text-ink-muted">{connector.providerLabel}</span>
+                        <span className={`rounded-lg px-2.5 py-1 text-[10px] font-semibold ring-1 ring-inset ${healthClass(connector.healthStatus)}`}>
                           {getConnectorHealthStatusLabel(connector.healthStatus)}
                         </span>
                         {provider?.maturity ? (
-                          <span className={`rounded-md px-2 py-0.5 text-[10px] font-medium ring-1 ${maturityClass(provider.maturity)}`}>
+                          <span className={`rounded-lg px-2.5 py-1 text-[10px] font-semibold ring-1 ring-inset ${maturityClass(provider.maturity)}`}>
                             {getConnectorProviderMaturityLabel(provider.maturity)}
                           </span>
                         ) : null}
                       </div>
-                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+
+                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-secondary">
                         <span>{getConnectorSyncIntervalLabel(connector.syncIntervalMinutes)}</span>
                         <span>关联 {connector.linkedSims.length} 张号码</span>
                         <span>连续失败 {connector.failureCount} 次</span>
                       </div>
+
                       {connector.linkedSims.length ? (
-                        <div className="mt-2 flex flex-wrap gap-1.5">
+                        <div className="mt-3 flex flex-wrap gap-1.5">
                           {connector.linkedSims.map((sim) => (
-                            <span key={sim.id} className="rounded-md bg-slate-100 px-2 py-1 text-[10px] text-slate-600">{sim.label}</span>
+                            <span key={sim.id} className="rounded-lg border border-line bg-surface px-2.5 py-1 text-[10px] font-medium text-ink-secondary">
+                              {sim.label}
+                            </span>
                           ))}
                         </div>
                       ) : null}
@@ -213,44 +287,76 @@ export default function CarrierConnectorsDiagnosticsPage() {
                     <ConnectorRetryButton connectorId={connector.id} />
                   </div>
 
-                  <div className="grid gap-px bg-slate-100 sm:grid-cols-2 xl:grid-cols-4">
-                    <div className="bg-white p-4"><div className="text-[10px] text-slate-400">最近成功</div><div className="mt-1 text-xs font-medium text-slate-700">{formatDateTime(connector.lastSuccessAt)}</div></div>
-                    <div className="bg-white p-4"><div className="text-[10px] text-slate-400">最近尝试</div><div className="mt-1 text-xs font-medium text-slate-700">{formatDateTime(connector.lastAttemptAt)}</div></div>
-                    <div className="bg-white p-4"><div className="text-[10px] text-slate-400">下次重试</div><div className="mt-1 text-xs font-medium text-slate-700">{formatDateTime(connector.nextRetryAt)}</div></div>
-                    <div className="bg-white p-4"><div className="text-[10px] text-slate-400">下次计划同步</div><div className="mt-1 text-xs font-medium text-slate-700">{formatDateTime(connector.scheduledSyncAt)}</div></div>
+                  <div className="grid border-y border-line bg-surface sm:grid-cols-2 xl:grid-cols-4">
+                    <div className="border-b border-line p-4 sm:border-r xl:border-b-0">
+                      <div className="text-[10px] font-medium uppercase tracking-[0.12em] text-ink-muted">最近成功</div>
+                      <div className="mt-1.5 text-xs font-medium text-ink">{formatDateTime(connector.lastSuccessAt)}</div>
+                    </div>
+                    <div className="border-b border-line p-4 xl:border-b-0 xl:border-r">
+                      <div className="text-[10px] font-medium uppercase tracking-[0.12em] text-ink-muted">最近尝试</div>
+                      <div className="mt-1.5 text-xs font-medium text-ink">{formatDateTime(connector.lastAttemptAt)}</div>
+                    </div>
+                    <div className="border-b border-line p-4 sm:border-b-0 sm:border-r">
+                      <div className="text-[10px] font-medium uppercase tracking-[0.12em] text-ink-muted">下次重试</div>
+                      <div className="mt-1.5 text-xs font-medium text-ink">{formatDateTime(connector.nextRetryAt)}</div>
+                    </div>
+                    <div className="p-4">
+                      <div className="text-[10px] font-medium uppercase tracking-[0.12em] text-ink-muted">下次计划同步</div>
+                      <div className="mt-1.5 text-xs font-medium text-ink">{formatDateTime(connector.scheduledSyncAt)}</div>
+                    </div>
                   </div>
 
                   {(connector.lastError || connector.healthStatus === "stale" || connector.healthStatus === "pending") ? (
-                    <div className="border-t bg-rose-50/40 px-5 py-4">
+                    <div className="border-b border-line bg-rose-50/45 px-5 py-4">
                       <div className="flex items-start gap-3">
-                        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-500" />
+                        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-rose-100 text-rose-600">
+                          <AlertTriangle className="h-3.5 w-3.5" />
+                        </div>
                         <div className="min-w-0 text-xs leading-5">
-                          <div className="font-medium text-slate-700">
+                          <div className="font-semibold text-ink">
                             {connector.lastErrorType ? ERROR_TYPE_LABELS[connector.lastErrorType] : getConnectorHealthStatusLabel(connector.healthStatus)}
                             {connector.lastErrorAt ? ` · ${formatDateTime(connector.lastErrorAt)}` : ""}
                           </div>
                           {connector.lastError ? <div className="mt-1 break-words text-rose-700">{connector.lastError}</div> : null}
-                          <div className="mt-1 text-slate-500">建议：{errorSuggestion(connector.lastErrorType, connector.healthStatus)}</div>
+                          <div className="mt-1 text-ink-secondary">建议：{errorSuggestion(connector.lastErrorType, connector.healthStatus)}</div>
                         </div>
                       </div>
                     </div>
                   ) : null}
 
-                  <div className="border-t px-5 py-4">
-                    <div className="flex items-center gap-2 text-xs font-medium text-slate-700"><ShieldCheck className="h-3.5 w-3.5 text-slate-400" />最近同步尝试</div>
+                  <div className="px-5 py-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2 text-xs font-semibold text-ink">
+                        <ShieldCheck className="h-3.5 w-3.5 text-ink-muted" />
+                        最近同步尝试
+                      </div>
+                      {attempts.length ? <div className="text-[10px] text-ink-muted">最近 {attempts.length} 条</div> : null}
+                    </div>
+
                     {!attempts.length ? (
-                      <div className="mt-3 text-xs text-slate-400">alpha.45 启用诊断历史后还没有新的同步尝试。</div>
+                      <div className="mt-3 rounded-xl border border-dashed border-line bg-surface-subtle/50 px-4 py-5 text-center text-xs text-ink-muted">
+                        alpha.45 启用诊断历史后还没有新的同步尝试。
+                      </div>
                     ) : (
-                      <div className="mt-3 divide-y rounded-xl border">
-                        {attempts.map((attempt) => (
-                          <div key={attempt.id} className="flex flex-col gap-2 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
-                            <div className="flex min-w-0 items-center gap-2">
-                              {attempt.status === "success" ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" /> : <XCircle className="h-3.5 w-3.5 shrink-0 text-rose-600" />}
-                              <span className="text-xs font-medium text-slate-700">{attempt.status === "success" ? "同步成功" : "同步失败"}</span>
-                              {attempt.errorType ? <span className="text-[10px] text-slate-400">{ERROR_TYPE_LABELS[attempt.errorType]}</span> : null}
-                              {attempt.errorMessage ? <span className="truncate text-[10px] text-rose-600">{attempt.errorMessage}</span> : null}
+                      <div className="mt-3 overflow-hidden rounded-xl border border-line bg-surface">
+                        {attempts.map((attempt, index) => (
+                          <div
+                            key={attempt.id}
+                            className={`flex flex-col gap-2 px-3.5 py-3 sm:flex-row sm:items-center sm:justify-between ${index ? "border-t border-line" : ""}`}
+                          >
+                            <div className="flex min-w-0 items-center gap-2.5">
+                              <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${attempt.status === "success" ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"}`}>
+                                {attempt.status === "success" ? <CheckCircle2 className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+                                  <span className="text-xs font-medium text-ink">{attempt.status === "success" ? "同步成功" : "同步失败"}</span>
+                                  {attempt.errorType ? <span className="text-[10px] text-ink-muted">{ERROR_TYPE_LABELS[attempt.errorType]}</span> : null}
+                                </div>
+                                {attempt.errorMessage ? <div className="mt-0.5 truncate text-[10px] text-rose-600">{attempt.errorMessage}</div> : null}
+                              </div>
                             </div>
-                            <div className="shrink-0 text-[10px] text-slate-400">
+                            <div className="shrink-0 pl-9 text-[10px] text-ink-muted sm:pl-0 sm:text-right">
                               {formatDateTime(attempt.attemptedAt)}{attempt.retryAt ? ` · 重试 ${formatDateTime(attempt.retryAt)}` : ""}
                             </div>
                           </div>
