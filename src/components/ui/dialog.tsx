@@ -119,7 +119,7 @@ export function DialogFooter({
 }) {
   return (
     <footer className={cn(
-      "sim-dialog-footer flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-line bg-surface-subtle/80 px-5 py-3.5 sm:px-6",
+      "sim-dialog-footer flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-line bg-surface-subtle px-5 py-3.5 sm:px-6",
       className,
     )}>
       {children}
