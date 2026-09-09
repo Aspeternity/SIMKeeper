@@ -49,7 +49,7 @@ export default async function SetupPage({
           ) : (
             <>
               <p className="mb-5 text-sm leading-6 text-slate-500">
-                新安装可以创建管理员；如果这是灾难恢复后的空实例，也可以直接从 WebDAV 加密备份恢复原管理员、2FA、SIM/eSIM、运营商和设置。
+                新安装可以创建管理员账户；如果这是灾难恢复后的空实例，也可以直接从 WebDAV 加密备份恢复原管理员、2FA、SIM/eSIM、运营商和设置。
               </p>
 
               {error ? <div className="mb-5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">{error}</div> : null}
