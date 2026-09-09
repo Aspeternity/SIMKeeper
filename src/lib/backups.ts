@@ -26,6 +26,31 @@ export const DEFAULT_BACKUP_RETENTION = 20;
 export const MIN_BACKUP_RETENTION = 1;
 export const MAX_BACKUP_RETENTION = 100;
 
+const BACKUP_SCHEMA_V1_TABLES = [
+  "users",
+  "settings",
+  "carriers",
+  "devices",
+  "sim_cards",
+  "carrier_connectors",
+  "carrier_connector_sims",
+  "sim_sync_snapshots",
+  "sim_deleted_records",
+  "sim_esim_profiles",
+  "sim_tariffs",
+  "sim_tariff_rates",
+  "sim_tariff_rate_rules",
+  "sim_tariff_rule_conditions",
+  "sim_tariff_custom_items",
+  "sim_keep_alive_rules",
+  "sim_keep_alive_events",
+  "condition_episodes",
+  "reminder_actions",
+  "sim_bound_services",
+  "notification_channels",
+  "notification_deliveries",
+] as const;
+
 export const BACKUP_TABLES = [
   "users",
   "settings",
@@ -345,7 +370,19 @@ export function parseBackupPayload(value: unknown): BackupPayload {
     ) {
       throw new Error("备份缺少完整性校验信息");
     }
-    const expected = computeBackupDigest(normalized);
+
+    // Schema v1 backups were signed before lifecycle and connector-attempt history
+    // became portable tables. Reconstruct exactly that original table object so
+    // alpha.40-alpha.45 backups keep validating after the schema grows.
+    const integrityPayload = schemaVersion < 2
+      ? {
+          ...normalized,
+          tables: Object.fromEntries(
+            BACKUP_SCHEMA_V1_TABLES.map((table) => [table, tables[table]]),
+          ),
+        } as Omit<BackupPayload, "integrity">
+      : normalized;
+    const expected = computeBackupDigest(integrityPayload);
     if (!digestMatches(rawIntegrity.digest, expected)) {
       throw new Error("备份完整性校验失败，文件可能已损坏或被修改");
     }
