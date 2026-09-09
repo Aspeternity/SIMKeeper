@@ -5,15 +5,83 @@ import { ditoCarrierConnectorProvider } from "@/lib/carrier-connectors/providers
 import { globeCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/globe";
 import { mockCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/mock";
 import type {
+  CarrierConnectorCapabilities,
   CarrierConnectorProvider,
+  CarrierConnectorProviderMaturity,
   CarrierConnectorProviderPublic,
 } from "@/lib/carrier-connectors/types";
 
+type ProviderMetadata = {
+  maturity: CarrierConnectorProviderMaturity;
+  availabilityNote?: string;
+  capabilities: CarrierConnectorCapabilities;
+};
+
+const PROVIDER_METADATA: Record<string, ProviderMetadata> = {
+  csl: {
+    maturity: "stable",
+    capabilities: {
+      automaticSync: true,
+      balance: true,
+      balanceValidity: false,
+      simValidity: true,
+      accountStatus: true,
+      multiSim: false,
+    },
+  },
+  dito: {
+    maturity: "stable",
+    capabilities: {
+      automaticSync: true,
+      balance: true,
+      balanceValidity: true,
+      simValidity: false,
+      accountStatus: true,
+      multiSim: false,
+    },
+  },
+  globe: {
+    maturity: "experimental",
+    availabilityNote: "GlobeOne 自动同步仍依赖管理员自行提供受授权的运行时认证；未配置时应继续使用手动余额，不会启用自动低余额判断。",
+    capabilities: {
+      automaticSync: true,
+      balance: true,
+      balanceValidity: true,
+      simValidity: false,
+      accountStatus: true,
+      multiSim: false,
+    },
+  },
+  mock: {
+    maturity: "stable",
+    availabilityNote: "仅用于离线测试同步、重试、快照与恢复流程。",
+    capabilities: {
+      automaticSync: true,
+      balance: true,
+      balanceValidity: true,
+      simValidity: false,
+      accountStatus: true,
+      multiSim: true,
+    },
+  },
+};
+
+function withMetadata(provider: CarrierConnectorProvider): CarrierConnectorProvider {
+  const metadata = PROVIDER_METADATA[provider.id];
+  if (!metadata) return provider;
+  return {
+    ...provider,
+    maturity: provider.maturity ?? metadata.maturity,
+    availabilityNote: provider.availabilityNote ?? metadata.availabilityNote,
+    capabilities: provider.capabilities ?? metadata.capabilities,
+  };
+}
+
 const PROVIDERS: Record<string, CarrierConnectorProvider> = {
-  csl: cslCarrierConnectorProvider,
-  dito: ditoCarrierConnectorProvider,
-  globe: globeCarrierConnectorProvider,
-  mock: mockCarrierConnectorProvider,
+  csl: withMetadata(cslCarrierConnectorProvider),
+  dito: withMetadata(ditoCarrierConnectorProvider),
+  globe: withMetadata(globeCarrierConnectorProvider),
+  mock: withMetadata(mockCarrierConnectorProvider),
 };
 
 export function getCarrierConnectorProvider(id: string) {
@@ -25,6 +93,9 @@ export function listCarrierConnectorProviders(): CarrierConnectorProviderPublic[
     id: provider.id,
     label: provider.label,
     description: provider.description,
+    maturity: provider.maturity,
+    availabilityNote: provider.availabilityNote,
+    capabilities: provider.capabilities,
     configFields: provider.configFields,
     credentialFields: provider.credentialFields,
     minLinkedSims: provider.minLinkedSims,
