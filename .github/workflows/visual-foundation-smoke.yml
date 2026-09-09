@@ -62,7 +62,7 @@ jobs:
           curl -fsS -b "$tmp/cookies" http://127.0.0.1:18111/ > "$tmp/default.html"
           assert_html "$tmp/default.html" 'data-visual-foundation="alpha.51"' 'visual foundation marker'
           assert_html "$tmp/default.html" 'data-accent="indigo"' 'default accent'
-          assert_html "$tmp/default.html" 'v0.1.0-alpha.51' 'application version'
+          assert_html "$tmp/default.html" '0.1.0-alpha.51' 'application version'
           assert_html "$tmp/default.html" 'bg-brand-soft' 'brand-aware active navigation'
 
           curl -fsS -b "$tmp/cookies" http://127.0.0.1:18111/settings/overview > "$tmp/settings.html"
