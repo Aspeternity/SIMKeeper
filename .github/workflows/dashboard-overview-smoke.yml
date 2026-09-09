@@ -54,7 +54,7 @@ jobs:
           assert_html "$tmp/dashboard-default.html" 'data-dashboard-horizon="30"' 'default horizon'
           assert_html "$tmp/dashboard-default.html" 'data-dashboard-distribution-limit="6"' 'default distribution limit'
           assert_html "$tmp/dashboard-default.html" '号码资产总览' 'dashboard heading'
-          assert_html "$tmp/dashboard-default.html" '未来 30 天' 'default planning card'
+          assert_html "$tmp/dashboard-default.html" 'data-dashboard-module="planning"' 'planning module'
           assert_html "$tmp/dashboard-default.html" 'data-dashboard-module="configuration"' 'configuration module'
           assert_html "$tmp/dashboard-default.html" 'Dashboard Carrier' 'carrier distribution'
           assert_html "$tmp/dashboard-default.html" '菲律宾' 'country distribution'
@@ -68,14 +68,14 @@ jobs:
           test "$(jq -r '.preferences.horizonDays' "$tmp/preferences-response.json")" = "60"
           test "$(jq -r '.preferences.distributionLimit' "$tmp/preferences-response.json")" = "3"
           test "$(jq -r '.preferences.focusedSimIds[0]' "$tmp/preferences-response.json")" = "$sim_id"
+          test "$(jq -r '.preferences.modules[0].id' "$tmp/preferences-response.json")" = "focus-sims"
+          test "$(jq -r '.preferences.modules[] | select(.id == "configuration") | .visible' "$tmp/preferences-response.json")" = "false"
 
           curl -fsS -b "$tmp/cookies" http://127.0.0.1:18097/ > "$tmp/dashboard-custom.html"
           assert_html "$tmp/dashboard-custom.html" 'data-dashboard-horizon="60"' 'custom horizon'
           assert_html "$tmp/dashboard-custom.html" 'data-dashboard-distribution-limit="3"' 'custom distribution limit'
           assert_html "$tmp/dashboard-custom.html" 'data-dashboard-module="focus-sims"' 'focus module'
           assert_html "$tmp/dashboard-custom.html" "data-dashboard-focus-sim=\"$sim_id\"" 'focused sim'
-          assert_html "$tmp/dashboard-custom.html" '未来 60 天' 'custom planning card'
-          assert_html "$tmp/dashboard-custom.html" 'Top 3' 'custom distribution label'
           if grep -Fq 'data-dashboard-module="configuration"' "$tmp/dashboard-custom.html"; then
             echo '::error::configuration module should be hidden after personalization'
             exit 1
@@ -83,7 +83,9 @@ jobs:
 
           curl -fsS -b "$tmp/cookies" -X DELETE http://127.0.0.1:18097/api/dashboard-preferences > "$tmp/reset.json"
           test "$(jq -r '.preferences.horizonDays' "$tmp/reset.json")" = "30"
+          test "$(jq -r '.preferences.distributionLimit' "$tmp/reset.json")" = "6"
           test "$(jq -r '.preferences.focusedSimIds | length' "$tmp/reset.json")" = "0"
           curl -fsS -b "$tmp/cookies" http://127.0.0.1:18097/ > "$tmp/dashboard-reset.html"
           assert_html "$tmp/dashboard-reset.html" 'data-dashboard-horizon="30"' 'reset horizon'
+          assert_html "$tmp/dashboard-reset.html" 'data-dashboard-distribution-limit="6"' 'reset distribution limit'
           assert_html "$tmp/dashboard-reset.html" 'data-dashboard-module="configuration"' 'reset configuration module'
