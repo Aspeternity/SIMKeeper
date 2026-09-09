@@ -1,9 +1,11 @@
 import Link from "next/link";
-import { ShieldCheck, Smartphone } from "lucide-react";
+import { ShieldCheck } from "lucide-react";
+import { SiteMark } from "@/components/branding/site-mark";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { hasAdmin } from "@/lib/auth";
+import { getSiteSettings } from "@/lib/site-settings";
 
 export const dynamic = "force-dynamic";
 
@@ -13,17 +15,18 @@ export default async function SetupPage({
   searchParams: Promise<{ error?: string }>;
 }) {
   const initialized = hasAdmin();
+  const siteSettings = getSiteSettings();
   const { error } = await searchParams;
 
   return (
     <main className="flex min-h-screen items-center justify-center px-4 py-10">
       <div className="w-full max-w-md">
         <div className="mb-6 flex flex-col items-center text-center">
-          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-950 text-white shadow-lg shadow-slate-300">
-            <Smartphone className="h-7 w-7" />
+          <div className="mb-4">
+            <SiteMark logoUrl={siteSettings.logoUrl} className="h-14 w-14 shadow-lg shadow-slate-300" iconClassName="h-7 w-7" />
           </div>
-          <h1 className="text-3xl font-semibold tracking-tight">SIMKeeper</h1>
-          <p className="mt-2 text-sm text-slate-500">Keep every number alive.</p>
+          <h1 className="text-3xl font-semibold tracking-tight">{siteSettings.siteName}</h1>
+          {siteSettings.siteDescription ? <p className="mt-2 text-sm text-slate-500">{siteSettings.siteDescription}</p> : null}
         </div>
 
         <Card className="p-6 sm:p-7">

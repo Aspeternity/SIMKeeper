@@ -17,6 +17,7 @@ import {
   X,
   XCircle,
 } from "lucide-react";
+import { SiteMark } from "@/components/branding/site-mark";
 import {
   APP_VERSION,
   getPageTitle,
@@ -49,7 +50,19 @@ function relativeClass(priority: AttentionPriority) {
   return "text-slate-500";
 }
 
-export function Topbar({ username, items: initialItems }: { username: string; items: AttentionItem[] }) {
+export function Topbar({
+  username,
+  items: initialItems,
+  siteName,
+  siteDescription,
+  logoUrl,
+}: {
+  username: string;
+  items: AttentionItem[];
+  siteName: string;
+  siteDescription: string;
+  logoUrl: string | null;
+}) {
   const pathname = usePathname();
   const router = useRouter();
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
@@ -194,7 +207,7 @@ export function Topbar({ username, items: initialItems }: { username: string; it
             <Menu className="h-5 w-5" />
           </button>
           <div className="min-w-0">
-            <p className="hidden text-xs font-medium uppercase tracking-[0.18em] text-slate-400 sm:block">SIM lifecycle manager</p>
+            <p className="hidden max-w-[28rem] truncate text-xs font-medium uppercase tracking-[0.18em] text-slate-400 sm:block">{siteDescription || "SIM lifecycle manager"}</p>
             <h1 className="truncate text-lg font-semibold sm:mt-1">{pageTitle}</h1>
           </div>
         </div>
@@ -355,10 +368,10 @@ export function Topbar({ username, items: initialItems }: { username: string; it
           <button type="button" className="absolute inset-0 bg-slate-950/35 backdrop-blur-[1px]" onClick={() => setMobileNavigationOpen(false)} aria-label="关闭导航" />
           <aside id="mobile-navigation" className="relative flex h-full w-[min(84vw,20rem)] flex-col bg-white shadow-2xl">
             <div className="flex h-20 items-center justify-between border-b px-5">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-950 text-white"><Smartphone className="h-5 w-5" /></div>
-                <div>
-                  <div className="font-semibold tracking-tight">SIMKeeper</div>
+              <div className="flex min-w-0 items-center gap-3">
+                <SiteMark logoUrl={logoUrl} />
+                <div className="min-w-0">
+                  <div className="truncate font-semibold tracking-tight">{siteName}</div>
                   <div className="text-xs text-slate-400">v{APP_VERSION}</div>
                 </div>
               </div>

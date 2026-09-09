@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 
 const items = [
-  { href: "/settings/overview", label: "设置首页", icon: Settings2 },
+  { href: "/settings/overview", label: "基础设置", icon: Settings2 },
   { href: "/settings/dashboard", label: "概览个性化", icon: LayoutDashboard },
   { href: "/settings/security", label: "账号安全", icon: ShieldCheck },
   { href: "/settings/carrier-connectors", label: "同步与诊断", icon: Activity },
