@@ -17,7 +17,7 @@ const items = [
   { href: "/settings/security", label: "账号安全", icon: ShieldCheck },
   { href: "/settings/carrier-connectors", label: "同步与诊断", icon: Activity },
   { href: "/settings/notifications", label: "通知渠道", icon: Send },
-  { href: "/settings", label: "备份与恢复", icon: DatabaseBackup },
+  { href: "/settings/backup", label: "备份与恢复", icon: DatabaseBackup },
 ];
 
 export function SettingsSectionNav() {
@@ -26,9 +26,7 @@ export function SettingsSectionNav() {
   return (
     <nav className="mb-6 flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-white p-2" aria-label="设置导航">
       {items.map((item) => {
-        const active = item.href === "/settings"
-          ? pathname === "/settings"
-          : pathname.startsWith(item.href);
+        const active = pathname.startsWith(item.href);
         const Icon = item.icon;
         return (
           <Link
