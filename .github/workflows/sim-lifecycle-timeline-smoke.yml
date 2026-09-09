@@ -164,9 +164,11 @@ jobs:
           if grep -q 'REDACTED' "$tmp/timeline.json"; then fail "identity document number leaked into timeline"; fi
 
           curl -fsS -b "$cookies" "$base/api/backups?export=1" > "$tmp/export.json" || fail "backup export failed"
-          [ "$(jq -r '.schemaVersion' "$tmp/export.json")" = "2" ] || fail "backup schema was not bumped to v2"
+          [ "$(jq -r '.formatVersion' "$tmp/export.json")" = "5" ] || fail "backup format is not v5"
+          [ "$(jq -r '.schemaVersion' "$tmp/export.json")" = "3" ] || fail "backup schema is not v3"
           [ "$(jq '.tables.sim_lifecycle_events | length' "$tmp/export.json")" -gt 0 ] || fail "lifecycle events missing from portable backup"
           [ "$(jq '.tables.carrier_connector_attempts | length' "$tmp/export.json")" -gt 0 ] || fail "connector attempt history missing from portable backup"
+          jq -e '.tables.security_events | type == "array"' "$tmp/export.json" >/dev/null || fail "security event table missing from portable backup"
 
           before_count="$(jq '.events | length' "$tmp/timeline.json")"
           jq -n --slurpfile backup "$tmp/export.json" '{action:"restoreImported",backup:$backup[0]}' > "$tmp/restore-payload.json"
