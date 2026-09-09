@@ -1,9 +1,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Braces, Loader2, RotateCcw, Save, X } from "lucide-react";
+import { Braces, Eye, Loader2, RotateCcw, Save } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogAlert, DialogBody, DialogFooter, DialogHeader } from "@/components/ui/dialog";
+import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
-import { ModalPortal } from "@/components/ui/modal-portal";
+import { Textarea } from "@/components/ui/textarea";
 import {
   DEFAULT_NOTIFICATION_BODY_TEMPLATE,
   DEFAULT_NOTIFICATION_ITEM_TEMPLATE,
@@ -91,68 +94,88 @@ export function NotificationTemplateModal({ templates, onClose, onSaved }: Notif
   }
 
   return (
-    <ModalPortal onBackdropClick={() => !busy && onClose()}>
-      <div className="w-full max-w-5xl overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-black/5">
-        <div className="flex items-start justify-between border-b px-6 py-5">
-          <div>
-            <div className="flex items-center gap-2 text-xs font-medium text-slate-400"><Braces className="h-3.5 w-3.5" />消息格式</div>
-            <h3 className="mt-1 text-xl font-semibold text-slate-950">编辑通知模板</h3>
-            <p className="mt-1 text-xs leading-5 text-slate-400">Telegram、Bark、Gotify 和 Webhook 共用这套格式。模板与每日通知计划独立保存。</p>
-          </div>
-          <button type="button" onClick={() => !busy && onClose()} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"><X className="h-4 w-4" /></button>
-        </div>
+    <Dialog size="xl" onClose={onClose} busy={busy} dataAttribute="notification-template-editor">
+      <DialogHeader
+        eyebrow="消息格式"
+        icon={<Braces className="h-3.5 w-3.5" />}
+        title="编辑通知模板"
+        description="Telegram、Bark、Gotify 和 Webhook 共用这套格式。模板与每日通知计划独立保存。"
+        onClose={onClose}
+        busy={busy}
+      />
 
-        <div className="max-h-[72vh] overflow-y-auto px-6 py-5">
-          {error ? <div className="mb-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
+      <DialogBody className="space-y-5">
+        {error ? <DialogAlert tone="danger">{error}</DialogAlert> : null}
 
-          <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-            <div className="space-y-4">
-              <label className="grid gap-2 text-sm text-slate-600">
-                通知标题模板
-                <Input value={draft.titleTemplate} onChange={(event) => setDraft({ ...draft, titleTemplate: event.target.value })} placeholder={DEFAULT_NOTIFICATION_TITLE_TEMPLATE} />
-              </label>
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.08fr)_minmax(300px,0.92fr)]">
+          <div className="space-y-4">
+            <FormField label="通知标题模板" required>
+              <Input
+                value={draft.titleTemplate}
+                onChange={(event) => setDraft({ ...draft, titleTemplate: event.target.value })}
+                placeholder={DEFAULT_NOTIFICATION_TITLE_TEMPLATE}
+              />
+            </FormField>
 
-              <label className="grid gap-2 text-sm text-slate-600">
-                摘要正文模板
-                <textarea value={draft.bodyTemplate} onChange={(event) => setDraft({ ...draft, bodyTemplate: event.target.value })} rows={5} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm leading-6 text-slate-700 outline-none transition focus:border-slate-400" />
-                <span className="text-xs text-slate-400">通常保留 <code>{"{{items}}"}</code>，系统会把所有符合条件的提醒填进这里。</span>
-              </label>
+            <FormField
+              label="摘要正文模板"
+              hint={<>通常保留 <code className="rounded bg-surface-subtle px-1 py-0.5 text-[11px]">{"{{items}}"}</code>，系统会把所有符合条件的提醒填进这里。</>}
+            >
+              <Textarea
+                value={draft.bodyTemplate}
+                onChange={(event) => setDraft({ ...draft, bodyTemplate: event.target.value })}
+                rows={5}
+              />
+            </FormField>
 
-              <label className="grid gap-2 text-sm text-slate-600">
-                单条提醒模板
-                <textarea value={draft.itemTemplate} onChange={(event) => setDraft({ ...draft, itemTemplate: event.target.value })} rows={6} className="rounded-xl border border-slate-200 bg-white px-3 py-2 font-mono text-xs leading-6 text-slate-700 outline-none transition focus:border-slate-400" />
-              </label>
+            <FormField label="单条提醒模板" hint="用于每一条 SIM 生命周期或 Condition 提醒。">
+              <Textarea
+                value={draft.itemTemplate}
+                onChange={(event) => setDraft({ ...draft, itemTemplate: event.target.value })}
+                rows={7}
+                className="font-mono text-xs"
+              />
+            </FormField>
 
-              <div className="rounded-xl border border-slate-200 p-4">
-                <div className="text-xs font-medium text-slate-500">可用变量</div>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {NOTIFICATION_TEMPLATE_VARIABLES.map((item) => (
-                    <span key={item.key} title={item.label} className="rounded-md bg-slate-50 px-2 py-1 font-mono text-[11px] text-slate-500 ring-1 ring-inset ring-slate-100">{`{{${item.key}}}`}</span>
-                  ))}
-                </div>
-                <p className="mt-2 text-xs leading-5 text-slate-400">标题 / 正文常用 heading、count、date、channelName；单条提醒可使用号码、运营商、状态、到期日、requirement 和 detail 等变量。</p>
+            <div className="rounded-2xl border border-line bg-surface-subtle p-4">
+              <div className="flex items-center gap-2 text-xs font-semibold text-ink-secondary"><Braces className="h-3.5 w-3.5 text-brand" />可用变量</div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {NOTIFICATION_TEMPLATE_VARIABLES.map((item) => (
+                  <span
+                    key={item.key}
+                    title={item.label}
+                    className="rounded-md border border-line bg-surface px-2 py-1 font-mono text-[11px] text-ink-secondary"
+                  >
+                    {`{{${item.key}}}`}
+                  </span>
+                ))}
               </div>
-            </div>
-
-            <div className="self-start rounded-2xl border border-slate-200 bg-slate-50 p-4 xl:sticky xl:top-0">
-              <div className="text-xs font-medium text-slate-500">实时预览</div>
-              <div className="mt-3 rounded-xl border border-slate-200 bg-white p-4">
-                <div className="text-sm font-semibold text-slate-900">{preview.title || "（标题为空）"}</div>
-                <pre className="mt-3 whitespace-pre-wrap break-words font-sans text-xs leading-6 text-slate-600">{preview.body || "（正文为空）"}</pre>
-              </div>
-              <p className="mt-3 text-[11px] leading-5 text-slate-400">预览使用示例号码生成。点击渠道“测试”时，会使用已经保存的模板发送真实测试消息。</p>
+              <p className="mt-3 text-xs leading-5 text-ink-muted">标题 / 正文常用 heading、count、date、channelName；单条提醒可使用号码、运营商、状态、到期日、requirement 和 detail 等变量。</p>
             </div>
           </div>
-        </div>
 
-        <div className="flex flex-col-reverse gap-3 border-t px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
-          <button type="button" onClick={restoreDefaults} disabled={busy} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border px-4 text-sm font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"><RotateCcw className="h-4 w-4" />恢复默认</button>
-          <div className="flex justify-end gap-2">
-            <button type="button" onClick={() => !busy && onClose()} className="h-10 rounded-xl border px-4 text-sm text-slate-500 transition hover:bg-slate-50">取消</button>
-            <button type="button" onClick={() => void saveTemplates()} disabled={busy} className="inline-flex h-10 items-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-50">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}保存通知模板</button>
-          </div>
+          <aside className="self-start rounded-2xl border border-line bg-surface-subtle p-4 xl:sticky xl:top-0" data-notification-template-preview="alpha.51.8">
+            <div className="flex items-center gap-2 text-xs font-semibold text-ink-secondary"><Eye className="h-3.5 w-3.5 text-brand" />实时预览</div>
+            <div className="mt-3 rounded-2xl border border-line bg-surface p-4 shadow-card">
+              <div className="text-sm font-semibold text-ink">{preview.title || "（标题为空）"}</div>
+              <pre className="mt-3 whitespace-pre-wrap break-words font-sans text-xs leading-6 text-ink-secondary">{preview.body || "（正文为空）"}</pre>
+            </div>
+            <p className="mt-3 text-[11px] leading-5 text-ink-muted">预览使用示例号码生成。点击渠道“测试”时，会使用已经保存的模板发送真实测试消息。</p>
+          </aside>
         </div>
-      </div>
-    </ModalPortal>
+      </DialogBody>
+
+      <DialogFooter className="justify-between">
+        <Button type="button" variant="ghost" onClick={restoreDefaults} disabled={busy}>
+          <RotateCcw className="mr-2 h-4 w-4" />恢复默认
+        </Button>
+        <div className="flex gap-2">
+          <Button type="button" variant="secondary" onClick={onClose} disabled={busy}>取消</Button>
+          <Button type="button" onClick={() => void saveTemplates()} disabled={busy}>
+            {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}保存通知模板
+          </Button>
+        </div>
+      </DialogFooter>
+    </Dialog>
   );
 }

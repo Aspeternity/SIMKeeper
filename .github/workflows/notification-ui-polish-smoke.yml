@@ -1,0 +1,89 @@
+name: Verify Notification UI Polish
+
+on:
+  workflow_run:
+    workflows:
+      - Build and Publish Docker Image
+    types:
+      - completed
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  notification-ui-polish:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout verified source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Pull verified image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="${{ github.event.workflow_run.head_sha }}"
+          image="ghcr.io/aspeternity/simkeeper:sha-${sha:0:7}"
+          docker pull "$image"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Verify notification workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          container="simkeeper-notification-ui-smoke"
+          base="http://127.0.0.1:18119"
+          cookies="$tmp/cookies"
+          expected_version="$(jq -r '.version' package.json)"
+
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            rm -rf "$tmp"
+          }
+          trap cleanup EXIT
+          fail() { echo "::error::$1"; docker logs "$container" 2>&1 || true; exit 1; }
+
+          grep -Fq 'data-notification-polish="alpha.51.8"' 'src/app/(dashboard)/notifications/page.tsx' || fail "notification polish marker missing"
+          grep -Fq 'dataAttribute="notification-channel-editor"' 'src/app/(dashboard)/notifications/page.tsx' || fail "notification channel dialog marker missing"
+          grep -Fq 'dataAttribute="notification-template-editor"' 'src/components/notifications/notification-template-modal.tsx' || fail "notification template dialog marker missing"
+          grep -Fq 'data-notification-template-preview="alpha.51.8"' 'src/components/notifications/notification-template-modal.tsx' || fail "notification template preview marker missing"
+          grep -Fq "APP_VERSION = \"$expected_version\"" src/components/layout/navigation.ts || fail "app version mismatch"
+
+          mkdir -p "$tmp/data"
+          docker run -d \
+            --name "$container" \
+            -p 18119:3000 \
+            -e SIMKEEPER_COOKIE_SECURE=false \
+            -e PUID="$(id -u)" \
+            -e PGID="$(id -g)" \
+            -v "$tmp/data:/app/data" \
+            "$IMAGE" >/dev/null || fail "container start failed"
+
+          for _ in $(seq 1 40); do
+            curl -fsS "$base/api/health" >/dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -fsS "$base/api/health" >/dev/null || fail "health check failed"
+
+          curl -fsS -c "$cookies" -o /dev/null -X POST \
+            --data-urlencode 'username=notificationuismoke' \
+            --data-urlencode 'password=notification-ui-smoke-123' \
+            --data-urlencode 'confirmPassword=notification-ui-smoke-123' \
+            "$base/api/auth/setup" || fail "setup failed"
+
+          curl -fsS -b "$cookies" "$base/api/notifications" > "$tmp/notifications.json" || fail "notification endpoint failed"
+          jq -e '.settings and (.channels | type == "array") and (.deliveries | type == "array")' "$tmp/notifications.json" >/dev/null || fail "notification endpoint shape mismatch"
+
+          curl -fsS -b "$cookies" "$base/settings/notifications" > "$tmp/page.html" || fail "notification settings page failed"
+          grep -Fq 'data-notification-polish="alpha.51.8"' "$tmp/page.html" || fail "notification polish marker missing at runtime"
+          grep -Fq '通知渠道' "$tmp/page.html" || fail "notification heading missing"
+          grep -Fq '自动通知总开关与每日摘要' "$tmp/page.html" || fail "notification schedule section missing"
+          grep -Fq '最近发送记录' "$tmp/page.html" || fail "notification delivery history section missing"
+
+          echo "Notification UI polish smoke test passed."
