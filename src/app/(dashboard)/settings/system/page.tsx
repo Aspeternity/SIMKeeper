@@ -5,6 +5,7 @@ import {
   History,
   ShieldCheck,
 } from "lucide-react";
+import { SettingsPageHeader } from "@/components/settings/settings-page-header";
 import { Card } from "@/components/ui/card";
 import { getDatabaseHealth } from "@/db/health";
 
@@ -48,26 +49,23 @@ export default function DatabaseSystemPage() {
   const healthy = health.status === "healthy";
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6" data-database-foundation-version="alpha.47">
-      <div>
-        <div className="flex items-center gap-2 text-sm font-medium text-slate-500">
-          <Database className="h-4 w-4" />系统与数据库
-        </div>
-        <h2 className="mt-2 text-2xl font-semibold tracking-tight">数据库状态</h2>
-        <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-500">
-          查看当前 SQLite、Schema Migration、完整性检查和数据规模。数据库升级由 SIMKeeper 自动执行，升级前会先创建一致性快照，迁移失败则整笔事务回滚。
-        </p>
-      </div>
+    <div className="space-y-6" data-database-foundation-version="alpha.47" data-settings-system-polish="alpha.51.4">
+      <SettingsPageHeader
+        icon={Database}
+        eyebrow="System"
+        title="系统与数据库"
+        description="查看当前 SQLite、Schema Migration、完整性检查和数据规模。数据库升级由 SIMKeeper 自动执行，升级前先创建一致性快照，迁移失败则整笔事务回滚。"
+      />
 
       <Card className="p-5">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
-            <div className={`flex h-10 w-10 items-center justify-center rounded-2xl ${healthy ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"}`}>
+            <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${healthy ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"}`}>
               <ShieldCheck className="h-5 w-5" />
             </div>
             <div>
-              <div className="text-sm font-semibold text-slate-900">{healthy ? "数据库状态正常" : "数据库需要关注"}</div>
-              <div className="mt-1 text-xs text-slate-500">
+              <div className="text-sm font-semibold text-ink">{healthy ? "数据库状态正常" : "数据库需要关注"}</div>
+              <div className="mt-1 text-xs text-ink-secondary">
                 quick_check：{health.quickCheck.status === "ok" ? "通过" : "异常"} · 外键异常：{health.foreignKeyViolations < 0 ? "检查失败" : health.foreignKeyViolations}
               </div>
             </div>
@@ -80,69 +78,69 @@ export default function DatabaseSystemPage() {
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Card className="p-5">
-          <div className="text-xs text-slate-500">SQLite</div>
-          <div className="mt-2 text-xl font-semibold text-slate-900">v{health.sqliteVersion}</div>
-          <div className="mt-1 text-xs text-slate-400">Journal: {health.journalMode.toUpperCase()}</div>
+          <div className="text-xs text-ink-muted">SQLite</div>
+          <div className="mt-2 text-xl font-semibold text-ink">v{health.sqliteVersion}</div>
+          <div className="mt-1 text-xs text-ink-muted">Journal: {health.journalMode.toUpperCase()}</div>
         </Card>
         <Card className="p-5">
-          <div className="text-xs text-slate-500">Database Schema</div>
-          <div className="mt-2 text-xl font-semibold text-slate-900">v{health.schemaVersion}</div>
-          <div className="mt-1 text-xs text-slate-400">目标 v{health.expectedSchemaVersion} · 待迁移 {health.pendingMigrations.length}</div>
+          <div className="text-xs text-ink-muted">Database Schema</div>
+          <div className="mt-2 text-xl font-semibold text-ink">v{health.schemaVersion}</div>
+          <div className="mt-1 text-xs text-ink-muted">目标 v{health.expectedSchemaVersion} · 待迁移 {health.pendingMigrations.length}</div>
         </Card>
         <Card className="p-5">
-          <div className="text-xs text-slate-500">数据库文件</div>
-          <div className="mt-2 text-xl font-semibold text-slate-900">{formatBytes(health.databaseBytes)}</div>
-          <div className="mt-1 text-xs text-slate-400">WAL {formatBytes(health.walBytes)} · SHM {formatBytes(health.shmBytes)}</div>
+          <div className="text-xs text-ink-muted">数据库文件</div>
+          <div className="mt-2 text-xl font-semibold text-ink">{formatBytes(health.databaseBytes)}</div>
+          <div className="mt-1 text-xs text-ink-muted">WAL {formatBytes(health.walBytes)} · SHM {formatBytes(health.shmBytes)}</div>
         </Card>
         <Card className="p-5">
-          <div className="text-xs text-slate-500">升级前快照</div>
-          <div className="mt-2 text-xl font-semibold text-slate-900">{health.preMigrationBackups.count}</div>
-          <div className="mt-1 truncate text-xs text-slate-400">{health.preMigrationBackups.latest ?? "尚未产生"}</div>
+          <div className="text-xs text-ink-muted">升级前快照</div>
+          <div className="mt-2 text-xl font-semibold text-ink">{health.preMigrationBackups.count}</div>
+          <div className="mt-1 truncate text-xs text-ink-muted">{health.preMigrationBackups.latest ?? "尚未产生"}</div>
         </Card>
       </div>
 
       <div className="grid gap-6 xl:grid-cols-2">
         <Card className="p-5">
           <div className="flex items-center gap-2">
-            <History className="h-4 w-4 text-slate-400" />
-            <h3 className="text-sm font-semibold text-slate-900">Migration 历史</h3>
+            <History className="h-4 w-4 text-ink-muted" />
+            <h3 className="text-sm font-semibold text-ink">Migration 历史</h3>
           </div>
           <div className="mt-4 space-y-3">
             {health.migrations.length ? health.migrations.map((migration) => (
-              <div key={migration.version} className="flex items-center justify-between gap-4 rounded-xl border border-slate-100 px-4 py-3">
+              <div key={migration.version} className="flex items-center justify-between gap-4 rounded-xl border border-line px-4 py-3">
                 <div className="min-w-0">
-                  <div className="truncate text-sm font-medium text-slate-800">v{migration.version} · {migration.name}</div>
-                  <div className="mt-1 text-xs text-slate-400">{formatDateTime(migration.appliedAt)}</div>
+                  <div className="truncate text-sm font-medium text-ink">v{migration.version} · {migration.name}</div>
+                  <div className="mt-1 text-xs text-ink-muted">{formatDateTime(migration.appliedAt)}</div>
                 </div>
-                <div className="shrink-0 text-xs text-slate-400">{migration.durationMs} ms</div>
+                <div className="shrink-0 text-xs text-ink-muted">{migration.durationMs} ms</div>
               </div>
             )) : (
-              <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-500">暂无 Migration 记录。</div>
+              <div className="rounded-xl bg-surface-subtle p-4 text-sm text-ink-secondary">暂无 Migration 记录。</div>
             )}
           </div>
         </Card>
 
         <Card className="p-5">
           <div className="flex items-center gap-2">
-            <Activity className="h-4 w-4 text-slate-400" />
-            <h3 className="text-sm font-semibold text-slate-900">完整性与存储</h3>
+            <Activity className="h-4 w-4 text-ink-muted" />
+            <h3 className="text-sm font-semibold text-ink">完整性与存储</h3>
           </div>
           <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
-            <div className="rounded-xl bg-slate-50 p-4">
-              <dt className="text-xs text-slate-500">PRAGMA quick_check</dt>
-              <dd className="mt-1 font-medium text-slate-900">{health.quickCheck.status === "ok" ? "通过" : "异常"}</dd>
+            <div className="rounded-xl bg-surface-subtle p-4">
+              <dt className="text-xs text-ink-muted">PRAGMA quick_check</dt>
+              <dd className="mt-1 font-medium text-ink">{health.quickCheck.status === "ok" ? "通过" : "异常"}</dd>
             </div>
-            <div className="rounded-xl bg-slate-50 p-4">
-              <dt className="text-xs text-slate-500">Foreign Keys</dt>
-              <dd className="mt-1 font-medium text-slate-900">{health.foreignKeysEnabled ? "已启用" : "未启用"}</dd>
+            <div className="rounded-xl bg-surface-subtle p-4">
+              <dt className="text-xs text-ink-muted">Foreign Keys</dt>
+              <dd className="mt-1 font-medium text-ink">{health.foreignKeysEnabled ? "已启用" : "未启用"}</dd>
             </div>
-            <div className="rounded-xl bg-slate-50 p-4">
-              <dt className="text-xs text-slate-500">Page Count</dt>
-              <dd className="mt-1 font-medium text-slate-900">{health.pageCount.toLocaleString("zh-CN")}</dd>
+            <div className="rounded-xl bg-surface-subtle p-4">
+              <dt className="text-xs text-ink-muted">Page Count</dt>
+              <dd className="mt-1 font-medium text-ink">{health.pageCount.toLocaleString("zh-CN")}</dd>
             </div>
-            <div className="rounded-xl bg-slate-50 p-4">
-              <dt className="text-xs text-slate-500">Free Pages</dt>
-              <dd className="mt-1 font-medium text-slate-900">{health.freePages.toLocaleString("zh-CN")} ({(health.freePageRatio * 100).toFixed(1)}%)</dd>
+            <div className="rounded-xl bg-surface-subtle p-4">
+              <dt className="text-xs text-ink-muted">Free Pages</dt>
+              <dd className="mt-1 font-medium text-ink">{health.freePages.toLocaleString("zh-CN")} ({(health.freePageRatio * 100).toFixed(1)}%)</dd>
             </div>
           </dl>
           {health.quickCheck.messages.length ? (
@@ -155,15 +153,15 @@ export default function DatabaseSystemPage() {
 
       <Card className="p-5">
         <div className="flex items-center gap-2">
-          <HardDrive className="h-4 w-4 text-slate-400" />
-          <h3 className="text-sm font-semibold text-slate-900">主要数据表</h3>
+          <HardDrive className="h-4 w-4 text-ink-muted" />
+          <h3 className="text-sm font-semibold text-ink">主要数据表</h3>
         </div>
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {Object.entries(health.tableCounts).map(([table, count]) => (
-            <div key={table} className="rounded-xl border border-slate-100 px-4 py-3">
-              <div className="text-xs text-slate-500">{TABLE_LABELS[table] ?? table}</div>
-              <div className="mt-1 text-lg font-semibold text-slate-900">{count.toLocaleString("zh-CN")}</div>
-              <div className="mt-1 truncate font-mono text-[10px] text-slate-400">{table}</div>
+            <div key={table} className="rounded-xl border border-line px-4 py-3">
+              <div className="text-xs text-ink-secondary">{TABLE_LABELS[table] ?? table}</div>
+              <div className="mt-1 text-lg font-semibold text-ink">{count.toLocaleString("zh-CN")}</div>
+              <div className="mt-1 truncate font-mono text-[10px] text-ink-muted">{table}</div>
             </div>
           ))}
         </div>

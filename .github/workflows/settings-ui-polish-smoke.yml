@@ -1,0 +1,92 @@
+name: Verify Settings UI Polish
+
+on:
+  workflow_run:
+    workflows: [Build and Publish Docker Image]
+    types: [completed]
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  settings-ui-polish:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout verified source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Pull verified image
+        run: |
+          sha="${{ github.event.workflow_run.head_sha }}"
+          image="ghcr.io/aspeternity/simkeeper:sha-${sha:0:7}"
+          docker pull "$image"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Verify settings shell and runtime pages
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          container="simkeeper-settings-ui-smoke"
+          base="http://127.0.0.1:18115"
+          cookies="$tmp/cookies"
+          password="$(openssl rand -hex 12)"
+          expected_version="$(jq -r '.version' package.json)"
+
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            rm -rf "$tmp"
+          }
+          trap cleanup EXIT
+
+          fail() {
+            echo "::error::$1"
+            docker logs "$container" 2>&1 || true
+            exit 1
+          }
+
+          grep -Fq 'data-settings-shell="alpha.51.4"' 'src/app/(dashboard)/settings/layout.tsx' || fail "Settings shell marker missing"
+          grep -Fq 'data-settings-navigation="alpha.51.4"' src/components/settings/settings-section-nav.tsx || fail "Settings navigation marker missing"
+          grep -Fq 'data-settings-page-header="alpha.51.4"' src/components/settings/settings-page-header.tsx || fail "Settings page header marker missing"
+          grep -Fq 'data-settings-form-polish="alpha.51.4"' src/components/settings/site-settings-form.tsx || fail "Settings form polish marker missing"
+          grep -Fq 'data-settings-system-polish="alpha.51.4"' 'src/app/(dashboard)/settings/system/page.tsx' || fail "System settings marker missing"
+          grep -Fq "APP_VERSION = \"$expected_version\"" src/components/layout/navigation.ts || fail "app version does not match package version"
+
+          mkdir -p "$tmp/data"
+          docker run -d --name "$container" -p 18115:3000 \
+            -e SIMKEEPER_COOKIE_SECURE=false \
+            -e PUID="$(id -u)" -e PGID="$(id -g)" \
+            -v "$tmp/data:/app/data" "$IMAGE" >/dev/null || fail "Unable to start SIMKeeper"
+
+          ready=0
+          for _ in $(seq 1 40); do
+            if curl -fsS --max-time 2 "$base/api/health" >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          [ "$ready" -eq 1 ] || fail "SIMKeeper did not become healthy"
+
+          curl -fsS -c "$cookies" -o /dev/null -X POST \
+            --data-urlencode 'username=settingsuismoke' \
+            --data-urlencode "password=$password" \
+            --data-urlencode "confirmPassword=$password" \
+            "$base/api/auth/setup" || fail "Unable to create smoke administrator"
+
+          for route in /settings/overview /settings/dashboard /settings/security /settings/carrier-connectors /settings/notifications /settings/backup /settings/system; do
+            safe="$(echo "$route" | tr '/' '_' | sed 's/^_//')"
+            curl -fsS -b "$cookies" "$base$route" > "$tmp/$safe.html" || fail "Route $route failed"
+            grep -Fq 'data-settings-shell="alpha.51.4"' "$tmp/$safe.html" || fail "Settings shell missing from $route"
+            grep -Fq 'data-settings-navigation="alpha.51.4"' "$tmp/$safe.html" || fail "Settings navigation missing from $route"
+          done
+
+          grep -Fq 'data-settings-overview-polish="alpha.51.4"' "$tmp/settings_overview.html" || fail "Overview polish missing at runtime"
+          grep -Fq 'data-settings-form-polish="alpha.51.4"' "$tmp/settings_overview.html" || fail "Overview form polish missing at runtime"
+          grep -Fq 'data-settings-system-polish="alpha.51.4"' "$tmp/settings_system.html" || fail "System polish missing at runtime"
+          grep -Fq "$expected_version" "$tmp/settings_overview.html" || fail "application version missing from settings runtime"

@@ -2,7 +2,7 @@
 
 import { ChangeEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Palette, Save, Trash2 } from "lucide-react";
+import { Check, ImagePlus, Loader2, Palette, Save, Trash2 } from "lucide-react";
 import { SiteMark } from "@/components/branding/site-mark";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -103,7 +103,13 @@ export function SiteSettingsForm({ initial }: { initial: SiteSettings }) {
   const visibleLogoUrl = previewUrl || (removeLogo ? null : currentLogoUrl);
 
   return (
-    <div className="space-y-5" data-site-settings="alpha.45" data-visual-settings="alpha.51" data-accent={accentColor}>
+    <div
+      className="space-y-5"
+      data-site-settings="alpha.45"
+      data-visual-settings="alpha.51"
+      data-settings-form-polish="alpha.51.4"
+      data-accent={accentColor}
+    >
       {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
       {notice ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{notice}</div> : null}
 
@@ -165,15 +171,20 @@ export function SiteSettingsForm({ initial }: { initial: SiteSettings }) {
               type="file"
               accept="image/png,image/jpeg,image/webp"
               onChange={chooseLogo}
-              className="block w-full text-xs text-ink-secondary file:mr-3 file:rounded-lg file:border-0 file:bg-surface-hover file:px-3 file:py-2 file:text-xs file:font-medium file:text-ink-secondary hover:file:bg-brand-soft hover:file:text-brand"
+              className="hidden"
             />
-            <p className="text-xs leading-5 text-ink-muted">支持 PNG、JPG/JPEG、WebP，最大 1 MB。图标保存在 SQLite 设置中，Docker 重建不会丢失。</p>
-
-            {(currentLogoUrl || selectedFile) && !removeLogo ? (
-              <Button type="button" variant="secondary" size="sm" onClick={clearLogo} className="gap-2">
-                <Trash2 className="h-3.5 w-3.5" />移除自定义图标
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="secondary" size="sm" onClick={() => fileInputRef.current?.click()} className="gap-2">
+                <ImagePlus className="h-3.5 w-3.5" />{selectedFile ? "更换图片" : "选择图片"}
               </Button>
-            ) : null}
+              {(currentLogoUrl || selectedFile) && !removeLogo ? (
+                <Button type="button" variant="secondary" size="sm" onClick={clearLogo} className="gap-2">
+                  <Trash2 className="h-3.5 w-3.5" />移除自定义图标
+                </Button>
+              ) : null}
+            </div>
+            {selectedFile ? <div className="truncate text-xs text-ink-secondary">已选择：{selectedFile.name}</div> : null}
+            <p className="text-xs leading-5 text-ink-muted">支持 PNG、JPG/JPEG、WebP，最大 1 MB。图标保存在 SQLite 设置中，Docker 重建不会丢失。</p>
             {removeLogo ? <div className="text-xs text-amber-600">保存后将恢复 SIMKeeper 默认手机图标。</div> : null}
           </div>
         </Card>
@@ -210,13 +221,15 @@ export function SiteSettingsForm({ initial }: { initial: SiteSettings }) {
               >
                 <span className={`h-5 w-5 shrink-0 rounded-full ${option.swatch} ring-2 ring-white shadow-sm`} />
                 <span className="text-sm font-medium">{option.label}</span>
+                {selected ? <Check className="ml-auto h-4 w-4" /> : null}
               </button>
             );
           })}
         </div>
       </Card>
 
-      <div className="flex justify-end">
+      <div className="sticky bottom-4 z-10 flex flex-col gap-3 rounded-2xl border border-line bg-surface p-3 shadow-floating sm:flex-row sm:items-center sm:justify-between">
+        <div className="px-1 text-xs leading-5 text-ink-muted">保存后立即应用到当前实例，不会修改任何号码、同步或备份数据。</div>
         <Button type="button" onClick={() => void save()} disabled={busy || !siteName.trim()} className="gap-2">
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
           保存基础设置

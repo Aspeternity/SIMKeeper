@@ -2,19 +2,17 @@ import { DatabaseBackup } from "lucide-react";
 import BackupSettingsContent from "@/components/settings/backup-settings-page";
 import RemoteBackupLibrary from "@/components/settings/remote-backup-library";
 import RemoteBackupSettings from "@/components/settings/remote-backup-settings";
+import { SettingsPageHeader } from "@/components/settings/settings-page-header";
 
 export default function BackupSettingsPage() {
   return (
-    <div className="space-y-6">
-      <div className="mx-auto max-w-7xl">
-        <div className="flex items-center gap-2 text-sm font-medium text-slate-500">
-          <DatabaseBackup className="h-4 w-4" />系统维护
-        </div>
-        <h2 className="mt-2 text-2xl font-semibold tracking-tight">备份与恢复</h2>
-        <p className="mt-1 text-sm text-slate-500">
-          本地快照用于快速回滚；加密可移植备份和 WebDAV 异地备份用于迁移与灾难恢复。alpha.50 增加一致性快照、原子上传、持久化补跑与远端恢复库。
-        </p>
-      </div>
+    <div className="space-y-6" data-settings-backup-polish="alpha.51.4">
+      <SettingsPageHeader
+        icon={DatabaseBackup}
+        eyebrow="Recovery"
+        title="备份与恢复"
+        description="本地一致性快照用于快速回滚，加密可移植备份和 WebDAV 异地备份用于迁移与灾难恢复；所有恢复流程继续保留安全快照与完整性校验。"
+      />
       <RemoteBackupSettings />
       <RemoteBackupLibrary />
       <div className="[&>div>div:first-child]:hidden">
