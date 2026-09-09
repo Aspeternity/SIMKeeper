@@ -43,7 +43,8 @@ export function navigationItemIsActive(pathname: string, href: string) {
 }
 
 export function getPageTitle(pathname: string) {
-  if (pathname === "/settings" || pathname.startsWith("/settings/backup")) return "备份与恢复";
+  if (pathname === "/settings") return "设置";
+  if (pathname.startsWith("/settings/backup")) return "备份与恢复";
   if (pathname.startsWith("/settings/overview")) return "设置";
   if (pathname.startsWith("/settings/dashboard")) return "概览个性化";
   if (pathname.startsWith("/settings/carrier-connectors")) return "同步与诊断";
