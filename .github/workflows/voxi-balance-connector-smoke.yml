@@ -1,0 +1,149 @@
+name: Verify VOXI Balance Connector
+
+on:
+  workflow_run:
+    workflows:
+      - Build and Publish Docker Image
+    types:
+      - completed
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  voxi-balance-connector:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout verified source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull verified image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="${{ github.event.workflow_run.head_sha }}"
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/simkeeper:sha-${sha:0:7}"
+          docker pull "$image"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Verify VOXI provider metadata and encrypted configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          container="simkeeper-voxi-balance-smoke"
+          base="http://127.0.0.1:18124"
+          cookies="$tmp/cookies"
+          fake_cookie='Session=VOXI-SMOKE-SESSION; _vapi=VOXI-SMOKE-VAPI'
+          expected_version="$(jq -r '.version' package.json)"
+
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            rm -rf "$tmp"
+          }
+          trap cleanup EXIT
+
+          fail() {
+            echo "::error::$1"
+            docker logs "$container" 2>&1 || true
+            exit 1
+          }
+
+          grep -Fq 'voxiCarrierConnectorProvider' src/lib/carrier-connectors/registry.ts || fail "VOXI provider is not registered"
+          grep -Fq 'id: "voxi"' src/lib/carrier-connectors/providers/voxi.ts || fail "VOXI provider id missing"
+          grep -Fq 'key: "sessionCookie"' src/lib/carrier-connectors/providers/voxi.ts || fail "VOXI encrypted session credential missing"
+          grep -Fq 'const ACCOUNT_PATHS = ["/account/payment", "/account", "/account/plan"]' src/lib/carrier-connectors/providers/voxi.ts || fail "VOXI account page fallback list missing"
+          grep -Fq 'supportedCountryCodes: ["GB"]' 'src/app/api/sims/balance-source/route.ts' || fail "VOXI GB matcher missing"
+          grep -Fq "APP_VERSION = \"$expected_version\"" src/components/layout/navigation.ts || fail "App version does not match package version"
+
+          mkdir -p "$tmp/data"
+          docker run -d --name "$container" -p 18124:3000 \
+            -e SIMKEEPER_COOKIE_SECURE=false \
+            -e PUID="$(id -u)" -e PGID="$(id -g)" \
+            -v "$tmp/data:/app/data" "$IMAGE" >/dev/null || fail "Unable to start SIMKeeper"
+
+          ready=0
+          for _ in $(seq 1 40); do
+            if curl -fsS --max-time 2 "$base/api/health" >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          [ "$ready" -eq 1 ] || fail "SIMKeeper did not become healthy"
+
+          curl -fsS -c "$cookies" -o /dev/null -X POST \
+            --data-urlencode 'username=voxismoke' \
+            --data-urlencode 'password=voxi-smoke-123' \
+            --data-urlencode 'confirmPassword=voxi-smoke-123' \
+            "$base/api/auth/setup" || fail "Unable to create smoke administrator"
+
+          curl -fsS -b "$cookies" "$base/api/sims/balance-source" > "$tmp/providers.json" \
+            || fail "Unable to list balance providers"
+          [ "$(jq '[.providers[] | select(.id == "voxi" and .maturity == "experimental" and .runtimeReady == true and .capabilities.balance == true and .capabilities.automaticSync == true)] | length' "$tmp/providers.json")" = "1" ] \
+            || fail "VOXI provider metadata is incomplete"
+          [ "$(jq -r '.providers[] | select(.id == "voxi") | .credentialFields[0].key' "$tmp/providers.json")" = "sessionCookie" ] \
+            || fail "VOXI session credential is not exposed to the editor"
+
+          curl -fsS -b "$cookies" -H 'Content-Type: application/json' \
+            -d '{"name":"VOXI","countryCode":"GB","website":"https://www.voxi.co.uk","notes":""}' \
+            "$base/api/carriers" > "$tmp/carrier.json" || fail "Unable to create VOXI carrier"
+          carrier_id="$(jq -r '.carrier.id' "$tmp/carrier.json")"
+          [ "$carrier_id" -gt 0 ] || fail "VOXI carrier id missing"
+
+          jq -n --argjson carrierId "$carrier_id" '{
+            label:"VOXI Smoke",phoneNumber:"+447700900123",carrierId:$carrierId,deviceId:null,
+            simType:"esim",iccid:"",balance:0,currencyCode:"GBP",status:"active",
+            activationDate:"",validUntil:"",identityStatus:"unknown",identityName:"",
+            identityDocumentType:"",identityDocumentTypeCustom:"",identityDocumentNumber:"",
+            identityCountryCode:"",identityNotes:"",notes:"",esimProfile:null
+          }' > "$tmp/sim.json"
+          curl -fsS -b "$cookies" -H 'Content-Type: application/json' --data-binary @"$tmp/sim.json" \
+            "$base/api/sims" > "$tmp/sim-result.json" || fail "Unable to create VOXI SIM"
+          sim_id="$(jq -r '.sim.id' "$tmp/sim-result.json")"
+          [ "$sim_id" -gt 0 ] || fail "VOXI SIM id missing"
+
+          jq -n --argjson simId "$sim_id" --arg cookie "$fake_cookie" '{
+            simId:$simId,
+            provider:"voxi",
+            syncIntervalMinutes:1440,
+            providerConfig:{},
+            credentials:{sessionCookie:$cookie}
+          }' > "$tmp/source.json"
+          code="$(curl -sS -b "$cookies" -o "$tmp/source-result.json" -w '%{http_code}' \
+            -X PUT -H 'Content-Type: application/json' --data-binary @"$tmp/source.json" \
+            "$base/api/sims/balance-source")"
+          [ "$code" = "200" ] || fail "VOXI source configuration returned HTTP $code"
+          [ "$(jq -r '.source.connector.provider' "$tmp/source-result.json")" = "voxi" ] \
+            || fail "VOXI connector was not linked to SIM"
+          [ "$(jq -r '.source.connector.hasCredentials' "$tmp/source-result.json")" = "true" ] \
+            || fail "VOXI encrypted credential flag missing"
+
+          sync
+          for dbfile in "$tmp/data/simkeeper.db" "$tmp/data/simkeeper.db-wal" "$tmp/data/simkeeper.db-shm"; do
+            [ -f "$dbfile" ] || continue
+            ! grep -aFq 'VOXI-SMOKE-SESSION' "$dbfile" || fail "VOXI session cookie was stored in plaintext"
+            ! grep -aFq 'VOXI-SMOKE-VAPI' "$dbfile" || fail "VOXI API session cookie was stored in plaintext"
+          done
+
+          curl -fsS -b "$cookies" "$base/api/sims/balance-source?simId=$sim_id" > "$tmp/source-read.json" \
+            || fail "Unable to read VOXI source"
+          [ "$(jq -r '.source.connector.providerLabel' "$tmp/source-read.json")" = "VOXI My Account" ] \
+            || fail "VOXI provider label missing from source"
+          ! grep -Fq 'VOXI-SMOKE-SESSION' "$tmp/source-read.json" || fail "VOXI session leaked through API"
+          ! grep -Fq 'VOXI-SMOKE-VAPI' "$tmp/source-read.json" || fail "VOXI API session leaked through API"
+
+          echo "VOXI balance connector smoke test passed"

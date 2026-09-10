@@ -38,6 +38,10 @@ const providerMatchers: Record<string, {
     supportedCountryCodes: ["PH"],
     carrierNameKeywords: ["globe", "tm", "touch mobile"],
   },
+  voxi: {
+    supportedCountryCodes: ["GB"],
+    carrierNameKeywords: ["voxi"],
+  },
 };
 
 const configureSchema = z.object({
@@ -76,6 +80,20 @@ function positiveId(value: string | null) {
 }
 
 function providerRuntimeState(providerId: string) {
+  if (providerId === "voxi") {
+    const availabilityNote = "VOXI 没有公开的第三方消费者余额 API。SIMKeeper 使用用户主动提供的已登录 VOXI 浏览器会话 Cookie 访问 My Account；会话失效后需要重新粘贴。";
+    return {
+      maturity: "experimental" as const,
+      availabilityNote,
+      runtimeReady: true,
+      runtimeMessage: availabilityNote,
+      runtimeWarning: "VOXI 会话 Cookie 属于账户认证凭据；仅粘贴到自己的 SIMKeeper 实例，不要通过聊天、截图或日志分享。",
+      runtimeMode: null as "oauth" | "static-token" | null,
+      runtimeSource: "VOXI browser session" as string | null,
+      runtimeExpiresAt: null as string | null,
+    };
+  }
+
   if (providerId !== "globe") {
     return {
       maturity: "stable" as const,
@@ -110,7 +128,7 @@ function listBalanceProviders() {
       const runtimeState = providerRuntimeState(provider.id);
       return {
         ...provider,
-        description: provider.id === "globe"
+        description: provider.id === "globe" || provider.id === "voxi"
           ? `实验性集成。${provider.description}`
           : provider.description,
         ...matcher,

@@ -4,6 +4,7 @@ import { cslCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/
 import { ditoCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/dito";
 import { globeCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/globe";
 import { mockCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/mock";
+import { voxiCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/voxi";
 import type {
   CarrierConnectorCapabilities,
   CarrierConnectorProvider,
@@ -52,6 +53,18 @@ const PROVIDER_METADATA: Record<string, ProviderMetadata> = {
       multiSim: false,
     },
   },
+  voxi: {
+    maturity: "experimental",
+    availabilityNote: "VOXI 没有公开的第三方消费者余额 API。此连接使用用户主动提供的已登录 VOXI 浏览器会话 Cookie 读取 My Account；会话失效时需要重新登录并更新 Cookie。",
+    capabilities: {
+      automaticSync: true,
+      balance: true,
+      balanceValidity: false,
+      simValidity: false,
+      accountStatus: false,
+      multiSim: false,
+    },
+  },
   mock: {
     maturity: "stable",
     availabilityNote: "仅用于离线测试同步、重试、快照与恢复流程。",
@@ -81,6 +94,7 @@ const PROVIDERS: Record<string, CarrierConnectorProvider> = {
   csl: withMetadata(cslCarrierConnectorProvider),
   dito: withMetadata(ditoCarrierConnectorProvider),
   globe: withMetadata(globeCarrierConnectorProvider),
+  voxi: withMetadata(voxiCarrierConnectorProvider),
   mock: withMetadata(mockCarrierConnectorProvider),
 };
 
