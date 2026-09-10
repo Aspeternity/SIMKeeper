@@ -159,7 +159,7 @@ export default function DevicesPage() {
   }
 
   return (
-    <div className="mx-auto max-w-7xl space-y-5" data-devices-polish="alpha.51.2">
+    <div className="mx-auto max-w-7xl space-y-5" data-devices-polish="alpha.57.0">
       <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div className="min-w-0">
           <h2 className="text-2xl font-semibold tracking-tight text-ink">设备管理</h2>
@@ -179,7 +179,7 @@ export default function DevicesPage() {
         </section>
       ) : null}
 
-      <Card className="p-4 sm:p-5" data-device-toolbar="alpha.51.2">
+      <Card className="p-4 sm:p-5" data-device-toolbar="alpha.57.0">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
             <div className="font-medium text-ink">全部设备</div>
@@ -259,20 +259,23 @@ export default function DevicesPage() {
                   <span className="text-[11px] tabular-nums text-ink-muted">{assigned.length} 个</span>
                 </div>
 
-                <div className="flex-1 space-y-2 px-5 py-3">
-                  {assigned.length ? assigned.slice(0, 4).map((sim) => (
-                    <div key={sim.id} className="flex items-center justify-between gap-3 rounded-xl border border-line-subtle bg-surface-subtle px-3 py-2.5">
-                      <div className="min-w-0">
-                        <div className="truncate text-xs font-medium text-ink">{sim.label}</div>
-                        <div className="mt-0.5 truncate text-[10px] text-ink-muted">{sim.carrierName} · {sim.phoneNumber || "未填写手机号"}</div>
-                      </div>
-                      <span className="shrink-0 rounded-md bg-surface px-1.5 py-0.5 text-[10px] font-medium text-ink-muted ring-1 ring-line">{sim.simType === "esim" ? "eSIM" : "SIM"}</span>
+                <div className="flex-1 min-h-0 px-5 py-3">
+                  {assigned.length ? (
+                    <div className="max-h-[13.5rem] space-y-2 overflow-y-auto overscroll-contain pr-1" data-device-sim-scroll={device.id}>
+                      {assigned.map((sim) => (
+                        <div key={sim.id} className="flex items-center justify-between gap-3 rounded-xl border border-line-subtle bg-surface-subtle px-3 py-2.5">
+                          <div className="min-w-0">
+                            <div className="truncate text-xs font-medium text-ink">{sim.label}</div>
+                            <div className="mt-0.5 truncate text-[10px] text-ink-muted">{sim.carrierName} · {sim.phoneNumber || "未填写手机号"}</div>
+                          </div>
+                          <span className="shrink-0 rounded-md bg-surface px-1.5 py-0.5 text-[10px] font-medium text-ink-muted ring-1 ring-line">{sim.simType === "esim" ? "eSIM" : "SIM"}</span>
+                        </div>
+                      ))}
                     </div>
-                  )) : (
+                  ) : (
                     <div className="flex min-h-24 items-center justify-center rounded-xl border border-dashed border-line px-3 text-center text-xs text-ink-muted">暂时没有号码存放在这里</div>
                   )}
-                  {assigned.length > 4 ? <div className="px-1 text-[11px] text-ink-muted">还有 {assigned.length - 4} 个号码未展开</div> : null}
-                  {device.notes ? <div className="line-clamp-2 pt-1 text-xs leading-5 text-ink-muted">{device.notes}</div> : null}
+                  {device.notes ? <div className="line-clamp-2 pt-2 text-xs leading-5 text-ink-muted">{device.notes}</div> : null}
                 </div>
 
                 <div className="flex items-center justify-end gap-1 border-t border-line-subtle bg-surface-subtle px-3 py-2.5">

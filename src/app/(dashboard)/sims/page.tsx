@@ -14,9 +14,11 @@ import {
   ReceiptText,
   RotateCcw,
   Search,
+  ShieldCheck,
   Smartphone,
   Trash2,
 } from "lucide-react";
+import { SimKeepAliveRulesModal } from "@/components/keep-alive/sim-keep-alive-rules-modal";
 import { SimDeleteModal } from "@/components/sims/sim-delete-modal";
 import { SimEditorModal } from "@/components/sims/sim-editor-modal";
 import { SimHealthBadge } from "@/components/sims/sim-health-badge";
@@ -26,6 +28,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import type { DeviceRecord } from "@/lib/device-types";
+import type { KeepAliveSimSummary } from "@/lib/keep-alive-types";
 import { formatPhoneNumber } from "@/lib/phone-format";
 import type { SimHealthItem } from "@/lib/sim-health-types";
 import { getSimStatusLabel, getSimTypeLabel, SIM_STATUSES } from "@/lib/sim-options";
@@ -116,6 +119,23 @@ function healthMatchesFilter(health: SimHealthItem | undefined, filter: string) 
   return health.healthStatus === filter;
 }
 
+function keepAliveSummaryFromSim(sim: SimRecord): KeepAliveSimSummary {
+  return {
+    id: sim.id,
+    label: sim.label,
+    phoneNumber: sim.phoneNumber,
+    status: sim.status,
+    balance: sim.balance,
+    currencyCode: sim.currencyCode,
+    validUntil: sim.validUntil,
+    carrierName: sim.carrierName,
+    country: sim.country,
+    countryCode: sim.countryCode,
+    rules: [],
+    latestEvent: null,
+  };
+}
+
 function SummaryFilter({
   label,
   value,
@@ -177,6 +197,7 @@ export default function SimsPage() {
   const [carriers, setCarriers] = useState<CarrierRecord[]>([]);
   const [devices, setDevices] = useState<DeviceRecord[]>([]);
   const [healthItems, setHealthItems] = useState<SimHealthItem[]>([]);
+  const [keepAliveSims, setKeepAliveSims] = useState<KeepAliveSimSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
@@ -188,6 +209,7 @@ export default function SimsPage() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<SimRecord | null>(null);
   const [tariffSim, setTariffSim] = useState<SimRecord | null>(null);
+  const [keepAliveSim, setKeepAliveSim] = useState<KeepAliveSimSummary | null>(null);
   const [overviewSim, setOverviewSim] = useState<SimRecord | null>(null);
   const [deletingSim, setDeletingSim] = useState<SimRecord | null>(null);
 
@@ -195,26 +217,30 @@ export default function SimsPage() {
     setLoading(true);
     setError("");
     try {
-      const [simsResponse, carriersResponse, devicesResponse, healthResponse] = await Promise.all([
+      const [simsResponse, carriersResponse, devicesResponse, healthResponse, keepAliveResponse] = await Promise.all([
         fetch("/api/sims", { cache: "no-store" }),
         fetch("/api/carriers", { cache: "no-store" }),
         fetch("/api/devices", { cache: "no-store" }),
         fetch("/api/sim-health", { cache: "no-store" }),
+        fetch("/api/keep-alive", { cache: "no-store" }),
       ]);
-      const [simsData, carriersData, devicesData, healthData] = await Promise.all([
+      const [simsData, carriersData, devicesData, healthData, keepAliveData] = await Promise.all([
         simsResponse.json(),
         carriersResponse.json(),
         devicesResponse.json(),
         healthResponse.json(),
+        keepAliveResponse.json(),
       ]);
       if (!simsResponse.ok) throw new Error(simsData.error || "号码数据加载失败");
       if (!carriersResponse.ok) throw new Error(carriersData.error || "运营商数据加载失败");
       if (!devicesResponse.ok) throw new Error(devicesData.error || "设备数据加载失败");
       if (!healthResponse.ok) throw new Error(healthData.error || "号码健康状态加载失败");
+      if (!keepAliveResponse.ok) throw new Error(keepAliveData.error || "保号规则加载失败");
       setSims(simsData.sims || []);
       setCarriers(carriersData.carriers || []);
       setDevices(devicesData.devices || []);
       setHealthItems(healthData.items || []);
+      setKeepAliveSims(keepAliveData.sims || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "号码数据加载失败");
     } finally {
@@ -227,6 +253,7 @@ export default function SimsPage() {
   }, [loadData]);
 
   const healthBySim = useMemo(() => new Map(healthItems.map((item) => [item.simId, item])), [healthItems]);
+  const keepAliveBySim = useMemo(() => new Map(keepAliveSims.map((item) => [item.id, item])), [keepAliveSims]);
 
   const healthSummary = useMemo(() => ({
     healthy: healthItems.filter((item) => item.healthStatus === "healthy").length,
@@ -311,8 +338,22 @@ export default function SimsPage() {
     setEditorOpen(true);
   }
 
+  async function handleKeepAliveChanged(next: KeepAliveSimSummary) {
+    setKeepAliveSims((current) => {
+      const exists = current.some((item) => item.id === next.id);
+      return exists ? current.map((item) => item.id === next.id ? next : item) : [...current, next];
+    });
+    try {
+      const response = await fetch("/api/sim-health", { cache: "no-store" });
+      const data = await response.json();
+      if (response.ok) setHealthItems(data.items || []);
+    } catch {
+      // 保号规则已经成功保存；Health 会在下次页面刷新时再次同步。
+    }
+  }
+
   return (
-    <div className="mx-auto max-w-7xl space-y-5" data-sims-polish="alpha.51.1">
+    <div className="mx-auto max-w-7xl space-y-5" data-sims-polish="alpha.57.0">
       <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div className="min-w-0">
           <h2 className="text-2xl font-semibold tracking-tight text-ink">号码管理</h2>
@@ -353,7 +394,7 @@ export default function SimsPage() {
         </section>
       ) : null}
 
-      <Card className="p-4 sm:p-5" data-sim-toolbar="alpha.51.1">
+      <Card className="p-4 sm:p-5" data-sim-toolbar="alpha.57.0">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
             <div className="font-medium text-ink">全部号码</div>
@@ -417,6 +458,8 @@ export default function SimsPage() {
             const typeLabel = planTypeLabel(sim.tariffPlanType);
             const phoneDisplay = formatPhoneNumber(sim.phoneNumber, "未填写手机号");
             const balanceDisplay = sim.balance === null ? "未记录" : `${sim.balance} ${sim.currencyCode || ""}`.trim();
+            const keepAlive = keepAliveBySim.get(sim.id) ?? keepAliveSummaryFromSim(sim);
+            const hasKeepAliveRules = keepAlive.rules.length > 0;
 
             return (
               <Card
@@ -496,6 +539,16 @@ export default function SimsPage() {
                 <div className="flex items-center justify-between gap-3 border-t border-line bg-surface-subtle/70 px-4 py-2.5 sm:px-5">
                   <div className="min-w-0 truncate text-[11px] text-ink-muted">ICCID {sim.iccid || "未记录"}</div>
                   <div className="flex shrink-0 items-center gap-1">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className={`gap-1.5 ${hasKeepAliveRules ? "" : "bg-amber-50 text-amber-700 hover:bg-amber-100 hover:text-amber-800"}`}
+                      title={hasKeepAliveRules ? "管理保号规则" : "尚未配置保号规则"}
+                      onClick={(event) => { event.stopPropagation(); setKeepAliveSim(keepAlive); }}
+                    >
+                      <ShieldCheck className="h-3.5 w-3.5" />保号规则
+                    </Button>
                     <Button type="button" variant="ghost" size="sm" className="gap-1.5" onClick={(event) => { event.stopPropagation(); setTariffSim(sim); }}><ReceiptText className="h-3.5 w-3.5" />资费</Button>
                     <Button type="button" variant="ghost" size="sm" className="gap-1.5" onClick={(event) => { event.stopPropagation(); openEdit(sim); }}><Pencil className="h-3.5 w-3.5" />编辑</Button>
                     <Button type="button" variant="ghost" size="sm" className="gap-1.5 text-rose-600 hover:bg-rose-50 hover:text-rose-700" onClick={(event) => { event.stopPropagation(); setDeletingSim(sim); }}><Trash2 className="h-3.5 w-3.5" />删除</Button>
@@ -534,6 +587,14 @@ export default function SimsPage() {
             setOverviewSim(null);
             setTariffSim(sim);
           }}
+        />
+      ) : null}
+
+      {keepAliveSim ? (
+        <SimKeepAliveRulesModal
+          sim={keepAliveSim}
+          onClose={() => setKeepAliveSim(null)}
+          onChanged={handleKeepAliveChanged}
         />
       ) : null}
 

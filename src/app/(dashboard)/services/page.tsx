@@ -75,7 +75,7 @@ export default function ServicesPage() {
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [simFilter, setSimFilter] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("active");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [importanceFilter, setImportanceFilter] = useState("all");
   const [editing, setEditing] = useState<BoundServiceRecord | null | undefined>(undefined);
@@ -131,12 +131,12 @@ export default function ServicesPage() {
     [simFilter, sims],
   );
 
-  const hasFilters = Boolean(query.trim()) || simFilter !== "all" || statusFilter !== "active" || categoryFilter !== "all" || importanceFilter !== "all";
+  const hasFilters = Boolean(query.trim()) || simFilter !== "all" || statusFilter !== "all" || categoryFilter !== "all" || importanceFilter !== "all";
 
   function resetFilters() {
     setQuery("");
     setSimFilter("all");
-    setStatusFilter("active");
+    setStatusFilter("all");
     setCategoryFilter("all");
     setImportanceFilter("all");
   }
@@ -155,7 +155,7 @@ export default function ServicesPage() {
   }
 
   return (
-    <div className="mx-auto max-w-7xl space-y-5" data-services-polish="alpha.51.2">
+    <div className="mx-auto max-w-7xl space-y-5" data-services-polish="alpha.57.0">
       <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div className="min-w-0">
           <h2 className="text-2xl font-semibold tracking-tight text-ink">绑定服务</h2>
@@ -175,7 +175,7 @@ export default function ServicesPage() {
         </section>
       ) : null}
 
-      <Card className="p-4 sm:p-5" data-service-toolbar="alpha.51.2">
+      <Card className="p-4 sm:p-5" data-service-toolbar="alpha.57.0">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
             <div className="font-medium text-ink">绑定关系</div>
@@ -190,7 +190,7 @@ export default function ServicesPage() {
               <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索服务、账号、号码或运营商" className="pl-9" />
             </div>
             {hasFilters ? (
-              <Button type="button" variant="ghost" size="icon" onClick={resetFilters} title="恢复默认筛选" aria-label="恢复绑定服务默认筛选"><RotateCcw className="h-4 w-4" /></Button>
+              <Button type="button" variant="ghost" size="icon" onClick={resetFilters} title="清除全部筛选" aria-label="清除绑定服务筛选"><RotateCcw className="h-4 w-4" /></Button>
             ) : null}
           </div>
         </div>
@@ -224,7 +224,7 @@ export default function ServicesPage() {
           <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-surface-subtle text-ink-muted"><Link2 className="h-5 w-5" /></div>
           <p className="mt-4 text-sm font-medium text-ink">{bindings.length ? "没有匹配的绑定记录" : "还没有绑定服务"}</p>
           <p className="mt-1 max-w-md text-xs leading-5 text-ink-muted">{selectedSim ? `“${selectedSim.label}”在当前筛选条件下没有绑定记录。` : bindings.length ? "尝试调整状态、号码、分类或搜索关键词。" : "添加后，可以在号码详情和这里统一查看。"}</p>
-          {bindings.length && hasFilters ? <Button variant="secondary" size="sm" className="mt-4 gap-1.5" onClick={resetFilters}><RotateCcw className="h-3.5 w-3.5" />恢复默认筛选</Button> : null}
+          {bindings.length && hasFilters ? <Button variant="secondary" size="sm" className="mt-4 gap-1.5" onClick={resetFilters}><RotateCcw className="h-3.5 w-3.5" />清除筛选</Button> : null}
         </Card>
       ) : (
         <div className="grid gap-3 xl:grid-cols-2">
