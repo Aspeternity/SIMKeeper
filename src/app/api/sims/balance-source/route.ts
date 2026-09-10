@@ -81,15 +81,15 @@ function positiveId(value: string | null) {
 
 function providerRuntimeState(providerId: string) {
   if (providerId === "voxi") {
-    const availabilityNote = "VOXI 没有公开的第三方消费者余额 API。SIMKeeper 复用浏览器中的 Session、PlatformAccessToken 和 PlatformAuthToken 调用官方站点内部账户接口；不再要求从 Network 查找完整 Cookie。会话失效后需要重新登录并更新这些凭据。";
+    const availabilityNote = "VOXI 没有公开的第三方消费者余额 API。alpha.54.0 使用 VOXI 网页实际的官方登录流程：邮箱/密码 → 短信 OTP → 加密会话 → /auth/accounts 与 /subscription/get；不再要求复制浏览器 Cookie。";
     return {
       maturity: "experimental" as const,
       availabilityNote,
       runtimeReady: true,
       runtimeMessage: availabilityNote,
-      runtimeWarning: "Session 与 Platform Token 都属于 VOXI 账户认证凭据；只粘贴到自己的 SIMKeeper 实例，不要通过聊天、截图或日志分享 Value。",
+      runtimeWarning: "VOXI 登录邮箱和密码由 SIMKeeper 凭据加密保存；验证码只用于完成当前认证，会话失效后需要手动重新发送验证码。",
       runtimeMode: null as "oauth" | "static-token" | null,
-      runtimeSource: "VOXI browser session cookies" as string | null,
+      runtimeSource: "VOXI native web login" as string | null,
       runtimeExpiresAt: null as string | null,
     };
   }

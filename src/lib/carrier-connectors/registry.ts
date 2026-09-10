@@ -4,7 +4,7 @@ import { cslCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/
 import { ditoCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/dito";
 import { globeCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/globe";
 import { mockCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/mock";
-import { voxiCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/voxi";
+import { voxiCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/voxi-native";
 import type {
   CarrierConnectorCapabilities,
   CarrierConnectorProvider,
@@ -55,7 +55,7 @@ const PROVIDER_METADATA: Record<string, ProviderMetadata> = {
   },
   voxi: {
     maturity: "experimental",
-    availabilityNote: "VOXI 没有公开的第三方消费者余额 API。此连接使用用户主动提供的 Session、PlatformAccessToken 和 PlatformAuthToken 复用已登录浏览器会话，通过官方站点内部 /auth 与 /subscription/get 接口读取 simBalance；会话失效时需要重新登录并更新这些凭据。",
+    availabilityNote: "VOXI 没有公开的第三方消费者余额 API。alpha.54.0 按网页实际流程在 SIMKeeper 服务端调用 /authenticate + 短信 OTP 建立加密会话，再通过 /auth/accounts、subscriptions 与 /subscription/get 读取 simBalance；不再要求复制浏览器 Cookie。",
     capabilities: {
       automaticSync: true,
       balance: true,

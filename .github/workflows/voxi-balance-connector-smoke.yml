@@ -39,7 +39,7 @@ jobs:
           docker pull "$image"
           echo "IMAGE=$image" >> "$GITHUB_ENV"
 
-      - name: Verify VOXI provider metadata and encrypted configuration
+      - name: Verify VOXI native login metadata and encrypted configuration
         shell: bash
         run: |
           set -euo pipefail
@@ -47,10 +47,8 @@ jobs:
           container="simkeeper-voxi-balance-smoke"
           base="http://127.0.0.1:18124"
           cookies="$tmp/cookies"
-          fake_session='VOXI-SMOKE-SESSION'
-          fake_access='VOXI-SMOKE-PLATFORM-ACCESS'
-          fake_auth='VOXI-SMOKE-PLATFORM-AUTH'
-          fake_edge='__cf_bm=VOXI-SMOKE-CF; ts=VOXI-SMOKE-TS; ts_c=VOXI-SMOKE-TSC'
+          fake_username='VOXI-SMOKE-USERNAME@example.invalid'
+          fake_password='VOXI-SMOKE-PASSWORD-ONLY-FOR-CI'
           expected_version="$(jq -r '.version' package.json)"
 
           cleanup() {
@@ -66,18 +64,22 @@ jobs:
           }
 
           grep -Fq 'voxiCarrierConnectorProvider' src/lib/carrier-connectors/registry.ts || fail "VOXI provider is not registered"
-          grep -Fq 'id: "voxi"' src/lib/carrier-connectors/providers/voxi.ts || fail "VOXI provider id missing"
-          grep -Fq 'key: "session"' src/lib/carrier-connectors/providers/voxi.ts || fail "VOXI Session credential missing"
-          grep -Fq 'key: "platformAccessToken"' src/lib/carrier-connectors/providers/voxi.ts || fail "VOXI PlatformAccessToken credential missing"
-          grep -Fq 'key: "platformAuthToken"' src/lib/carrier-connectors/providers/voxi.ts || fail "VOXI PlatformAuthToken credential missing"
-          grep -Fq 'key: "edgeCookies"' src/lib/carrier-connectors/providers/voxi.ts || fail "VOXI edge-cookie fallback missing"
-          grep -Fq 'key: "sessionCookie"' src/lib/carrier-connectors/providers/voxi.ts || fail "VOXI legacy Cookie compatibility missing"
-          grep -Fq 'lower === "platformauthtoken"' src/lib/carrier-connectors/providers/voxi.ts || fail "VOXI PlatformAuthToken cookie forwarding missing"
-          grep -Fq 'return "/auth/accounts/{accountId}/subscriptions"' src/lib/carrier-connectors/providers/voxi.ts || fail "VOXI endpoint-safe diagnostics missing"
-          grep -Fq '"/subscription/get"' src/lib/carrier-connectors/providers/voxi.ts || fail "VOXI subscription balance endpoint missing"
-          grep -Fq 'subscription.simBalance' src/lib/carrier-connectors/providers/voxi.ts || fail "VOXI simBalance parser missing"
+          grep -Fq 'providers/voxi-native' src/lib/carrier-connectors/registry.ts || fail "VOXI native provider is not active"
+          grep -Fq 'id: "voxi"' src/lib/carrier-connectors/providers/voxi-native.ts || fail "VOXI provider id missing"
+          grep -Fq 'key: "username"' src/lib/carrier-connectors/providers/voxi-native.ts || fail "VOXI username credential missing"
+          grep -Fq 'key: "password"' src/lib/carrier-connectors/providers/voxi-native.ts || fail "VOXI password credential missing"
+          grep -Fq 'key: "requestOtp"' src/lib/carrier-connectors/providers/voxi-native.ts || fail "VOXI OTP request control missing"
+          grep -Fq 'key: "otpCode"' src/lib/carrier-connectors/providers/voxi-native.ts || fail "VOXI OTP code field missing"
+          grep -Fq '"/authenticate/sendOtp"' src/lib/carrier-connectors/providers/voxi-native-http.ts || fail "VOXI OTP endpoint missing"
+          grep -Fq 'VOXI_OTP_PASSWORD_PLACEHOLDER' src/lib/carrier-connectors/providers/voxi-native-http.ts || fail "VOXI OTP verification payload missing"
+          grep -Fq 'Buffer.from(password, "utf8").toString("base64")' src/lib/carrier-connectors/providers/voxi-native-http.ts || fail "VOXI native password transport encoding missing"
+          grep -Fq 'voxi_connector_sessions' src/lib/carrier-connectors/providers/voxi-native-session.ts || fail "VOXI encrypted session store missing"
+          grep -Fq '"/auth/accounts"' src/lib/carrier-connectors/providers/voxi-native.ts || fail "VOXI account discovery missing"
+          grep -Fq '"/subscription/get"' src/lib/carrier-connectors/providers/voxi-native.ts || fail "VOXI subscription balance endpoint missing"
+          grep -Fq 'subscription.simBalance' src/lib/carrier-connectors/providers/voxi-native.ts || fail "VOXI simBalance parser missing"
+          ! grep -Fq 'key: "sessionCookie"' src/lib/carrier-connectors/providers/voxi-native.ts || fail "Legacy copied Cookie field should not be exposed in alpha.54.0"
           grep -Fq 'supportedCountryCodes: ["GB"]' 'src/app/api/sims/balance-source/route.ts' || fail "VOXI GB matcher missing"
-          grep -Fq 'PlatformAccessToken 和 PlatformAuthToken' 'src/app/api/sims/balance-source/route.ts' || fail "VOXI runtime guidance was not updated"
+          grep -Fq '官方登录流程' 'src/app/api/sims/balance-source/route.ts' || fail "VOXI native-login runtime guidance missing"
           grep -Fq "APP_VERSION = \"$expected_version\"" src/components/layout/navigation.ts || fail "App version does not match package version"
 
           mkdir -p "$tmp/data"
@@ -106,9 +108,13 @@ jobs:
             || fail "Unable to list balance providers"
           [ "$(jq '[.providers[] | select(.id == "voxi" and .maturity == "experimental" and .runtimeReady == true and .capabilities.balance == true and .capabilities.automaticSync == true and .capabilities.accountStatus == true)] | length' "$tmp/providers.json")" = "1" ] \
             || fail "VOXI provider metadata is incomplete"
-          for key in session platformAccessToken platformAuthToken edgeCookies sessionCookie; do
+          for key in username password; do
             [ "$(jq --arg key "$key" '[.providers[] | select(.id == "voxi") | .credentialFields[] | select(.key == $key)] | length' "$tmp/providers.json")" = "1" ] \
               || fail "VOXI credential field $key is not exposed to the editor"
+          done
+          for key in requestOtp otpCode; do
+            [ "$(jq --arg key "$key" '[.providers[] | select(.id == "voxi") | .configFields[] | select(.key == $key)] | length' "$tmp/providers.json")" = "1" ] \
+              || fail "VOXI auth config field $key is not exposed to the editor"
           done
 
           curl -fsS -b "$cookies" -H 'Content-Type: application/json' \
@@ -131,20 +137,13 @@ jobs:
 
           jq -n \
             --argjson simId "$sim_id" \
-            --arg session "$fake_session" \
-            --arg access "$fake_access" \
-            --arg auth "$fake_auth" \
-            --arg edge "$fake_edge" '{
+            --arg username "$fake_username" \
+            --arg password "$fake_password" '{
               simId:$simId,
               provider:"voxi",
               syncIntervalMinutes:1440,
-              providerConfig:{},
-              credentials:{
-                session:$session,
-                platformAccessToken:$access,
-                platformAuthToken:$auth,
-                edgeCookies:$edge
-              }
+              providerConfig:{requestOtp:false},
+              credentials:{username:$username,password:$password}
             }' > "$tmp/source.json"
           code="$(curl -sS -b "$cookies" -o "$tmp/source-result.json" -w '%{http_code}' \
             -X PUT -H 'Content-Type: application/json' --data-binary @"$tmp/source.json" \
@@ -158,17 +157,15 @@ jobs:
           sync
           for dbfile in "$tmp/data/simkeeper.db" "$tmp/data/simkeeper.db-wal" "$tmp/data/simkeeper.db-shm"; do
             [ -f "$dbfile" ] || continue
-            for secret in "$fake_session" "$fake_access" "$fake_auth" 'VOXI-SMOKE-CF' 'VOXI-SMOKE-TS' 'VOXI-SMOKE-TSC'; do
-              ! grep -aFq "$secret" "$dbfile" || fail "VOXI credential was stored in plaintext"
-            done
+            ! grep -aFq "$fake_username" "$dbfile" || fail "VOXI username was stored in plaintext"
+            ! grep -aFq "$fake_password" "$dbfile" || fail "VOXI password was stored in plaintext"
           done
 
           curl -fsS -b "$cookies" "$base/api/sims/balance-source?simId=$sim_id" > "$tmp/source-read.json" \
             || fail "Unable to read VOXI source"
           [ "$(jq -r '.source.connector.providerLabel' "$tmp/source-read.json")" = "VOXI My Account" ] \
             || fail "VOXI provider label missing from source"
-          for secret in "$fake_session" "$fake_access" "$fake_auth" 'VOXI-SMOKE-CF' 'VOXI-SMOKE-TS' 'VOXI-SMOKE-TSC'; do
-            ! grep -Fq "$secret" "$tmp/source-read.json" || fail "VOXI credential leaked through API"
-          done
+          ! grep -Fq "$fake_username" "$tmp/source-read.json" || fail "VOXI username leaked through API"
+          ! grep -Fq "$fake_password" "$tmp/source-read.json" || fail "VOXI password leaked through API"
 
-          echo "VOXI balance connector smoke test passed"
+          echo "VOXI native login connector smoke test passed"
