@@ -81,7 +81,7 @@ function positiveId(value: string | null) {
 
 function providerRuntimeState(providerId: string) {
   if (providerId === "voxi") {
-    const availabilityNote = "VOXI 没有公开的第三方消费者余额 API。alpha.55.0 使用 SIMKeeper 容器内的 Playwright Chromium 打开 VOXI 官方网页，让 Cloudflare 在真实浏览器环境中正常运行，再完成邮箱/密码、短信 OTP 和 /subscription/get 余额读取。";
+    const availabilityNote = "VOXI 没有公开的第三方消费者余额 API。alpha.55.1 使用 SIMKeeper 容器内的 Playwright Chromium 打开 VOXI 官方网页，让 Cloudflare 在真实浏览器环境中正常运行，再完成邮箱/密码、短信 OTP 和 /subscription/get 余额读取。";
     return {
       maturity: "experimental" as const,
       availabilityNote,
@@ -231,6 +231,28 @@ function normalizeCredentials(
   );
 }
 
+function clearVoxiOneTimeProviderConfig(connectorId: number) {
+  const row = sqlite
+    .prepare("SELECT provider_config FROM carrier_connectors WHERE id = ? AND provider = 'voxi'")
+    .get(connectorId) as { provider_config: string | null } | undefined;
+  if (!row) return;
+
+  let config: Record<string, unknown> = {};
+  try {
+    const parsed = row.provider_config ? JSON.parse(row.provider_config) as unknown : {};
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      config = parsed as Record<string, unknown>;
+    }
+  } catch {
+    config = {};
+  }
+  delete config.requestOtp;
+  delete config.otpCode;
+  sqlite
+    .prepare("UPDATE carrier_connectors SET provider_config = ?, updated_at = ? WHERE id = ?")
+    .run(JSON.stringify(config), new Date().toISOString(), connectorId);
+}
+
 export async function GET(request: NextRequest) {
   const unauthorized = await requireUser();
   if (unauthorized) return unauthorized;
@@ -378,5 +400,7 @@ export async function POST(request: NextRequest) {
       { error: error instanceof Error ? error.message : "余额同步失败" },
       { status: 500 },
     );
+  } finally {
+    if (current.provider === "voxi") clearVoxiOneTimeProviderConfig(current.id);
   }
 }

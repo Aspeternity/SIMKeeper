@@ -148,6 +148,13 @@ function globeOtpRequired(connector: SourceConnector | null | undefined) {
   );
 }
 
+function voxiOtpPending(connector: SourceConnector | null | undefined) {
+  if (connector?.provider !== "voxi") return false;
+  return /VOXI 验证码已(?:由服务器 Chromium )?发送|验证码会话约 10 分钟/i.test(
+    connector.lastError ?? "",
+  );
+}
+
 export const SimBalanceSourceEditor = forwardRef<
   SimBalanceSourceEditorHandle,
   {
@@ -218,6 +225,7 @@ export const SimBalanceSourceEditor = forwardRef<
           setProviderId(nextSource.connector.provider);
           setSyncIntervalMinutes(nextSource.connector.syncIntervalMinutes);
           setProviderConfig(initialConfig(provider));
+          setOtpSent(provider?.id === "voxi" && voxiOtpPending(nextSource.connector));
         } else {
           setMode("manual");
         }
@@ -325,7 +333,10 @@ export const SimBalanceSourceEditor = forwardRef<
     );
   }
 
-  async function persistAutoSource(simId: number) {
+  async function persistAutoSource(
+    simId: number,
+    configOverride: Record<string, string | boolean> = providerConfig,
+  ) {
     if (!selectedProvider) throw new Error("请选择自动同步来源");
     const response = await fetch("/api/sims/balance-source", {
       method: "PUT",
@@ -334,7 +345,7 @@ export const SimBalanceSourceEditor = forwardRef<
         simId,
         provider: selectedProvider.id,
         syncIntervalMinutes,
-        providerConfig,
+        providerConfig: configOverride,
         credentials: cleanCredentials(),
       }),
     });
@@ -342,6 +353,7 @@ export const SimBalanceSourceEditor = forwardRef<
     if (!response.ok) throw new Error(data.error || "自动余额同步配置失败");
     const nextSource = (data.source || null) as BalanceSource | null;
     setSource(nextSource);
+    setProviderConfig(configOverride);
     setCredentials({});
     setRevealedCredentials({});
     return nextSource;
@@ -353,6 +365,9 @@ export const SimBalanceSourceEditor = forwardRef<
     if (!response.ok) throw new Error(data.error || "余额同步状态加载失败");
     const nextSource = (data.source || null) as BalanceSource | null;
     setSource(nextSource);
+    if (selectedProvider?.id === "voxi") {
+      setOtpSent(voxiOtpPending(nextSource?.connector));
+    }
     return nextSource;
   }
 
@@ -384,7 +399,10 @@ export const SimBalanceSourceEditor = forwardRef<
 
     const hadExistingSource = Boolean(source?.connector);
     const credentialChanged = Object.keys(cleanCredentials()).length > 0;
-    await persistAutoSource(simId);
+    const cleanConfig = selectedProvider?.id === "voxi"
+      ? { ...providerConfig, requestOtp: false, otpCode: "" }
+      : providerConfig;
+    await persistAutoSource(simId, cleanConfig);
 
     if (!hadExistingSource || credentialChanged) {
       try {
@@ -426,6 +444,105 @@ export const SimBalanceSourceEditor = forwardRef<
         await reloadSource(editing.id);
       } catch {
         // Keep the original connection error visible.
+      }
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function startVoxiOtp() {
+    if (!editing?.id || authBusy || disabled) return;
+    setActionError("");
+    setNotice("");
+    setOtpCode("");
+
+    try {
+      validate();
+      if (selectedProvider?.runtimeReady === false) {
+        throw new Error(selectedProvider.runtimeMessage || "VOXI Chromium 运行时尚未就绪");
+      }
+      setAuthBusy(true);
+      const nextConfig = { ...providerConfig, requestOtp: true, otpCode: "" };
+      await persistAutoSource(editing.id, nextConfig);
+      try {
+        await syncSource(editing.id);
+        setNotice("VOXI 已完成登录并同步余额");
+        window.dispatchEvent(new CustomEvent("simkeeper:balance-synced", { detail: { simId: editing.id } }));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "VOXI 验证码发送失败";
+        if (/VOXI 验证码已(?:由服务器 Chromium )?发送/i.test(message)) {
+          setProviderConfig((current) => ({ ...current, requestOtp: false, otpCode: "" }));
+          setOtpSent(true);
+          setActionError("");
+          setNotice("验证码已发送。输入短信验证码后直接点击“验证并同步”，不需要再次保存配置。");
+          await reloadSource(editing.id);
+          return;
+        }
+        throw error;
+      }
+    } catch (error) {
+      setProviderConfig((current) => ({ ...current, requestOtp: false, otpCode: "" }));
+      setActionError(error instanceof Error ? error.message : "VOXI 验证码发送失败");
+      try {
+        await reloadSource(editing.id);
+      } catch {
+        // Keep the original VOXI error visible.
+      }
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function verifyVoxiOtp() {
+    if (!editing?.id || authBusy || disabled) return;
+    const code = otpCode.trim().toUpperCase();
+    if (!/^[A-Z0-9]{4,8}$/.test(code)) {
+      setActionError("请输入 VOXI 短信中的 4-8 位字母或数字验证码");
+      return;
+    }
+
+    setAuthBusy(true);
+    setActionError("");
+    setNotice("");
+    try {
+      const nextConfig = { ...providerConfig, requestOtp: false, otpCode: code };
+      await persistAutoSource(editing.id, nextConfig);
+      await syncSource(editing.id);
+      setProviderConfig((current) => ({ ...current, requestOtp: false, otpCode: "" }));
+      setOtpSent(false);
+      setOtpCode("");
+      setNotice("VOXI 登录验证完成，余额已同步。之后会复用服务器 Chromium 会话，无需每次输入验证码。");
+      window.dispatchEvent(new CustomEvent("simkeeper:balance-synced", { detail: { simId: editing.id } }));
+    } catch (error) {
+      setProviderConfig((current) => ({ ...current, requestOtp: false, otpCode: "" }));
+      setOtpSent(true);
+      setActionError(error instanceof Error ? error.message : "VOXI 验证失败");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function syncVoxiNow() {
+    if (!editing?.id || actionBusy || disabled) return;
+    setActionBusy(true);
+    setActionError("");
+    setNotice("");
+    try {
+      const cleanConfig = { ...providerConfig, requestOtp: false, otpCode: "" };
+      await persistAutoSource(editing.id, cleanConfig);
+      await syncSource(editing.id);
+      setNotice("VOXI 余额已同步");
+      window.dispatchEvent(new CustomEvent("simkeeper:balance-synced", { detail: { simId: editing.id } }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "VOXI 余额同步失败";
+      setActionError(message);
+      if (/尚未建立|登录会话.*失效|重新进行 VOXI 登录验证|重新进行登录验证/i.test(message)) {
+        setOtpSent(false);
+      }
+      try {
+        await reloadSource(editing.id);
+      } catch {
+        // Keep the original sync error visible.
       }
     } finally {
       setActionBusy(false);
@@ -519,6 +636,10 @@ export const SimBalanceSourceEditor = forwardRef<
     && sourceForSelectedProvider
     && sourceForSelectedProvider.status !== "error",
   );
+  const visibleConfigFields = selectedProvider?.configFields.filter((field) => (
+    selectedProvider.id !== "voxi" || (field.key !== "requestOtp" && field.key !== "otpCode")
+  )) ?? [];
+  const voxiHasSession = Boolean(sourceForSelectedProvider?.lastSuccessAt);
 
   return (
     <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50/50 p-4">
@@ -694,7 +815,7 @@ export const SimBalanceSourceEditor = forwardRef<
             </select>
           </label>
 
-          {selectedProvider.configFields.map((field) => (
+          {visibleConfigFields.map((field) => (
             field.type === "checkbox" ? (
               <label key={field.key} className="flex items-start gap-2 rounded-xl border border-slate-100 px-3 py-2.5 text-sm">
                 <input
@@ -773,28 +894,117 @@ export const SimBalanceSourceEditor = forwardRef<
             })}
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            {editing ? (
-              <button
-                type="button"
-                onClick={() => void connectNow()}
-                disabled={disabled || actionBusy || authBusy || !runtimeReady}
-                className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-slate-950 px-3 text-xs font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {actionBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-                {actionBusy
-                  ? "连接中…"
-                  : sourceForSelectedProvider
-                    ? "保存配置并立即同步"
-                    : `连接 ${selectedProvider.label}`}
-              </button>
-            ) : (
-              <span className="text-xs leading-5 text-slate-400">
-                新号码保存后会自动建立连接并尝试首次同步。
-              </span>
-            )}
-            {notice ? <span className="text-xs font-medium text-emerald-600">{notice}</span> : null}
-          </div>
+          {selectedProvider.id !== "voxi" ? (
+            <div className="flex flex-wrap items-center gap-2">
+              {editing ? (
+                <button
+                  type="button"
+                  onClick={() => void connectNow()}
+                  disabled={disabled || actionBusy || authBusy || !runtimeReady}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-slate-950 px-3 text-xs font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {actionBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                  {actionBusy
+                    ? "连接中…"
+                    : sourceForSelectedProvider
+                      ? "保存配置并立即同步"
+                      : `连接 ${selectedProvider.label}`}
+                </button>
+              ) : (
+                <span className="text-xs leading-5 text-slate-400">
+                  新号码保存后会自动建立连接并尝试首次同步。
+                </span>
+              )}
+              {notice ? <span className="text-xs font-medium text-emerald-600">{notice}</span> : null}
+            </div>
+          ) : (
+            <div className={`rounded-xl border px-3 py-3 text-xs leading-5 ${otpSent ? "border-amber-200 bg-amber-50 text-amber-800" : "border-slate-200 bg-slate-50 text-slate-700"}`}>
+              <div className="flex items-start gap-2">
+                <KeyRound className={`mt-0.5 h-4 w-4 shrink-0 ${otpSent ? "text-amber-600" : "text-slate-400"}`} />
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium">{otpSent ? "验证码已发送" : voxiHasSession ? "VOXI 浏览器会话已建立" : "VOXI 登录验证"}</div>
+                  <div className={`mt-0.5 ${otpSent ? "text-amber-700" : "text-slate-500"}`}>
+                    {otpSent
+                      ? "输入这次短信收到的验证码并直接验证。验证码只用于本次登录，不会长期保存。"
+                      : voxiHasSession
+                        ? "日常同步会复用服务器 Chromium 中的登录会话，不需要每次输入验证码；只有 VOXI 主动让会话失效时才需要重新认证。"
+                        : "首次连接只需发送一次验证码并完成验证。邮箱和密码会自动保存，无需先勾选选项或先保存一次配置。"}
+                  </div>
+
+                  {!editing ? (
+                    <div className="mt-2 text-slate-400">请先保存号码，再建立 VOXI 登录会话。</div>
+                  ) : otpSent ? (
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <input
+                        value={otpCode}
+                        onChange={(event) => {
+                          setOtpCode(event.target.value.replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 8));
+                          setActionError("");
+                        }}
+                        inputMode="text"
+                        autoComplete="one-time-code"
+                        placeholder="短信验证码"
+                        className="h-9 w-36 rounded-lg border border-amber-200 bg-white px-3 text-sm text-slate-800 outline-none focus:border-amber-400"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void verifyVoxiOtp()}
+                        disabled={disabled || authBusy || !otpCode.trim()}
+                        className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-slate-950 px-3 text-xs font-medium text-white transition hover:bg-slate-800 disabled:opacity-50"
+                      >
+                        {authBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                        {authBusy ? "验证中…" : "验证并同步"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void startVoxiOtp()}
+                        disabled={disabled || authBusy}
+                        className="h-9 px-1 text-xs font-medium text-amber-700 hover:text-amber-900 disabled:opacity-50"
+                      >
+                        重新发送
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      {voxiHasSession ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => void syncVoxiNow()}
+                            disabled={disabled || actionBusy || authBusy || !runtimeReady}
+                            className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-slate-950 px-3 text-xs font-medium text-white transition hover:bg-slate-800 disabled:opacity-50"
+                          >
+                            {actionBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                            {actionBusy ? "同步中…" : "立即同步余额"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void startVoxiOtp()}
+                            disabled={disabled || authBusy || actionBusy || !runtimeReady}
+                            className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 transition hover:bg-slate-100 disabled:opacity-50"
+                          >
+                            {authBusy ? "发送中…" : "重新认证"}
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => void startVoxiOtp()}
+                          disabled={disabled || authBusy || actionBusy || !runtimeReady}
+                          className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-slate-950 px-3 text-xs font-medium text-white transition hover:bg-slate-800 disabled:opacity-50"
+                        >
+                          {authBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <KeyRound className="h-3.5 w-3.5" />}
+                          {authBusy ? "正在打开 Chromium 并发送…" : "发送验证码"}
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {notice ? <div className="mt-2 font-medium text-emerald-700">{notice}</div> : null}
+                </div>
+              </div>
+            </div>
+          )}
 
           {needsGlobeOtp ? (
             <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-5 text-amber-800">

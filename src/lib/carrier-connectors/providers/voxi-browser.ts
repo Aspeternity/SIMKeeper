@@ -248,6 +248,24 @@ function profileDirectory(connectorId: number) {
   return path.join(dataDirectory(), "carrier-browser", "voxi", String(connectorId));
 }
 
+function browserRuntimeDirectories() {
+  const dataDir = dataDirectory();
+  const home = process.env.HOME?.trim() || path.join(dataDir, "runtime-home");
+  const cache = process.env.XDG_CACHE_HOME?.trim() || path.join(home, ".cache");
+  const config = process.env.XDG_CONFIG_HOME?.trim() || path.join(home, ".config");
+  return { home, cache, config };
+}
+
+function chromiumLaunchError(error: unknown) {
+  const raw = error instanceof Error ? error.message : String(error ?? "");
+  return raw
+    .replace(/[\r\n]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/\/app\/data\/carrier-browser\/voxi\/\d+/g, "<VOXI profile>")
+    .trim()
+    .slice(0, 420);
+}
+
 async function chromiumExecutable() {
   const configured = process.env.SIMKEEPER_VOXI_CHROMIUM_EXECUTABLE?.trim();
   const candidates = [configured, "/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome"]
@@ -306,7 +324,23 @@ async function withVoxiBrowser<T>(
 ) {
   const executablePath = await chromiumExecutable();
   const profileDir = profileDirectory(connectorId);
-  await mkdir(profileDir, { recursive: true, mode: 0o700 });
+  const runtime = browserRuntimeDirectories();
+  try {
+    await Promise.all([
+      mkdir(profileDir, { recursive: true, mode: 0o700 }),
+      mkdir(runtime.home, { recursive: true, mode: 0o700 }),
+      mkdir(runtime.cache, { recursive: true, mode: 0o700 }),
+      mkdir(runtime.config, { recursive: true, mode: 0o700 }),
+    ]);
+    await access(profileDir, fsConstants.W_OK | fsConstants.X_OK);
+    await access(runtime.home, fsConstants.W_OK | fsConstants.X_OK);
+  } catch (error) {
+    throw new CarrierProviderError({
+      type: "configuration",
+      message: `VOXI Chromium 运行目录不可写：${chromiumLaunchError(error) || "请检查 /app/data 的 PUID/PGID 和挂载权限"}`,
+      cause: error,
+    });
+  }
   await removeStaleChromiumLocks(profileDir);
 
   let context: BrowserContext;
@@ -314,19 +348,30 @@ async function withVoxiBrowser<T>(
     context = await chromium.launchPersistentContext(profileDir, {
       executablePath,
       headless: true,
+      chromiumSandbox: false,
       locale: "en-GB",
       timezoneId: "Europe/London",
       viewport: { width: 1365, height: 900 },
+      env: {
+        ...process.env,
+        HOME: runtime.home,
+        XDG_CACHE_HOME: runtime.cache,
+        XDG_CONFIG_HOME: runtime.config,
+        TMPDIR: process.env.TMPDIR?.trim() || "/tmp",
+      },
       args: [
         "--disable-dev-shm-usage",
         "--no-sandbox",
         "--disable-setuid-sandbox",
+        "--no-first-run",
+        "--no-default-browser-check",
       ],
     });
   } catch (error) {
+    const reason = chromiumLaunchError(error);
     throw new CarrierProviderError({
-      type: "temporary",
-      message: "SIMKeeper 无法启动 VOXI Chromium 浏览器运行时，请检查容器日志和 /app/data 写入权限",
+      type: "configuration",
+      message: `SIMKeeper 无法启动 VOXI Chromium 浏览器运行时${reason ? `：${reason}` : ""}。alpha.55.1 已为 Chromium 使用独立可写 HOME/XDG 目录；若仍失败，请把这条完整错误信息发来`,
       cause: error,
     });
   }
@@ -622,14 +667,14 @@ async function browserJsonRequest<T>(
     throw new CarrierProviderError({
       type: "authentication",
       httpStatus: response.status,
-      message: `VOXI ${label} 被 Cloudflare 要求重新验证 ${challengeDiagnostic(response)}；请手动重新发送 VOXI 短信验证码建立新的浏览器会话`,
+      message: `VOXI ${label} 被 Cloudflare 要求重新验证 ${challengeDiagnostic(response)}；请重新进行 VOXI 登录验证`,
     });
   }
   if (response.status === 401 || response.status === 403 || /\/sign-in(?:[/?#]|$)/i.test(response.url)) {
     throw new CarrierProviderError({
       type: "authentication",
       httpStatus: response.status || null,
-      message: `VOXI ${label} 登录会话已失效或被拒绝，请重新发送验证码完成认证`,
+      message: `VOXI ${label} 登录会话已失效或被拒绝，请重新进行 VOXI 登录验证`,
     });
   }
   if (response.status === 429) {
@@ -670,7 +715,7 @@ async function browserJsonRequest<T>(
   if (contentType.includes("text/html") || /^\s*</.test(response.text)) {
     throw new CarrierProviderError({
       type: "authentication",
-      message: `VOXI ${label} 返回了登录网页而不是账户数据，请重新发送验证码完成认证`,
+      message: `VOXI ${label} 返回了登录网页而不是账户数据，请重新进行 VOXI 登录验证`,
     });
   }
   try {
@@ -691,7 +736,7 @@ async function selectVoxiSubscriptionInBrowser(page: Page, targetMsisdn: string)
   if (accounts.length === 0) {
     throw new CarrierProviderError({
       type: "authentication",
-      message: "VOXI 登录成功但没有读取到账户，请重新发送验证码完成认证",
+      message: "VOXI 登录成功但没有读取到账户，请重新进行登录验证",
     });
   }
 
@@ -746,7 +791,7 @@ async function readVoxiDataInBrowser(
   if (currentUrl.pathname.startsWith("/sign-in")) {
     throw new CarrierProviderError({
       type: "authentication",
-      message: "VOXI 浏览器登录会话已经失效，请重新发送短信验证码完成认证",
+      message: "VOXI 浏览器登录会话已经失效，请重新进行登录验证",
     });
   }
 
@@ -809,7 +854,7 @@ async function completeVoxiOtpAuthentication(
   if (!pending) {
     throw new CarrierProviderError({
       type: "authentication",
-      message: "VOXI 验证码会话不存在或已过期，请勾选“发送 / 重新发送 VOXI 短信验证码”后再次同步",
+      message: "VOXI 验证码会话不存在或已过期，请点击“发送验证码”重新开始登录验证",
     });
   }
   if (!pendingVoxiAuthMatchesUsername(connectorId, username)) {
@@ -839,7 +884,7 @@ async function syncVoxiBrowserSession(
   if (!stored) {
     throw new CarrierProviderError({
       type: "authentication",
-      message: "VOXI 尚未建立服务器 Chromium 登录会话。请勾选“发送 / 重新发送 VOXI 短信验证码”并手动同步",
+      message: "VOXI 尚未建立服务器 Chromium 登录会话，请点击“发送验证码”完成一次登录验证",
     });
   }
   const data = await withVoxiBrowser(connectorId, stored, async (context, page) => (
@@ -863,19 +908,19 @@ export const voxiCarrierConnectorProvider: CarrierConnectorProvider = {
   configFields: [
     {
       key: "requestOtp",
-      label: "发送 / 重新发送 VOXI 短信验证码",
+      label: "发送 VOXI 验证码",
       type: "checkbox",
       required: false,
       defaultValue: false,
-      description: "首次连接或浏览器会话失效时勾选。SIMKeeper 会在服务器 Chromium 中打开 VOXI 并发送验证码；后台定时任务不会自动发送验证码。",
+      description: "VOXI 登录验证的内部一次性状态；号码编辑器会自动处理，无需手动勾选。",
     },
     {
       key: "otpCode",
-      label: "VOXI 短信验证码（收到后填写）",
+      label: "VOXI 短信验证码",
       type: "text",
       required: false,
       placeholder: "例如 AB12C",
-      description: "收到验证码后填写 4-8 位字母或数字并再次同步。验证成功后该一次性验证码会自动清除。",
+      description: "VOXI 登录验证的内部一次性状态；验证完成后自动清除，不会长期保存。",
     },
   ],
   credentialFields: [
@@ -927,12 +972,12 @@ export const voxiCarrierConnectorProvider: CarrierConnectorProvider = {
         clearVoxiOneTimeAuthConfig(connectorId, { requestOtp: true });
         throw new CarrierProviderError({
           type: "authentication",
-          message: `VOXI 验证码已由服务器 Chromium 发送，请填写“VOXI 短信验证码”后再次同步；本次验证码会话约 10 分钟内有效（截至 ${result.expiresAt}）`,
+          message: `VOXI 验证码已由服务器 Chromium 发送；请在号码编辑器中输入短信验证码并点击“验证并同步”。本次验证码会话约 10 分钟内有效（截至 ${result.expiresAt}）`,
         });
       } else if (pending) {
         throw new CarrierProviderError({
           type: "authentication",
-          message: "VOXI 验证码已发送，请填写“VOXI 短信验证码”后再次点击保存配置并立即同步",
+          message: "VOXI 验证码已发送，请输入短信验证码并点击“验证并同步”",
         });
       } else {
         data = await syncVoxiBrowserSession(connectorId, username, targetMsisdn);
