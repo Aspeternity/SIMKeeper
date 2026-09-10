@@ -55,7 +55,7 @@ const PROVIDER_METADATA: Record<string, ProviderMetadata> = {
   },
   voxi: {
     maturity: "experimental",
-    availabilityNote: "VOXI 没有公开的第三方消费者余额 API。alpha.55.1 使用 SIMKeeper 服务器内置 Playwright Chromium 打开 VOXI 官方网页并维持持久化浏览器 Profile；首次登录通过短信 OTP 验证，之后复用会话读取 /subscription/get 的 simBalance。",
+    availabilityNote: "VOXI 没有公开的第三方消费者余额 API。当前实现使用 SIMKeeper 服务器内置 Playwright Chromium 打开 VOXI 官方网页并维持持久化浏览器 Profile，再通过短信 OTP 建立登录状态并读取 /subscription/get 的 simBalance。",
     capabilities: {
       automaticSync: true,
       balance: true,
