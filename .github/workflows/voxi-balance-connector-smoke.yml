@@ -47,7 +47,7 @@ jobs:
           container="simkeeper-voxi-balance-smoke"
           base="http://127.0.0.1:18124"
           cookies="$tmp/cookies"
-          fake_cookie='Session=VOXI-SMOKE-SESSION; _vapi=VOXI-SMOKE-VAPI'
+          fake_cookie='Session=VOXI-SMOKE-SESSION; _vapi=VOXI-SMOKE-VAPI; utag_main=TRACKING-SHOULD-NOT-BE-REPLAYED'
           expected_version="$(jq -r '.version' package.json)"
 
           cleanup() {
@@ -65,7 +65,10 @@ jobs:
           grep -Fq 'voxiCarrierConnectorProvider' src/lib/carrier-connectors/registry.ts || fail "VOXI provider is not registered"
           grep -Fq 'id: "voxi"' src/lib/carrier-connectors/providers/voxi.ts || fail "VOXI provider id missing"
           grep -Fq 'key: "sessionCookie"' src/lib/carrier-connectors/providers/voxi.ts || fail "VOXI encrypted session credential missing"
-          grep -Fq 'const ACCOUNT_PATHS = ["/account/payment", "/account", "/account/plan"]' src/lib/carrier-connectors/providers/voxi.ts || fail "VOXI account page fallback list missing"
+          grep -Fq 'const ACCOUNT_PATHS = ["/account", "/account/payment", "/account/plan"]' src/lib/carrier-connectors/providers/voxi.ts || fail "VOXI root-first account probe missing"
+          grep -Fq 'lower === "session"' src/lib/carrier-connectors/providers/voxi.ts || fail "VOXI Session cookie filtering missing"
+          grep -Fq 'lower.startsWith("_vapi")' src/lib/carrier-connectors/providers/voxi.ts || fail "VOXI _vapi cookie filtering missing"
+          grep -Fq 'Sec-Fetch-Mode' src/lib/carrier-connectors/providers/voxi.ts || fail "VOXI browser request emulation missing"
           grep -Fq 'supportedCountryCodes: ["GB"]' 'src/app/api/sims/balance-source/route.ts' || fail "VOXI GB matcher missing"
           grep -Fq "APP_VERSION = \"$expected_version\"" src/components/layout/navigation.ts || fail "App version does not match package version"
 
@@ -137,6 +140,7 @@ jobs:
             [ -f "$dbfile" ] || continue
             ! grep -aFq 'VOXI-SMOKE-SESSION' "$dbfile" || fail "VOXI session cookie was stored in plaintext"
             ! grep -aFq 'VOXI-SMOKE-VAPI' "$dbfile" || fail "VOXI API session cookie was stored in plaintext"
+            ! grep -aFq 'TRACKING-SHOULD-NOT-BE-REPLAYED' "$dbfile" || fail "VOXI raw cookie credential was stored in plaintext"
           done
 
           curl -fsS -b "$cookies" "$base/api/sims/balance-source?simId=$sim_id" > "$tmp/source-read.json" \
@@ -145,5 +149,6 @@ jobs:
             || fail "VOXI provider label missing from source"
           ! grep -Fq 'VOXI-SMOKE-SESSION' "$tmp/source-read.json" || fail "VOXI session leaked through API"
           ! grep -Fq 'VOXI-SMOKE-VAPI' "$tmp/source-read.json" || fail "VOXI API session leaked through API"
+          ! grep -Fq 'TRACKING-SHOULD-NOT-BE-REPLAYED' "$tmp/source-read.json" || fail "VOXI raw cookie leaked through API"
 
           echo "VOXI balance connector smoke test passed"
