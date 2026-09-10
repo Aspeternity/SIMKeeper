@@ -15,6 +15,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Checkout verified source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
       - name: Pull verified image
         run: |
           sha="${{ github.event.workflow_run.head_sha }}"
@@ -28,6 +33,7 @@ jobs:
           tmp="$(mktemp -d)"
           trap 'docker rm -f simkeeper-visual-smoke >/dev/null 2>&1 || true; rm -rf "$tmp"' EXIT
           mkdir -p "$tmp/data"
+          expected_version="$(jq -r '.version' package.json)"
 
           assert_html() {
             local file="$1"
@@ -62,7 +68,7 @@ jobs:
           curl -fsS -b "$tmp/cookies" http://127.0.0.1:18111/ > "$tmp/default.html"
           assert_html "$tmp/default.html" 'data-visual-foundation="alpha.51"' 'visual foundation marker'
           assert_html "$tmp/default.html" 'data-accent="indigo"' 'default accent'
-          assert_html "$tmp/default.html" '0.1.0-alpha.51' 'application version'
+          assert_html "$tmp/default.html" "$expected_version" 'application version'
           assert_html "$tmp/default.html" 'bg-brand-soft' 'brand-aware active navigation'
 
           curl -fsS -b "$tmp/cookies" http://127.0.0.1:18111/settings/overview > "$tmp/settings.html"
