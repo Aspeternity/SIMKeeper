@@ -155,7 +155,7 @@ export default function ServicesPage() {
   }
 
   return (
-    <div className="mx-auto max-w-7xl space-y-5" data-services-polish="alpha.57.0">
+    <div className="mx-auto max-w-7xl space-y-5" data-services-polish="alpha.51.2">
       <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div className="min-w-0">
           <h2 className="text-2xl font-semibold tracking-tight text-ink">绑定服务</h2>
@@ -175,7 +175,7 @@ export default function ServicesPage() {
         </section>
       ) : null}
 
-      <Card className="p-4 sm:p-5" data-service-toolbar="alpha.57.0">
+      <Card className="p-4 sm:p-5" data-service-toolbar="alpha.51.2">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
             <div className="font-medium text-ink">绑定关系</div>
