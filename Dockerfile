@@ -21,7 +21,9 @@ ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 ENV SIMKEEPER_DATA_DIR=/app/data
 ENV SIMKEEPER_REVISION=${SIMKEEPER_REVISION}
-ENV SIMKEEPER_VOXI_CHROMIUM_EXECUTABLE=/usr/bin/chromium
+ENV SIMKEEPER_VOXI_CHROMIUM_EXECUTABLE=/usr/local/bin/simkeeper-chromium
+ENV SIMKEEPER_REAL_CHROMIUM_EXECUTABLE=/usr/bin/chromium
+ENV SIMKEEPER_VOXI_BROWSER_MODE=headful-xvfb
 ENV HOME=/app/data/runtime-home
 ENV XDG_CACHE_HOME=/app/data/runtime-home/.cache
 ENV XDG_CONFIG_HOME=/app/data/runtime-home/.config
@@ -29,7 +31,7 @@ ENV TMPDIR=/tmp
 ENV PUID=1000
 ENV PGID=1000
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends gosu chromium fonts-liberation \
+  && apt-get install -y --no-install-recommends gosu chromium fonts-liberation fonts-noto-color-emoji xvfb xauth \
   && rm -rf /var/lib/apt/lists/* \
   && groupmod -n simkeeper node \
   && usermod -l simkeeper -d /app/data/runtime-home node \
@@ -43,14 +45,17 @@ COPY --from=builder --chown=simkeeper:simkeeper /app/.next/standalone ./
 COPY --from=builder --chown=simkeeper:simkeeper /app/.next/static ./.next/static
 COPY --from=deps --chown=simkeeper:simkeeper /app/node_modules/playwright-core ./node_modules/playwright-core
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
+COPY simkeeper-chromium.sh /usr/local/bin/simkeeper-chromium
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/simkeeper-chromium \
   && sh -n /usr/local/bin/docker-entrypoint.sh \
+  && bash -n /usr/local/bin/simkeeper-chromium \
   && gosu simkeeper env \
        HOME=/app/data/runtime-home \
        XDG_CACHE_HOME=/app/data/runtime-home/.cache \
        XDG_CONFIG_HOME=/app/data/runtime-home/.config \
        TMPDIR=/tmp \
-       node -e "const { chromium } = require('playwright-core'); (async () => { const context = await chromium.launchPersistentContext('/app/data/carrier-browser/voxi/.image-selftest', { executablePath: '/usr/bin/chromium', headless: true, chromiumSandbox: false, args: ['--disable-dev-shm-usage','--no-sandbox','--disable-setuid-sandbox','--no-first-run','--no-default-browser-check'] }); const page = context.pages()[0] || await context.newPage(); await page.goto('data:text/html,<title>SIMKeeper Chromium self-test</title>'); await context.close(); })().catch((error) => { console.error(error); process.exit(1); });" \
+       xvfb-run -a -s "-screen 0 1365x900x24 -nolisten tcp" \
+       node -e "const { chromium } = require('playwright-core'); (async () => { const context = await chromium.launchPersistentContext('/app/data/carrier-browser/voxi/.image-selftest', { executablePath: '/usr/local/bin/simkeeper-chromium', headless: true, chromiumSandbox: false, args: ['--disable-dev-shm-usage','--no-sandbox','--disable-setuid-sandbox','--no-first-run','--no-default-browser-check'] }); const page = context.pages()[0] || await context.newPage(); await page.goto('data:text/html,<title>SIMKeeper Chromium self-test</title>'); const ua = await page.evaluate(() => navigator.userAgent); if (/HeadlessChrome/i.test(ua)) throw new Error('VOXI Chromium self-test still exposes a headless user agent'); await context.close(); })().catch((error) => { console.error(error); process.exit(1); });" \
   && rm -rf /app/data/carrier-browser/voxi/.image-selftest
 EXPOSE 3000
 ENTRYPOINT ["docker-entrypoint.sh"]
