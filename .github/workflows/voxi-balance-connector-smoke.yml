@@ -15,7 +15,7 @@ jobs:
   voxi-balance-connector:
     if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Checkout verified source
@@ -39,7 +39,7 @@ jobs:
           docker pull "$image"
           echo "IMAGE=$image" >> "$GITHUB_ENV"
 
-      - name: Verify VOXI native login metadata and encrypted configuration
+      - name: Verify VOXI Playwright Chromium integration
         shell: bash
         run: |
           set -euo pipefail
@@ -63,23 +63,25 @@ jobs:
             exit 1
           }
 
-          grep -Fq 'voxiCarrierConnectorProvider' src/lib/carrier-connectors/registry.ts || fail "VOXI provider is not registered"
-          grep -Fq 'providers/voxi-native' src/lib/carrier-connectors/registry.ts || fail "VOXI native provider is not active"
-          grep -Fq 'id: "voxi"' src/lib/carrier-connectors/providers/voxi-native.ts || fail "VOXI provider id missing"
-          grep -Fq 'key: "username"' src/lib/carrier-connectors/providers/voxi-native.ts || fail "VOXI username credential missing"
-          grep -Fq 'key: "password"' src/lib/carrier-connectors/providers/voxi-native.ts || fail "VOXI password credential missing"
-          grep -Fq 'key: "requestOtp"' src/lib/carrier-connectors/providers/voxi-native.ts || fail "VOXI OTP request control missing"
-          grep -Fq 'key: "otpCode"' src/lib/carrier-connectors/providers/voxi-native.ts || fail "VOXI OTP code field missing"
-          grep -Fq '"/authenticate/sendOtp"' src/lib/carrier-connectors/providers/voxi-native-http.ts || fail "VOXI OTP endpoint missing"
-          grep -Fq 'VOXI_OTP_PASSWORD_PLACEHOLDER' src/lib/carrier-connectors/providers/voxi-native-http.ts || fail "VOXI OTP verification payload missing"
-          grep -Fq 'Buffer.from(password, "utf8").toString("base64")' src/lib/carrier-connectors/providers/voxi-native-http.ts || fail "VOXI native password transport encoding missing"
-          grep -Fq 'voxi_connector_sessions' src/lib/carrier-connectors/providers/voxi-native-session.ts || fail "VOXI encrypted session store missing"
-          grep -Fq '"/auth/accounts"' src/lib/carrier-connectors/providers/voxi-native.ts || fail "VOXI account discovery missing"
-          grep -Fq '"/subscription/get"' src/lib/carrier-connectors/providers/voxi-native.ts || fail "VOXI subscription balance endpoint missing"
-          grep -Fq 'subscription.simBalance' src/lib/carrier-connectors/providers/voxi-native.ts || fail "VOXI simBalance parser missing"
-          ! grep -Fq 'key: "sessionCookie"' src/lib/carrier-connectors/providers/voxi-native.ts || fail "Legacy copied Cookie field should not be exposed in alpha.54.0"
+          grep -Fq 'playwright-core' package.json || fail "playwright-core dependency missing"
+          grep -Fq 'chromium' Dockerfile || fail "Chromium runtime package missing from Dockerfile"
+          grep -Fq 'SIMKEEPER_VOXI_CHROMIUM_EXECUTABLE=/usr/bin/chromium' Dockerfile || fail "VOXI Chromium executable is not configured"
+          grep -Fq 'providers/voxi-browser' src/lib/carrier-connectors/registry.ts || fail "VOXI browser provider is not active"
+          grep -Fq 'id: "voxi"' src/lib/carrier-connectors/providers/voxi-browser.ts || fail "VOXI provider id missing"
+          grep -Fq 'launchPersistentContext' src/lib/carrier-connectors/providers/voxi-browser.ts || fail "Persistent Chromium profile missing"
+          grep -Fq 'page.evaluate' src/lib/carrier-connectors/providers/voxi-browser.ts || fail "VOXI API calls are not running inside Chromium"
+          grep -Fq '"/authenticate/sendOtp"' src/lib/carrier-connectors/providers/voxi-browser.ts || fail "VOXI OTP endpoint missing"
+          grep -Fq '"/auth/accounts"' src/lib/carrier-connectors/providers/voxi-browser.ts || fail "VOXI account discovery missing"
+          grep -Fq '"/subscription/get"' src/lib/carrier-connectors/providers/voxi-browser.ts || fail "VOXI subscription balance endpoint missing"
+          grep -Fq 'subscription.simBalance' src/lib/carrier-connectors/providers/voxi-browser.ts || fail "VOXI simBalance parser missing"
+          grep -Fq 'carrier-browser' src/lib/carrier-connectors/providers/voxi-browser.ts || fail "VOXI persistent profile directory missing"
+          grep -Fq 'key: "username"' src/lib/carrier-connectors/providers/voxi-browser.ts || fail "VOXI username credential missing"
+          grep -Fq 'key: "password"' src/lib/carrier-connectors/providers/voxi-browser.ts || fail "VOXI password credential missing"
+          grep -Fq 'key: "requestOtp"' src/lib/carrier-connectors/providers/voxi-browser.ts || fail "VOXI OTP request control missing"
+          grep -Fq 'key: "otpCode"' src/lib/carrier-connectors/providers/voxi-browser.ts || fail "VOXI OTP code field missing"
+          ! grep -Fq 'browserUserAgent' src/lib/carrier-connectors/providers/voxi-browser.ts || fail "Legacy manual User-Agent field should not be exposed"
           grep -Fq 'supportedCountryCodes: ["GB"]' 'src/app/api/sims/balance-source/route.ts' || fail "VOXI GB matcher missing"
-          grep -Fq '官方登录流程' 'src/app/api/sims/balance-source/route.ts' || fail "VOXI native-login runtime guidance missing"
+          grep -Fq 'Playwright Chromium' 'src/app/api/sims/balance-source/route.ts' || fail "VOXI browser runtime guidance missing"
           grep -Fq "APP_VERSION = \"$expected_version\"" src/components/layout/navigation.ts || fail "App version does not match package version"
 
           mkdir -p "$tmp/data"
@@ -97,6 +99,11 @@ jobs:
             sleep 1
           done
           [ "$ready" -eq 1 ] || fail "SIMKeeper did not become healthy"
+
+          docker exec "$container" /usr/bin/chromium --version >/dev/null 2>&1 \
+            || fail "Chromium is not executable inside the published image"
+          docker exec "$container" node -e "require('playwright-core');" >/dev/null 2>&1 \
+            || fail "playwright-core is not available in the standalone runtime"
 
           curl -fsS -c "$cookies" -o /dev/null -X POST \
             --data-urlencode 'username=voxismoke' \
@@ -168,4 +175,4 @@ jobs:
           ! grep -Fq "$fake_username" "$tmp/source-read.json" || fail "VOXI username leaked through API"
           ! grep -Fq "$fake_password" "$tmp/source-read.json" || fail "VOXI password leaked through API"
 
-          echo "VOXI native login connector smoke test passed"
+          echo "VOXI Playwright Chromium connector smoke test passed"

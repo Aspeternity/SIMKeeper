@@ -4,7 +4,7 @@ import { cslCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/
 import { ditoCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/dito";
 import { globeCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/globe";
 import { mockCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/mock";
-import { voxiCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/voxi-native";
+import { voxiCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/voxi-browser";
 import type {
   CarrierConnectorCapabilities,
   CarrierConnectorProvider,
@@ -55,7 +55,7 @@ const PROVIDER_METADATA: Record<string, ProviderMetadata> = {
   },
   voxi: {
     maturity: "experimental",
-    availabilityNote: "VOXI 没有公开的第三方消费者余额 API。alpha.54.0 按网页实际流程在 SIMKeeper 服务端调用 /authenticate + 短信 OTP 建立加密会话，再通过 /auth/accounts、subscriptions 与 /subscription/get 读取 simBalance；不再要求复制浏览器 Cookie。",
+    availabilityNote: "VOXI 没有公开的第三方消费者余额 API。alpha.55.0 改用 SIMKeeper 服务器内置 Playwright Chromium 打开 VOXI 官方网页并维持持久化浏览器 Profile，再通过短信 OTP 建立登录状态并读取 /subscription/get 的 simBalance。",
     capabilities: {
       automaticSync: true,
       balance: true,

@@ -81,15 +81,15 @@ function positiveId(value: string | null) {
 
 function providerRuntimeState(providerId: string) {
   if (providerId === "voxi") {
-    const availabilityNote = "VOXI 没有公开的第三方消费者余额 API。alpha.54.0 使用 VOXI 网页实际的官方登录流程：邮箱/密码 → 短信 OTP → 加密会话 → /auth/accounts 与 /subscription/get；不再要求复制浏览器 Cookie。";
+    const availabilityNote = "VOXI 没有公开的第三方消费者余额 API。alpha.55.0 使用 SIMKeeper 容器内的 Playwright Chromium 打开 VOXI 官方网页，让 Cloudflare 在真实浏览器环境中正常运行，再完成邮箱/密码、短信 OTP 和 /subscription/get 余额读取。";
     return {
       maturity: "experimental" as const,
       availabilityNote,
       runtimeReady: true,
       runtimeMessage: availabilityNote,
-      runtimeWarning: "VOXI 登录邮箱和密码由 SIMKeeper 凭据加密保存；验证码只用于完成当前认证，会话失效后需要手动重新发送验证码。",
+      runtimeWarning: "VOXI 邮箱和密码继续由 SIMKeeper 凭据加密保存；Chromium Profile 位于 /app/data/carrier-browser/voxi，仅保存 VOXI / Cloudflare 浏览器会话状态。请将 /app/data 视为敏感数据并做好访问控制。",
       runtimeMode: null as "oauth" | "static-token" | null,
-      runtimeSource: "VOXI native web login" as string | null,
+      runtimeSource: "Playwright Chromium (server-side persistent profile)" as string | null,
       runtimeExpiresAt: null as string | null,
     };
   }
