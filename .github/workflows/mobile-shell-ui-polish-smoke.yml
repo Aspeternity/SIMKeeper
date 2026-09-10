@@ -1,0 +1,97 @@
+name: Verify Mobile Shell UI Polish
+
+on:
+  workflow_run:
+    workflows:
+      - Build and Publish Docker Image
+    types:
+      - completed
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  mobile-shell-ui-polish:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout verified source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Pull verified image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="${{ github.event.workflow_run.head_sha }}"
+          image="ghcr.io/aspeternity/simkeeper:sha-${sha:0:7}"
+          docker pull "$image"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Verify mobile shell foundation
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          container="simkeeper-mobile-shell-ui-smoke"
+          base="http://127.0.0.1:18121"
+          cookies="$tmp/cookies"
+          expected_version="$(jq -r '.version' package.json)"
+
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            rm -rf "$tmp"
+          }
+          trap cleanup EXIT
+          fail() { echo "::error::$1"; docker logs "$container" 2>&1 || true; exit 1; }
+
+          grep -Fq 'data-mobile-shell="alpha.52.0"' 'src/app/(dashboard)/layout.tsx' || fail "mobile shell marker missing"
+          grep -Fq 'data-mobile-shell-main="alpha.52.0"' 'src/app/(dashboard)/layout.tsx' || fail "mobile shell main marker missing"
+          grep -Fq 'data-mobile-bottom-nav="alpha.52.0"' src/components/layout/mobile-bottom-nav.tsx || fail "mobile bottom navigation marker missing"
+          grep -Fq 'data-mobile-topbar-polish="alpha.52.0"' src/components/layout/topbar.tsx || fail "mobile topbar marker missing"
+          grep -Fq 'data-mobile-drawer="alpha.52.0"' src/components/layout/topbar.tsx || fail "mobile drawer marker missing"
+          grep -Fq 'data-mobile-attention-panel="alpha.52.0"' src/components/layout/topbar.tsx || fail "mobile attention panel marker missing"
+          grep -Fq "APP_VERSION = \"$expected_version\"" src/components/layout/navigation.ts || fail "app version mismatch"
+
+          mkdir -p "$tmp/data"
+          docker run -d \
+            --name "$container" \
+            -p 18121:3000 \
+            -e SIMKEEPER_COOKIE_SECURE=false \
+            -e PUID="$(id -u)" \
+            -e PGID="$(id -g)" \
+            -v "$tmp/data:/app/data" \
+            "$IMAGE" >/dev/null || fail "container start failed"
+
+          for _ in $(seq 1 40); do
+            curl -fsS "$base/api/health" >/dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -fsS "$base/api/health" >/dev/null || fail "health check failed"
+
+          curl -fsS -c "$cookies" -o /dev/null -X POST \
+            --data-urlencode 'username=mobileuismoke' \
+            --data-urlencode 'password=mobile-ui-smoke-123' \
+            --data-urlencode 'confirmPassword=mobile-ui-smoke-123' \
+            "$base/api/auth/setup" || fail "setup failed"
+
+          curl -fsS -b "$cookies" "$base/sims" > "$tmp/sims.html" || fail "SIM list route failed"
+          grep -Fq 'data-mobile-shell="alpha.52.0"' "$tmp/sims.html" || fail "mobile shell missing at runtime"
+          grep -Fq 'data-mobile-bottom-nav="alpha.52.0"' "$tmp/sims.html" || fail "mobile bottom nav missing at runtime"
+          grep -Fq 'data-mobile-topbar-polish="alpha.52.0"' "$tmp/sims.html" || fail "mobile topbar missing at runtime"
+          grep -Fq 'data-mobile-nav-item="/"' "$tmp/sims.html" || fail "dashboard mobile nav item missing"
+          grep -Fq 'data-mobile-nav-item="/sims"' "$tmp/sims.html" || fail "SIM mobile nav item missing"
+          grep -Fq 'data-mobile-nav-item="/reminders"' "$tmp/sims.html" || fail "processing mobile nav item missing"
+          grep -Fq 'data-mobile-nav-item="/settings/overview"' "$tmp/sims.html" || fail "settings mobile nav item missing"
+
+          curl -fsS -b "$cookies" "$base/reminders" > "$tmp/reminders.html" || fail "processing route failed"
+          grep -Fq 'data-page-title="处理中心"' "$tmp/reminders.html" || fail "processing mobile page title missing"
+
+          curl -fsS -b "$cookies" "$base/settings/overview" > "$tmp/settings.html" || fail "settings route failed"
+          grep -Fq 'data-page-title="设置"' "$tmp/settings.html" || fail "settings mobile page title missing"
+
+          echo "Mobile shell UI polish smoke test passed."
