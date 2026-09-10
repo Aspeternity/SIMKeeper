@@ -6,7 +6,8 @@ PGID="${PGID:-1000}"
 DATA_DIR="${SIMKEEPER_DATA_DIR:-/app/data}"
 RUNTIME_HOME="$DATA_DIR/runtime-home"
 VOXI_PROFILE_ROOT="$DATA_DIR/carrier-browser/voxi"
-XVFB_SCREEN="-screen 0 1365x900x24 -nolisten tcp"
+XVFB_DISPLAY="${SIMKEEPER_XVFB_DISPLAY:-:99}"
+XVFB_LOG="$RUNTIME_HOME/xvfb.log"
 
 validate_id() {
   name="$1"
@@ -23,6 +24,29 @@ validate_id() {
   fi
 }
 
+validate_xvfb_display() {
+  value="$1"
+  case "$value" in
+    :[0-9]*|:[0-9]*.[0-9]*) ;;
+    *)
+      echo "SIMKeeper: SIMKEEPER_XVFB_DISPLAY must look like :99, got '$value'" >&2
+      exit 1
+      ;;
+  esac
+  number="${value#:}"
+  number="${number%%.*}"
+  case "$number" in
+    ''|*[!0-9]*)
+      echo "SIMKeeper: invalid Xvfb display '$value'" >&2
+      exit 1
+      ;;
+  esac
+  if [ "$number" -gt 9999 ]; then
+    echo "SIMKeeper: Xvfb display number is too large: '$value'" >&2
+    exit 1
+  fi
+}
+
 prepare_runtime_dirs() {
   if ! mkdir -p \
     "$DATA_DIR/backups" \
@@ -33,6 +57,87 @@ prepare_runtime_dirs() {
     echo "SIMKeeper: unable to create runtime directories under $DATA_DIR" >&2
     exit 1
   fi
+}
+
+xvfb_socket_path() {
+  display_number="${XVFB_DISPLAY#:}"
+  display_number="${display_number%%.*}"
+  printf '/tmp/.X11-unix/X%s' "$display_number"
+}
+
+wait_for_xvfb() {
+  pid="$1"
+  socket="$2"
+  attempts=0
+  while [ "$attempts" -lt 50 ]; do
+    if [ -S "$socket" ]; then
+      return 0
+    fi
+    if ! kill -0 "$pid" 2>/dev/null; then
+      break
+    fi
+    attempts=$((attempts + 1))
+    sleep 0.1
+  done
+
+  echo "SIMKeeper: Xvfb failed to become ready on $XVFB_DISPLAY" >&2
+  if [ -f "$XVFB_LOG" ]; then
+    echo "----- Xvfb log -----" >&2
+    tail -n 30 "$XVFB_LOG" >&2 || true
+  fi
+  exit 1
+}
+
+prepare_x11_socket_dir_root() {
+  if ! mkdir -p /tmp/.X11-unix; then
+    echo "SIMKeeper: unable to create /tmp/.X11-unix" >&2
+    exit 1
+  fi
+  chmod 1777 /tmp/.X11-unix || true
+}
+
+start_xvfb_root() {
+  if [ -n "${DISPLAY:-}" ]; then
+    return 0
+  fi
+
+  validate_xvfb_display "$XVFB_DISPLAY"
+  prepare_x11_socket_dir_root
+  : > "$XVFB_LOG"
+  chown simkeeper:simkeeper "$XVFB_LOG"
+
+  gosu simkeeper Xvfb "$XVFB_DISPLAY" \
+    -screen 0 1365x900x24 \
+    -nolisten tcp \
+    -ac \
+    >"$XVFB_LOG" 2>&1 &
+  xvfb_pid=$!
+  wait_for_xvfb "$xvfb_pid" "$(xvfb_socket_path)"
+  DISPLAY="$XVFB_DISPLAY"
+  export DISPLAY
+}
+
+start_xvfb_current_user() {
+  if [ -n "${DISPLAY:-}" ]; then
+    return 0
+  fi
+
+  validate_xvfb_display "$XVFB_DISPLAY"
+  if ! mkdir -p /tmp/.X11-unix 2>/dev/null; then
+    echo "SIMKeeper: unable to prepare /tmp/.X11-unix for Xvfb as uid=$(id -u)" >&2
+    exit 1
+  fi
+  : > "$XVFB_LOG"
+
+  Xvfb "$XVFB_DISPLAY" \
+    -screen 0 1365x900x24 \
+    -nolisten tcp \
+    -ac \
+    >"$XVFB_LOG" 2>&1 &
+  xvfb_pid=$!
+  wait_for_xvfb "$xvfb_pid" "$(xvfb_socket_path)"
+  DISPLAY="$XVFB_DISPLAY"
+  export DISPLAY
 }
 
 validate_id PUID "$PUID"
@@ -75,35 +180,9 @@ if [ "$(id -u)" -eq 0 ]; then
     exit 1
   fi
 
-  if [ -n "${DISPLAY:-}" ]; then
-    exec gosu simkeeper env \
-      HOME="$RUNTIME_HOME" \
-      XDG_CACHE_HOME="$RUNTIME_HOME/.cache" \
-      XDG_CONFIG_HOME="$RUNTIME_HOME/.config" \
-      TMPDIR="${TMPDIR:-/tmp}" \
-      DISPLAY="$DISPLAY" \
-      "$@"
-  fi
+  start_xvfb_root
 
   exec gosu simkeeper env \
-    HOME="$RUNTIME_HOME" \
-    XDG_CACHE_HOME="$RUNTIME_HOME/.cache" \
-    XDG_CONFIG_HOME="$RUNTIME_HOME/.config" \
-    TMPDIR="${TMPDIR:-/tmp}" \
-    xvfb-run -a -s "$XVFB_SCREEN" \
-    "$@"
-fi
-
-prepare_runtime_dirs
-for dir in "$DATA_DIR" "$RUNTIME_HOME" "$VOXI_PROFILE_ROOT"; do
-  if [ ! -w "$dir" ] || [ ! -x "$dir" ]; then
-    echo "SIMKeeper: $dir is not writable by container uid=$(id -u) gid=$(id -g); remove the Docker user override or fix host permissions" >&2
-    exit 1
-  fi
-done
-
-if [ -n "${DISPLAY:-}" ]; then
-  exec env \
     HOME="$RUNTIME_HOME" \
     XDG_CACHE_HOME="$RUNTIME_HOME/.cache" \
     XDG_CONFIG_HOME="$RUNTIME_HOME/.config" \
@@ -112,10 +191,23 @@ if [ -n "${DISPLAY:-}" ]; then
     "$@"
 fi
 
+# Support deployments that intentionally set Docker's `user:` option. In this
+# mode IDs cannot be remapped, so the bind-mounted data directory must already
+# be writable by the configured container user.
+prepare_runtime_dirs
+for dir in "$DATA_DIR" "$RUNTIME_HOME" "$VOXI_PROFILE_ROOT"; do
+  if [ ! -w "$dir" ] || [ ! -x "$dir" ]; then
+    echo "SIMKeeper: $dir is not writable by container uid=$(id -u) gid=$(id -g); remove the Docker user override or fix host permissions" >&2
+    exit 1
+  fi
+done
+
+start_xvfb_current_user
+
 exec env \
   HOME="$RUNTIME_HOME" \
   XDG_CACHE_HOME="$RUNTIME_HOME/.cache" \
   XDG_CONFIG_HOME="$RUNTIME_HOME/.config" \
   TMPDIR="${TMPDIR:-/tmp}" \
-  xvfb-run -a -s "$XVFB_SCREEN" \
+  DISPLAY="$DISPLAY" \
   "$@"
