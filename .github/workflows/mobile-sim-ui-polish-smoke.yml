@@ -1,0 +1,93 @@
+name: Verify Mobile SIM UI Polish
+
+on:
+  workflow_run:
+    workflows:
+      - Build and Publish Docker Image
+    types:
+      - completed
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  mobile-sim-ui-polish:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout verified source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Pull verified image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="${{ github.event.workflow_run.head_sha }}"
+          image="ghcr.io/aspeternity/simkeeper:sha-${sha:0:7}"
+          docker pull "$image"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Verify mobile SIM workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          container="simkeeper-mobile-sim-ui-smoke"
+          base="http://127.0.0.1:18122"
+          cookies="$tmp/cookies"
+          expected_version="$(jq -r '.version' package.json)"
+
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            rm -rf "$tmp"
+          }
+          trap cleanup EXIT
+          fail() {
+            echo "::error::$1"
+            docker logs "$container" 2>&1 || true
+            exit 1
+          }
+
+          grep -Fq -- '--sim-mobile-workspace-polish: "alpha.52.1"' src/app/globals.css || fail "mobile SIM polish marker missing"
+          grep -Fq '[data-sims-polish="alpha.51.1"] section[aria-label="号码健康快速筛选"]' src/app/globals.css || fail "mobile health grid rule missing"
+          grep -Fq '[data-sim-toolbar="alpha.51.1"] > div:last-child' src/app/globals.css || fail "mobile filter rail rule missing"
+          grep -Fq '[data-sim-card] > div:last-child > div:last-child' src/app/globals.css || fail "mobile SIM action rail rule missing"
+          grep -Fq '[data-sim-detail-polish="alpha.51.1"]' src/app/globals.css || fail "mobile SIM detail rule missing"
+          grep -Fq 'data-sims-polish="alpha.51.1"' 'src/app/(dashboard)/sims/page.tsx' || fail "legacy SIM list marker missing"
+          grep -Fq 'data-sim-toolbar="alpha.51.1"' 'src/app/(dashboard)/sims/page.tsx' || fail "legacy SIM toolbar marker missing"
+          grep -Fq 'data-sim-detail-polish="alpha.51.1"' src/components/sims/sim-overview-modal.tsx || fail "legacy SIM detail marker missing"
+          grep -Fq "APP_VERSION = \"$expected_version\"" src/components/layout/navigation.ts || fail "app version mismatch"
+
+          mkdir -p "$tmp/data"
+          docker run -d \
+            --name "$container" \
+            -p 18122:3000 \
+            -e SIMKEEPER_COOKIE_SECURE=false \
+            -e PUID="$(id -u)" \
+            -e PGID="$(id -g)" \
+            -v "$tmp/data:/app/data" \
+            "$IMAGE" >/dev/null || fail "container start failed"
+
+          for _ in $(seq 1 40); do
+            curl -fsS "$base/api/health" >/dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -fsS "$base/api/health" >/dev/null || fail "health check failed"
+
+          curl -fsS -c "$cookies" -o /dev/null -X POST \
+            --data-urlencode 'username=mobilesimsmoke' \
+            --data-urlencode 'password=mobile-sim-smoke-123' \
+            --data-urlencode 'confirmPassword=mobile-sim-smoke-123' \
+            "$base/api/auth/setup" || fail "setup failed"
+
+          curl -fsS -b "$cookies" "$base/sims" > "$tmp/sims.html" || fail "SIM list route failed"
+          grep -Fq 'data-sims-polish="alpha.51.1"' "$tmp/sims.html" || fail "SIM list marker missing at runtime"
+          grep -Fq 'data-sim-toolbar="alpha.51.1"' "$tmp/sims.html" || fail "SIM toolbar marker missing at runtime"
+          grep -Fq '号码管理' "$tmp/sims.html" || fail "SIM workspace title missing at runtime"
+
+          echo "Mobile SIM UI polish smoke test passed."

@@ -265,6 +265,11 @@ header[data-page-title] button[aria-controls="topbar-attention-panel"][aria-expa
   letter-spacing: -0.015em;
 }
 
+/* Mobile SIM workspace polish: alpha.52.1 */
+[data-sims-polish="alpha.51.1"] {
+  --sim-mobile-workspace-polish: "alpha.52.1";
+}
+
 @keyframes sim-backdrop-in {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -287,6 +292,241 @@ header[data-page-title] button[aria-controls="topbar-attention-panel"][aria-expa
 
   .sim-dialog-footer > button {
     min-height: 44px;
+  }
+
+  [data-sims-polish="alpha.51.1"] {
+    --sim-mobile-tap-target: 44px;
+  }
+
+  [data-sims-polish="alpha.51.1"] > :not([hidden]) ~ :not([hidden]) {
+    margin-top: 0.875rem;
+  }
+
+  [data-sims-polish="alpha.51.1"] > header {
+    gap: 0.875rem;
+  }
+
+  [data-sims-polish="alpha.51.1"] > header h2 {
+    font-size: 1.25rem;
+    line-height: 1.75rem;
+  }
+
+  [data-sims-polish="alpha.51.1"] > header p {
+    margin-top: 0.25rem;
+    font-size: 0.8125rem;
+    line-height: 1.25rem;
+  }
+
+  [data-sims-polish="alpha.51.1"] > header > div:last-child {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+  }
+
+  [data-sims-polish="alpha.51.1"] > header > div:last-child > * {
+    min-width: 0;
+    min-height: var(--sim-mobile-tap-target);
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
+
+  [data-sims-polish="alpha.51.1"] section[aria-label="号码健康快速筛选"] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+  }
+
+  [data-sims-polish="alpha.51.1"] section[aria-label="号码健康快速筛选"] > button {
+    min-height: 4.25rem;
+    border-radius: 0.875rem;
+    padding: 0.625rem 0.75rem;
+  }
+
+  [data-sims-polish="alpha.51.1"] section[aria-label="号码健康快速筛选"] > button > div:first-child {
+    font-size: 0.6875rem;
+    line-height: 1rem;
+  }
+
+  [data-sims-polish="alpha.51.1"] section[aria-label="号码健康快速筛选"] > button > div:last-child {
+    margin-top: 0.25rem;
+    font-size: 1.25rem;
+    line-height: 1.75rem;
+  }
+
+  [data-sim-toolbar="alpha.51.1"] {
+    padding: 0.875rem;
+  }
+
+  [data-sim-toolbar="alpha.51.1"] input {
+    min-height: var(--sim-mobile-tap-target);
+  }
+
+  [data-sim-toolbar="alpha.51.1"] > div:first-child > div:last-child > button {
+    width: var(--sim-mobile-tap-target);
+    height: var(--sim-mobile-tap-target);
+    flex: 0 0 var(--sim-mobile-tap-target);
+  }
+
+  [data-sim-toolbar="alpha.51.1"] > div:last-child {
+    margin-left: -0.875rem;
+    margin-right: -0.875rem;
+    padding-left: 0.875rem;
+    padding-right: 0.875rem;
+    padding-bottom: 0.125rem;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  [data-sim-toolbar="alpha.51.1"] > div:last-child::-webkit-scrollbar {
+    display: none;
+  }
+
+  [data-sim-toolbar="alpha.51.1"] > div:last-child select {
+    min-width: 9.5rem;
+    height: var(--sim-mobile-tap-target);
+    flex: 0 0 auto;
+  }
+
+  [data-sim-card] {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  [data-sim-card] > div:first-child {
+    padding: 0.875rem;
+  }
+
+  [data-sim-card] > div:first-child > div:first-child {
+    gap: 0.625rem;
+  }
+
+  [data-sim-card] > div:first-child > div:first-child > div:first-child {
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 0.75rem;
+    font-size: 1rem;
+  }
+
+  [data-sim-card] > div:first-child > div:first-child > div:nth-child(2) > div:first-child {
+    gap: 0.375rem 0.5rem;
+  }
+
+  [data-sim-card] > div:first-child > div:first-child > div:nth-child(2) > div:nth-child(2) {
+    margin-top: 0.25rem;
+    font-size: 0.9375rem;
+    line-height: 1.375rem;
+  }
+
+  [data-sim-card] > div:first-child > .grid {
+    margin-top: 0.75rem;
+  }
+
+  [data-sim-card] > div:first-child > .grid > div {
+    border-radius: 0.75rem;
+    padding: 0.625rem 0.6875rem;
+  }
+
+  [data-sim-card] > div:first-child > .mt-3.flex {
+    display: none;
+  }
+
+  [data-sim-card] > div:last-child {
+    display: block;
+    padding: 0.5rem;
+    background: var(--surface-subtle);
+  }
+
+  [data-sim-card] > div:last-child > div:first-child {
+    display: none;
+  }
+
+  [data-sim-card] > div:last-child > div:last-child {
+    display: grid;
+    width: 100%;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.25rem;
+  }
+
+  [data-sim-card] > div:last-child > div:last-child > button {
+    min-width: 0;
+    min-height: var(--sim-mobile-tap-target);
+    justify-content: center;
+    border-radius: 0.625rem;
+  }
+
+  [data-sim-detail-polish="alpha.51.1"] {
+    --sim-mobile-tap-target: 44px;
+    height: calc(100dvh - 1rem);
+    max-height: calc(100dvh - 1rem) !important;
+  }
+
+  [data-sim-detail-polish="alpha.51.1"] > header {
+    padding: 0.75rem 0.875rem;
+  }
+
+  [data-sim-detail-polish="alpha.51.1"] > header > div:first-child {
+    gap: 0.75rem;
+  }
+
+  [data-sim-detail-polish="alpha.51.1"] > header > div:first-child > div:first-child {
+    gap: 0.625rem;
+  }
+
+  [data-sim-detail-polish="alpha.51.1"] > header > div:first-child > div:first-child > div:first-child {
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 0.75rem;
+  }
+
+  [data-sim-detail-polish="alpha.51.1"] > header h3 {
+    font-size: 1.125rem;
+    line-height: 1.5rem;
+  }
+
+  [data-sim-detail-polish="alpha.51.1"] > header > div:first-child > button {
+    width: var(--sim-mobile-tap-target);
+    height: var(--sim-mobile-tap-target);
+    flex: 0 0 var(--sim-mobile-tap-target);
+  }
+
+  [data-sim-detail-summary="alpha.51.1"] {
+    margin-top: 0.75rem;
+    gap: 0.375rem;
+  }
+
+  [data-sim-detail-summary="alpha.51.1"] > div {
+    border-radius: 0.75rem;
+    padding: 0.625rem 0.6875rem;
+  }
+
+  [data-sim-detail-polish="alpha.51.1"] > div:nth-child(2) {
+    padding: 0.75rem;
+    overscroll-behavior: contain;
+  }
+
+  [data-sim-detail-polish="alpha.51.1"] [data-sim-health-detail] {
+    border-radius: 0.875rem;
+    padding: 0.75rem;
+  }
+
+  [data-sim-detail-polish="alpha.51.1"] > footer {
+    padding-top: 0.625rem;
+    padding-right: max(0.75rem, env(safe-area-inset-right));
+    padding-bottom: max(0.625rem, env(safe-area-inset-bottom));
+    padding-left: max(0.75rem, env(safe-area-inset-left));
+  }
+
+  [data-sim-detail-polish="alpha.51.1"] > footer > div:first-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  [data-sim-detail-polish="alpha.51.1"] > footer > button {
+    min-width: 5.5rem;
+    min-height: var(--sim-mobile-tap-target);
   }
 }
 
