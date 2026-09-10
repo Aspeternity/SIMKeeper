@@ -140,10 +140,18 @@ export function readVoxiPendingAuth(connectorId: number) {
   if (!storedUsernameHash) return null;
   const sentAtValue = typeof record.sentAt === "string" ? record.sentAt : "";
   const sentAtMs = sentAtValue ? Date.parse(sentAtValue) : Number.NaN;
+  if (!Number.isFinite(sentAtMs)) {
+    // Pending OTP rows from alpha.56.2 and earlier were created by the old
+    // flow that reopened /sign-in during verification. Do not reuse that
+    // transaction after upgrading because its server-side OTP state may have
+    // already been reset; force one clean authentication instead.
+    clearVoxiPendingAuth(connectorId);
+    return null;
+  }
   return {
     usernameHash: storedUsernameHash,
     cookies: cookieJarFromUnknown(record.cookies),
-    sentAt: Number.isFinite(sentAtMs) ? new Date(sentAtMs).toISOString() : null,
+    sentAt: new Date(sentAtMs).toISOString(),
     expiresAt: new Date(expiresAtMs).toISOString(),
   };
 }
