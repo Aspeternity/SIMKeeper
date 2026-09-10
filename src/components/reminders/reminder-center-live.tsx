@@ -64,7 +64,11 @@ export function ReminderCenterLive({
   }, [refresh]);
 
   return (
-    <div className={`${styles.root} space-y-6`} data-processing-center-polish="alpha.51.6">
+    <div
+      className={`${styles.root} space-y-4 sm:space-y-6`}
+      data-processing-center-polish="alpha.51.6"
+      data-mobile-processing-center-live="alpha.52.2"
+    >
       <ProcessingCenterSummary reminders={reminders} />
       <ProcessingCenterMeta active={reminders.length} history={history.length} />
       <div className={styles.body} data-processing-center-body="alpha.51.6">

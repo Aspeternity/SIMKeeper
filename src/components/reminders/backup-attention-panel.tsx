@@ -21,11 +21,11 @@ export function BackupAttentionPanel({ items }: { items: AttentionItem[] }) {
   const criticalCount = items.filter((item) => item.priority === "critical").length;
 
   return (
-    <Card className="overflow-hidden" id="backup-health" data-processing-center-maintenance="alpha.51.6">
-      <div className="flex flex-col gap-4 border-b border-line px-5 py-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex items-start gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-soft text-brand">
-            <CloudCog className="h-4.5 w-4.5" />
+    <Card className="overflow-hidden" id="backup-health" data-processing-center-maintenance="alpha.51.6" data-mobile-processing-maintenance="alpha.52.2">
+      <div className="flex flex-col gap-3 border-b border-line px-4 py-4 sm:flex-row sm:items-start sm:justify-between sm:gap-4 sm:px-5">
+        <div className="flex items-start gap-2.5 sm:gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-soft text-brand sm:h-10 sm:w-10">
+            <CloudCog className="h-4 w-4 sm:h-4.5 sm:w-4.5" />
           </div>
           <div>
             <div className="text-sm font-semibold text-ink">系统维护事项</div>
@@ -40,11 +40,11 @@ export function BackupAttentionPanel({ items }: { items: AttentionItem[] }) {
         </div>
       </div>
 
-      <div className="grid gap-3 bg-surface-subtle p-4 sm:p-5">
+      <div className="grid gap-2 bg-surface-subtle p-3 sm:gap-3 sm:p-5">
         {items.map((item) => (
-          <div key={item.key} className={`rounded-2xl border px-4 py-4 ${tone(item)}`}>
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-              <div className="flex min-w-0 items-start gap-3">
+          <div key={item.key} className={`rounded-2xl border px-3 py-3.5 sm:px-4 sm:py-4 ${tone(item)}`}>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+              <div className="flex min-w-0 items-start gap-2.5 sm:gap-3">
                 <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${iconTone(item)}`}>
                   {item.priority === "critical" ? <AlertTriangle className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}
                 </div>
@@ -60,7 +60,7 @@ export function BackupAttentionPanel({ items }: { items: AttentionItem[] }) {
               </div>
               <Link
                 href={item.href}
-                className="inline-flex h-9 shrink-0 items-center justify-center rounded-xl border border-white/70 bg-white/80 px-3.5 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-white"
+                className="inline-flex h-11 w-full shrink-0 items-center justify-center rounded-xl border border-white/70 bg-white/80 px-3.5 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-white sm:h-9 sm:w-auto"
               >
                 {item.actionLabel}
               </Link>

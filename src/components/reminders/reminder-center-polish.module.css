@@ -1,5 +1,6 @@
 .root {
   display: block;
+  --mobile-processing-center-polish: "alpha.52.2";
 }
 
 .body > :global(div.space-y-6) > :global(section:first-child) {
@@ -113,7 +114,160 @@
 }
 
 @media (max-width: 639px) {
+  .body > :global(div.space-y-6) {
+    --mobile-reminder-tap-target: 44px;
+  }
+
+  .body > :global(div.space-y-6) > :global(.sim-card.overflow-hidden) {
+    border-radius: 1rem;
+  }
+
+  .body > :global(div.space-y-6) > :global(.sim-card.overflow-hidden) > :global(div:first-child) {
+    padding: 0.75rem;
+  }
+
+  .body > :global(div.space-y-6) > :global(.sim-card.overflow-hidden) > :global(div:first-child) > :global(div:first-child) {
+    gap: 0.5rem;
+  }
+
+  .body :global(.inline-flex.w-fit.rounded-xl.bg-slate-100.p-1) {
+    width: 100%;
+  }
+
+  .body :global(.inline-flex.w-fit.rounded-xl.bg-slate-100.p-1) > :global(button) {
+    min-height: 40px;
+    flex: 1 1 0%;
+    padding-left: 0.625rem;
+    padding-right: 0.625rem;
+  }
+
+  .body > :global(div.space-y-6) > :global(.sim-card.overflow-hidden) > :global(div:first-child) > :global(div:first-child) > :global(button:last-child) {
+    min-height: var(--mobile-reminder-tap-target);
+    width: 100%;
+  }
+
+  .body > :global(div.space-y-6) > :global(.sim-card.overflow-hidden) > :global(div:first-child) > :global(div:last-child) {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+  }
+
+  .body > :global(div.space-y-6) > :global(.sim-card.overflow-hidden) > :global(div:first-child) > :global(div:last-child) > :global(select) {
+    min-height: var(--mobile-reminder-tap-target);
+    width: 100%;
+    min-width: 0;
+  }
+
+  .body > :global(div.space-y-6) > :global(.sim-card.overflow-hidden) > :global(div:first-child) > :global(div:last-child) > :global(div) {
+    grid-column: 1 / -1;
+    min-width: 0;
+  }
+
+  .body > :global(div.space-y-6) > :global(.sim-card.overflow-hidden) > :global(div:first-child) > :global(div:last-child) :global(input) {
+    min-height: var(--mobile-reminder-tap-target);
+  }
+
   .body :global(.divide-y.divide-slate-100) > :global([id^="task-"]) {
     margin: 0.375rem;
+    padding: 0.5rem;
+  }
+
+  .body :global([id^="task-"]) > :global(div) {
+    gap: 0.5rem;
+  }
+
+  .body :global([id^="task-"]) > :global(div) > :global(button:first-child) {
+    min-height: var(--mobile-reminder-tap-target);
+    padding: 0.5rem;
+  }
+
+  .body :global([id^="task-"]) > :global(div) > :global(button:first-child) > :global(div:first-child) {
+    width: 2.5rem;
+    height: 2.5rem;
+  }
+
+  .body :global([id^="task-"]) > :global(div) > :global(button:first-child) > :global(div:nth-child(2)) > :global(div:last-child) {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .body :global([id^="task-"]) > :global(div) > :global(div:last-child) {
+    width: 100%;
+    align-items: stretch;
+    gap: 0.5rem;
+    padding: 0 0.5rem 0.5rem;
+  }
+
+  .body :global([id^="task-"]) > :global(div) > :global(div:last-child) > :global(div:first-child) {
+    display: flex;
+    width: 100%;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.75rem;
+    border-top: 1px solid var(--border);
+    padding-top: 0.5rem;
+  }
+
+  .body :global([id^="task-"]) > :global(div) > :global(div:last-child) > :global(div:first-child) > :global(div:last-child) {
+    margin-top: 0 !important;
+    text-align: right;
+  }
+
+  .body :global([id^="task-"]) > :global(div) > :global(div:last-child) > :global(div:last-child) {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: 100%;
+    gap: 0.375rem;
+  }
+
+  .body :global([id^="task-"]) > :global(div) > :global(div:last-child) > :global(div:last-child) > :global(button),
+  .body :global([id^="task-"]) > :global(div) > :global(div:last-child) > :global(div:last-child) > :global(select) {
+    min-width: 0;
+    width: 100%;
+    min-height: var(--mobile-reminder-tap-target);
+    padding-left: 0.375rem;
+    padding-right: 0.375rem;
+    font-size: 0.6875rem;
+    white-space: nowrap;
+  }
+
+  .body :global(.divide-y.divide-slate-100) > :global(div:not([id^="task-"])) {
+    margin: 0.375rem;
+    border: 1px solid var(--border) !important;
+    border-radius: 1rem;
+    background-color: var(--surface);
+    padding: 0.625rem;
+    box-shadow: var(--shadow-card);
+  }
+
+  .body :global(.divide-y.divide-slate-100) > :global(div:not([id^="task-"]) + div:not([id^="task-"])) {
+    border-top-width: 1px !important;
+  }
+
+  .body :global(.divide-y.divide-slate-100) > :global(div:not([id^="task-"])) > :global(div) {
+    gap: 0.5rem;
+  }
+
+  .body :global(.divide-y.divide-slate-100) > :global(div:not([id^="task-"])) > :global(div) > :global(button:first-child) {
+    min-height: var(--mobile-reminder-tap-target);
+    padding: 0.375rem;
+  }
+
+  .body :global(.divide-y.divide-slate-100) > :global(div:not([id^="task-"])) > :global(div) > :global(div:last-child) {
+    width: 100%;
+    justify-content: space-between;
+    border-top: 1px solid var(--border);
+    padding: 0.5rem 0.375rem 0;
+  }
+
+  .body :global(.divide-y.divide-slate-100) > :global(div:not([id^="task-"])) > :global(div) > :global(div:last-child) > :global(button) {
+    min-width: var(--mobile-reminder-tap-target);
+    min-height: var(--mobile-reminder-tap-target);
+  }
+
+  .body :global(.min-h-72) {
+    min-height: 14rem !important;
   }
 }

@@ -55,24 +55,25 @@ export function ProcessingCenterSummary({ reminders }: { reminders: ReminderItem
 
   return (
     <section
-      className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"
+      className="grid grid-cols-2 gap-2 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4"
       aria-label="处理中心状态概览"
       data-processing-center-summary="alpha.51.6"
+      data-mobile-processing-summary="alpha.52.2"
     >
       {SUMMARY_ITEMS.map((item) => {
         const Icon = item.icon;
         return (
-          <Card key={item.key} className="relative overflow-hidden p-5">
-            <div className="flex items-start justify-between gap-4">
+          <Card key={item.key} className="relative overflow-hidden p-3.5 sm:p-5">
+            <div className="flex items-start justify-between gap-2 sm:gap-4">
               <div>
-                <div className="text-sm font-medium text-ink-secondary">{item.label}</div>
-                <div className="mt-2 text-3xl font-semibold tracking-tight text-ink">{summary[item.key]}</div>
+                <div className="text-xs font-medium text-ink-secondary sm:text-sm">{item.label}</div>
+                <div className="mt-1.5 text-2xl font-semibold tracking-tight text-ink sm:mt-2 sm:text-3xl">{summary[item.key]}</div>
               </div>
-              <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${item.iconClass}`}>
-                <Icon className="h-4.5 w-4.5" />
+              <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl sm:h-10 sm:w-10 ${item.iconClass}`}>
+                <Icon className="h-4 w-4 sm:h-4.5 sm:w-4.5" />
               </div>
             </div>
-            <div className="mt-4 border-t border-line pt-3 text-xs leading-5 text-ink-muted">{item.description}</div>
+            <div className="mt-4 hidden border-t border-line pt-3 text-xs leading-5 text-ink-muted sm:block">{item.description}</div>
           </Card>
         );
       })}

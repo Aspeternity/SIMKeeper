@@ -16,8 +16,9 @@ export default function RemindersPage() {
 
   return (
     <div
-      className="mx-auto max-w-[1440px] space-y-7"
+      className="mx-auto max-w-[1440px] space-y-4 sm:space-y-7"
       data-processing-center-page="alpha.51.6"
+      data-mobile-processing-center="alpha.52.2"
     >
       <ProcessingCenterHeader />
       <BackupAttentionPanel items={backupAttention} />

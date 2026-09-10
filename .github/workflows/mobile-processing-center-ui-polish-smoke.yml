@@ -1,0 +1,105 @@
+name: Verify Mobile Processing Center UI Polish
+
+on:
+  workflow_run:
+    workflows: [Build and Publish Docker Image]
+    types: [completed]
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  mobile-processing-center-ui-polish:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout verified source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull verified image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="${{ github.event.workflow_run.head_sha }}"
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/simkeeper:sha-${sha:0:7}"
+          docker pull "$image"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Verify mobile processing center source and runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          container="simkeeper-mobile-processing-ui-smoke"
+          base="http://127.0.0.1:18124"
+          cookies="$tmp/cookies"
+          password="$(openssl rand -hex 12)"
+          expected_version="$(jq -r '.version' package.json)"
+
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            rm -rf "$tmp"
+          }
+          trap cleanup EXIT
+
+          fail() {
+            echo "::error::$1"
+            docker logs "$container" 2>&1 || true
+            exit 1
+          }
+
+          grep -Fq 'data-mobile-processing-center="alpha.52.2"' 'src/app/(dashboard)/reminders/page.tsx' || fail "Mobile processing center page marker missing"
+          grep -Fq 'data-mobile-processing-header="alpha.52.2"' src/components/reminders/processing-center-header.tsx || fail "Mobile processing header marker missing"
+          grep -Fq 'data-mobile-processing-summary="alpha.52.2"' src/components/reminders/processing-center-summary.tsx || fail "Mobile processing summary marker missing"
+          grep -Fq 'data-mobile-processing-meta="alpha.52.2"' src/components/reminders/processing-center-meta.tsx || fail "Mobile processing meta marker missing"
+          grep -Fq 'data-mobile-processing-center-live="alpha.52.2"' src/components/reminders/reminder-center-live.tsx || fail "Mobile processing live marker missing"
+          grep -Fq 'data-mobile-processing-maintenance="alpha.52.2"' src/components/reminders/backup-attention-panel.tsx || fail "Mobile maintenance marker missing"
+          grep -Fq -- '--mobile-processing-center-polish: "alpha.52.2"' src/components/reminders/reminder-center-polish.module.css || fail "Mobile processing CSS marker missing"
+          grep -Fq -- '--mobile-reminder-tap-target: 44px' src/components/reminders/reminder-center-polish.module.css || fail "Mobile task tap target missing"
+          grep -Fq 'grid-template-columns: repeat(3, minmax(0, 1fr));' src/components/reminders/reminder-center-polish.module.css || fail "Mobile reminder action grid missing"
+          grep -Fq "APP_VERSION = \"$expected_version\"" src/components/layout/navigation.ts || fail "App version does not match package version"
+
+          mkdir -p "$tmp/data"
+          docker run -d --name "$container" -p 18124:3000 \
+            -e SIMKEEPER_COOKIE_SECURE=false \
+            -e PUID="$(id -u)" -e PGID="$(id -g)" \
+            -v "$tmp/data:/app/data" "$IMAGE" >/dev/null || fail "Unable to start SIMKeeper"
+
+          ready=0
+          for _ in $(seq 1 40); do
+            if curl -fsS --max-time 2 "$base/api/health" >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          [ "$ready" -eq 1 ] || fail "SIMKeeper did not become healthy"
+
+          curl -fsS -c "$cookies" -o /dev/null -X POST \
+            --data-urlencode 'username=mobileprocessingsmoke' \
+            --data-urlencode "password=$password" \
+            --data-urlencode "confirmPassword=$password" \
+            "$base/api/auth/setup" || fail "Unable to create smoke administrator"
+
+          curl -fsS -b "$cookies" "$base/reminders" > "$tmp/reminders.html" || fail "Processing center route failed"
+          grep -Fq 'data-processing-center-page="alpha.51.6"' "$tmp/reminders.html" || fail "Legacy processing center page marker missing at runtime"
+          grep -Fq 'data-mobile-processing-center="alpha.52.2"' "$tmp/reminders.html" || fail "Mobile processing center marker missing at runtime"
+          grep -Fq 'data-mobile-processing-header="alpha.52.2"' "$tmp/reminders.html" || fail "Mobile processing header missing at runtime"
+          grep -Fq 'data-mobile-processing-summary="alpha.52.2"' "$tmp/reminders.html" || fail "Mobile processing summary missing at runtime"
+          grep -Fq 'data-mobile-processing-center-live="alpha.52.2"' "$tmp/reminders.html" || fail "Mobile processing live marker missing at runtime"
+          grep -Fq '当前没有需要处理的任务' "$tmp/reminders.html" || fail "Processing center empty state missing at runtime"
+          grep -Fq '记录活动' "$tmp/reminders.html" || fail "Proactive activity action missing at runtime"
+
+          echo "Mobile processing center UI polish smoke test passed"
