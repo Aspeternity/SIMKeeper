@@ -6,9 +6,9 @@ import type { VoxiCookieJar } from "@/lib/carrier-connectors/providers/voxi-nati
 const VOXI_ORIGIN = "https://www.voxi.co.uk";
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+const DEFAULT_ACCEPT_LANGUAGE = "zh-CN,zh;q=0.9";
 export const DEFAULT_BROWSER_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36";
-const DEFAULT_SEC_CH_UA = '"Google Chrome";v="153", "Not_A Brand";v="8", "Chromium";v="153"';
 export const VOXI_OTP_PASSWORD_PLACEHOLDER = Buffer.from("undefined", "utf8").toString("base64");
 
 type VoxiAuthPhase = "credentials" | "send-otp" | "verify-otp";
@@ -95,12 +95,18 @@ async function fetchVoxi(url: string, init: RequestInit, label: string) {
   }
 }
 
+function secChUa(browserUserAgent: string) {
+  const major = /(?:Chrome|Chromium)\/(\d+)/i.exec(browserUserAgent)?.[1] ?? "153";
+  return `"Google Chrome";v="${major}", "Not_A Brand";v="8", "Chromium";v="${major}"`;
+}
+
 function browserHeaders(browserUserAgent: string) {
   return {
-    "Accept-Language": "en-GB,en;q=0.9",
+    "Accept-Language": DEFAULT_ACCEPT_LANGUAGE,
     "Cache-Control": "no-cache",
     Pragma: "no-cache",
-    "Sec-CH-UA": DEFAULT_SEC_CH_UA,
+    Priority: "u=1, i",
+    "Sec-CH-UA": secChUa(browserUserAgent),
     "Sec-CH-UA-Mobile": "?0",
     "Sec-CH-UA-Platform": '"Windows"',
     "Sec-Fetch-Dest": "empty",
@@ -122,34 +128,76 @@ export function normalizeVoxiBrowserUserAgent(value: unknown) {
   return userAgent;
 }
 
-async function bootstrapVoxiCookies(cookies: VoxiCookieJar, browserUserAgent: string) {
+async function bootstrapDocument(
+  path: "/" | "/sign-in?redirectPath=%2Faccount",
+  cookies: VoxiCookieJar,
+  browserUserAgent: string,
+  site: "none" | "same-origin",
+) {
   const headers: Record<string, string> = {
-    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-GB,en;q=0.9",
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": DEFAULT_ACCEPT_LANGUAGE,
     "Cache-Control": "no-cache",
     Pragma: "no-cache",
-    "Sec-CH-UA": DEFAULT_SEC_CH_UA,
+    Priority: "u=0, i",
+    "Sec-CH-UA": secChUa(browserUserAgent),
     "Sec-CH-UA-Mobile": "?0",
     "Sec-CH-UA-Platform": '"Windows"',
     "Sec-Fetch-Dest": "document",
     "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-Site": site,
+    "Sec-Fetch-User": "?1",
     "Upgrade-Insecure-Requests": "1",
     "User-Agent": browserUserAgent,
   };
   const currentCookie = cookieHeader(cookies);
   if (currentCookie) headers.Cookie = currentCookie;
-  const response = await fetchVoxi(
-    `${VOXI_ORIGIN}/sign-in?redirectPath=%2Faccount`,
-    { method: "GET", headers },
-    "登录页",
-  );
+
+  const response = await fetchVoxi(`${VOXI_ORIGIN}${path}`, { method: "GET", headers }, path);
   rememberResponseCookies(response.headers, cookies);
   await response.arrayBuffer().catch(() => new ArrayBuffer(0));
-  return response.status;
+  return response;
 }
 
-function authPhaseMessage(phase: VoxiAuthPhase, status: number) {
+async function bootstrapVoxiCookies(cookies: VoxiCookieJar, browserUserAgent: string) {
+  // A real browser reaches the login form through normal document requests before
+  // POST /authenticate. Seed first-party/edge cookies before submitting credentials
+  // instead of sending a cold server-side POST and retrying after a 403.
+  const home = await bootstrapDocument("/", cookies, browserUserAgent, "none");
+  if (home.status >= 400) return home;
+  return bootstrapDocument(
+    "/sign-in?redirectPath=%2Faccount",
+    cookies,
+    browserUserAgent,
+    "same-origin",
+  );
+}
+
+function cloudflareDiagnostic(response: Response) {
+  const server = response.headers.get("server")?.toLowerCase() ?? "";
+  const cfRay = response.headers.get("cf-ray")?.trim() ?? "";
+  const mitigated = response.headers.get("cf-mitigated")?.trim().toLowerCase() ?? "";
+  const isCloudflare = server.includes("cloudflare") || Boolean(cfRay) || Boolean(mitigated);
+  if (!isCloudflare) return null;
+  const parts = [
+    mitigated ? `cf-mitigated=${mitigated}` : "",
+    cfRay ? `CF-Ray ${cfRay}` : "",
+  ].filter(Boolean);
+  return parts.length ? `（${parts.join("，")}）` : "";
+}
+
+function authPhaseMessage(phase: VoxiAuthPhase, response: Response) {
+  const status = response.status;
+  if (status === 403) {
+    const cloudflare = cloudflareDiagnostic(response);
+    if (phase === "credentials") {
+      return `VOXI /authenticate 返回 HTTP 403：服务器请求被 VOXI${cloudflare !== null ? " / Cloudflare 边缘" : ""}拒绝${cloudflare ?? ""}。这不等同于邮箱或密码错误；当前阻断发生在服务器登录请求阶段`;
+    }
+    if (phase === "send-otp") {
+      return `VOXI /authenticate/sendOtp 返回 HTTP 403：服务器验证码请求被 VOXI${cloudflare !== null ? " / Cloudflare 边缘" : ""}拒绝${cloudflare ?? ""}`;
+    }
+    return `VOXI OTP /authenticate 返回 HTTP 403：服务器验证码验证请求被 VOXI${cloudflare !== null ? " / Cloudflare 边缘" : ""}拒绝${cloudflare ?? ""}`;
+  }
   if (phase === "credentials") {
     if (status === 400 || status === 401) return "VOXI 用户名或密码被拒绝，请检查登录邮箱和密码";
     return `VOXI /authenticate 返回 HTTP ${status}，服务器登录请求被拒绝`;
@@ -172,7 +220,6 @@ async function requestVoxiAuthentication(
     Accept: "application/json, text/plain, */*",
     ...browserHeaders(browserUserAgent),
     Origin: VOXI_ORIGIN,
-    Referer: `${VOXI_ORIGIN}/sign-in?redirectPath=%2Faccount`,
   };
   const currentCookie = cookieHeader(cookies);
   if (currentCookie) headers.Cookie = currentCookie;
@@ -212,8 +259,8 @@ async function requestVoxiAuthentication(
     type: "authentication",
     httpStatus: response.status,
     message: response.status >= 300 && response.status < 400
-      ? `${authPhaseMessage(phase, response.status)}；VOXI 返回了意外跳转`
-      : authPhaseMessage(phase, response.status),
+      ? `${authPhaseMessage(phase, response)}；VOXI 返回了意外跳转`
+      : authPhaseMessage(phase, response),
   });
 }
 
@@ -227,29 +274,26 @@ export async function beginVoxiLogin(
     username,
     password: Buffer.from(password, "utf8").toString("base64"),
   };
-  try {
-    await requestVoxiAuthentication(
-      "/authenticate",
-      cookies,
-      browserUserAgent,
-      "credentials",
-      loginBody,
-    );
-  } catch (error) {
-    // The captured web flow performs POST /authenticate directly. If the edge
-    // rejects a cold server session with 403, seed only first-party cookies from
-    // the official VOXI sign-in page and retry exactly once.
-    if (!(error instanceof CarrierProviderError) || error.httpStatus !== 403) throw error;
-    const bootstrapStatus = await bootstrapVoxiCookies(cookies, browserUserAgent);
-    if (bootstrapStatus >= 400) throw error;
-    await requestVoxiAuthentication(
-      "/authenticate",
-      cookies,
-      browserUserAgent,
-      "credentials",
-      loginBody,
-    );
+
+  const bootstrap = await bootstrapVoxiCookies(cookies, browserUserAgent);
+  if (bootstrap.status >= 400) {
+    const cloudflare = cloudflareDiagnostic(bootstrap);
+    throw new CarrierProviderError({
+      type: "authentication",
+      httpStatus: bootstrap.status,
+      message: `VOXI 登录页预检返回 HTTP ${bootstrap.status}${cloudflare !== null ? "，请求被 VOXI / Cloudflare 边缘拒绝" : ""}${cloudflare ?? ""}；尚未提交邮箱和密码`,
+    });
   }
+
+  // HAR shows one credential POST after the page is ready. Avoid retrying a
+  // rejected credential request automatically, which could trigger lockouts.
+  await requestVoxiAuthentication(
+    "/authenticate",
+    cookies,
+    browserUserAgent,
+    "credentials",
+    loginBody,
+  );
 
   // The real VOXI page sends this request with an empty body and no JSON
   // content-type; keep the server flow identical.
@@ -311,7 +355,6 @@ export async function requestVoxiAccountApi<T>(
     Accept: "application/json, text/plain, */*",
     ...browserHeaders(browserUserAgent),
     "Content-Type": "application/json",
-    Referer: `${VOXI_ORIGIN}/account`,
     ...options.headers,
   };
   const currentCookie = cookieHeader(cookies);
@@ -340,10 +383,13 @@ export async function requestVoxiAccountApi<T>(
     });
   }
   if (response.status === 401 || response.status === 403) {
+    const cloudflare = response.status === 403 ? cloudflareDiagnostic(response) : null;
     throw new CarrierProviderError({
       type: "authentication",
       httpStatus: response.status,
-      message: `VOXI ${label} 返回 HTTP ${response.status}，登录会话已失效或被拒绝，请重新发送验证码完成认证`,
+      message: response.status === 403 && cloudflare !== null
+        ? `VOXI ${label} 返回 HTTP 403，服务器请求被 VOXI / Cloudflare 边缘拒绝${cloudflare}；请重新认证，若登录阶段也同样 403，则问题在服务器出口/请求环境而不是 simBalance 解析`
+        : `VOXI ${label} 返回 HTTP ${response.status}，登录会话已失效或被拒绝，请重新发送验证码完成认证`,
     });
   }
   if (response.status === 429) {
