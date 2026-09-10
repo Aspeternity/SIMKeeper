@@ -13,10 +13,6 @@ const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const DEFAULT_BROWSER_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36";
-// Kept as documented legacy My Account probe paths for connector diagnostics;
-// alpha.53.2 no longer parses these pages for balance data.
-const ACCOUNT_PATHS = ["/account", "/account/payment", "/account/plan"] as const;
-void ACCOUNT_PATHS;
 
 type CookieJar = Map<string, string>;
 
@@ -104,22 +100,43 @@ function stringValue(value: unknown) {
   return null;
 }
 
-function parseCookieHeader(raw: string) {
+function isPrimaryCookieName(name: string) {
+  const lower = name.toLowerCase();
+  return lower === "session"
+    || lower === "platformaccesstoken"
+    || lower === "platformauthtoken"
+    || lower === "_vapi"
+    || lower.startsWith("_vapi");
+}
+
+function isEdgeCookieName(name: string) {
+  const lower = name.toLowerCase();
+  return lower === "jsessionid"
+    || lower === "awsalb"
+    || lower === "awsalbcors"
+    || lower === "cf_clearance"
+    || lower === "__cf_bm"
+    || lower === "bm_sz"
+    || lower === "ak_bmsc"
+    || lower === "_abck"
+    || lower.startsWith("akavpau_")
+    || lower.startsWith("bigipserver")
+    || lower === "ts"
+    || lower === "ts_c"
+    || /^ts[0-9a-z_-]+$/i.test(name);
+}
+
+function parseCookiePairs(raw: string, label: string) {
   const cookie = raw.trim().replace(/^cookie\s*:\s*/i, "").trim();
-  if (!cookie) {
-    throw new CarrierProviderError({
-      type: "authentication",
-      message: "未保存 VOXI 会话 Cookie，请重新登录 VOXI 后在号码编辑器中更新",
-    });
-  }
+  if (!cookie) return new Map<string, string>();
   if (cookie.length > 16_000 || /[\r\n]/.test(cookie) || !/[A-Za-z0-9_.-]+\s*=/.test(cookie)) {
     throw new CarrierProviderError({
       type: "configuration",
-      message: "VOXI 会话 Cookie 格式不正确；请只粘贴浏览器请求头 Cookie 的值",
+      message: `${label}格式不正确；请粘贴 name=value 形式的 Cookie`,
     });
   }
 
-  const allCookies = new Map<string, string>();
+  const result = new Map<string, string>();
   for (const item of cookie.split(";")) {
     const part = item.trim();
     const separator = part.indexOf("=");
@@ -127,49 +144,73 @@ function parseCookieHeader(raw: string) {
     const name = part.slice(0, separator).trim();
     const value = part.slice(separator + 1).trim();
     if (!name || !value) continue;
-    allCookies.set(name, value);
+    result.set(name, value);
   }
+  return result;
+}
 
-  // Keep VOXI/Vodafone authentication cookies and common edge-security/session
-  // cookies, but deliberately drop analytics/marketing cookies. The account API
-  // still runs behind edge controls, so stripping all anti-bot/session affinity
-  // cookies can turn a valid browser session into HTTP 403.
-  const allowed = new Map<string, string>();
-  for (const [name, value] of allCookies) {
-    const lower = name.toLowerCase();
-    if (
-      lower === "session"
-      || lower === "_vapi"
-      || lower.startsWith("_vapi")
-      || lower === "platformaccesstoken"
-      || lower === "jsessionid"
-      || lower === "awsalb"
-      || lower === "awsalbcors"
-      || lower === "cf_clearance"
-      || lower === "__cf_bm"
-      || lower === "bm_sz"
-      || lower === "ak_bmsc"
-      || lower === "_abck"
-      || lower.startsWith("akavpau_")
-      || lower.startsWith("bigipserver")
-      || lower.startsWith("ts")
-    ) {
-      allowed.set(name, value);
-    }
-  }
-
-  const hasPrimarySession = Array.from(allowed.keys()).some((name) => {
-    const lower = name.toLowerCase();
-    return lower === "session" || lower.startsWith("_vapi") || lower === "platformaccesstoken";
-  });
-  if (!hasPrimarySession) {
+function normalizeCookieValue(value: unknown, label: string) {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  if (!normalized) return null;
+  if (normalized.length > 16_000 || /[\r\n;]/.test(normalized)) {
     throw new CarrierProviderError({
-      type: "authentication",
-      message: "复制的 VOXI Cookie 中没有识别到 Session、_vapi 或 PlatformAccessToken；请从已登录的 /auth/accounts 或 /subscription/get 请求重新复制 Cookie",
+      type: "configuration",
+      message: `${label}格式不正确；请只复制 Application → Cookies 中该 Cookie 的 Value`,
     });
   }
+  return normalized;
+}
 
-  return allowed;
+function buildVoxiCookieJar(credentials: Record<string, string>) {
+  const cookies: CookieJar = new Map();
+
+  // Backwards compatibility for alpha.53.0-alpha.53.2. A stored full Cookie
+  // header can remain in the encrypted credential record, while alpha.53.3
+  // allows users to replace it with the three visible VOXI auth cookies.
+  const legacy = parseCookiePairs(String(credentials.sessionCookie ?? ""), "VOXI 完整 Cookie");
+  for (const [name, value] of legacy) {
+    if (isPrimaryCookieName(name) || isEdgeCookieName(name)) cookies.set(name, value);
+  }
+
+  const session = normalizeCookieValue(credentials.session, "VOXI Session");
+  const platformAccessToken = normalizeCookieValue(
+    credentials.platformAccessToken,
+    "VOXI PlatformAccessToken",
+  );
+  const platformAuthToken = normalizeCookieValue(
+    credentials.platformAuthToken,
+    "VOXI PlatformAuthToken",
+  );
+  const explicitCount = [session, platformAccessToken, platformAuthToken].filter(Boolean).length;
+  if (explicitCount > 0 && explicitCount < 3) {
+    throw new CarrierProviderError({
+      type: "configuration",
+      message: "单独填写 VOXI 登录凭据时，请同时填写 Session、PlatformAccessToken 和 PlatformAuthToken；它们应来自同一次登录会话",
+    });
+  }
+  if (session) cookies.set("Session", session);
+  if (platformAccessToken) cookies.set("PlatformAccessToken", platformAccessToken);
+  if (platformAuthToken) cookies.set("PlatformAuthToken", platformAuthToken);
+
+  const edgeCookies = parseCookiePairs(String(credentials.edgeCookies ?? ""), "VOXI 边缘会话 Cookie");
+  for (const [name, value] of edgeCookies) {
+    if (!isEdgeCookieName(name)) {
+      throw new CarrierProviderError({
+        type: "configuration",
+        message: `VOXI 边缘会话 Cookie 中包含不支持的 Cookie：${name}`,
+      });
+    }
+    cookies.set(name, value);
+  }
+
+  const hasPrimary = Array.from(cookies.keys()).some(isPrimaryCookieName);
+  if (!hasPrimary) {
+    throw new CarrierProviderError({
+      type: "authentication",
+      message: "未保存可用的 VOXI 登录凭据。请在 Chrome → Application → Cookies → https://www.voxi.co.uk 中复制 Session、PlatformAccessToken 和 PlatformAuthToken 的 Value",
+    });
+  }
+  return cookies;
 }
 
 function normalizeBrowserUserAgent(value: unknown) {
@@ -208,7 +249,7 @@ function rememberResponseCookies(headers: Headers, cookies: CookieJar) {
     if (separator <= 0) continue;
     const name = pair.slice(0, separator).trim();
     const value = pair.slice(separator + 1).trim();
-    if (!name) continue;
+    if (!name || (!isPrimaryCookieName(name) && !isEdgeCookieName(name))) continue;
     if (!value) cookies.delete(name);
     else cookies.set(name, value);
   }
@@ -246,6 +287,13 @@ function assertAllowedApiPath(path: string) {
   }
 }
 
+function endpointLabel(path: string) {
+  if (/^\/auth\/accounts\/.+\/subscriptions$/.test(path)) {
+    return "/auth/accounts/{accountId}/subscriptions";
+  }
+  return path;
+}
+
 async function requestVoxiApi<T>(
   path: string,
   cookies: CookieJar,
@@ -253,6 +301,7 @@ async function requestVoxiApi<T>(
   options: VoxiApiRequestOptions = {},
 ): Promise<T | null> {
   assertAllowedApiPath(path);
+  const label = endpointLabel(path);
   const method = options.method ?? "GET";
   const headers: Record<string, string> = {
     Accept: "application/json, text/plain, */*",
@@ -287,13 +336,13 @@ async function requestVoxiApi<T>(
     if (error instanceof Error && error.name === "AbortError") {
       throw new CarrierProviderError({
         type: "temporary",
-        message: "连接 VOXI 账户接口超时，请稍后重试",
+        message: `连接 VOXI ${label} 超时，请稍后重试`,
         cause: error,
       });
     }
     throw new CarrierProviderError({
       type: "temporary",
-      message: "无法连接 VOXI 账户接口，请检查 SIMKeeper 服务器的网络访问",
+      message: `无法连接 VOXI ${label}，请检查 SIMKeeper 服务器的网络访问`,
       cause: error,
     });
   } finally {
@@ -306,14 +355,14 @@ async function requestVoxiApi<T>(
     throw new CarrierProviderError({
       type: "authentication",
       httpStatus: response.status,
-      message: "需要重新认证：VOXI 登录会话已失效，请重新登录 VOXI 后更新会话 Cookie",
+      message: `VOXI ${label} 跳转到登录页：当前登录会话已失效，请重新登录 VOXI 后更新 Session、PlatformAccessToken 和 PlatformAuthToken`,
     });
   }
   if (response.status === 401 || response.status === 403) {
     throw new CarrierProviderError({
       type: "authentication",
       httpStatus: response.status,
-      message: `VOXI 内部账户接口拒绝了当前登录会话（HTTP ${response.status}）。请重新登录 VOXI，并从 /auth/accounts 或 /subscription/get 请求复制新的 Cookie；若仍为 403，可在高级配置中填写同一浏览器的 User-Agent`,
+      message: `VOXI ${label} 返回 HTTP ${response.status}：当前登录凭据被拒绝。请确认 Session、PlatformAccessToken 和 PlatformAuthToken 来自同一次登录；若浏览器同一接口为 200 而这里仍为 403，可补充 __cf_bm / ts / ts_c 边缘 Cookie，并使用同一浏览器 User-Agent`,
     });
   }
   if (response.status === 429) {
@@ -321,35 +370,35 @@ async function requestVoxiApi<T>(
       type: "rate_limit",
       httpStatus: response.status,
       retryAfterMs: parseRetryAfter(response.headers),
-      message: "VOXI 暂时限制了账户接口请求频率，请稍后重试",
+      message: `VOXI ${label} 暂时限制了请求频率，请稍后重试`,
     });
   }
   if (response.status >= 500) {
     throw new CarrierProviderError({
       type: "temporary",
       httpStatus: response.status,
-      message: `VOXI 账户接口暂时不可用（HTTP ${response.status}）`,
+      message: `VOXI ${label} 暂时不可用（HTTP ${response.status}）`,
     });
   }
   if (response.status >= 300 && response.status < 400) {
     throw new CarrierProviderError({
       type: "unsupported",
       httpStatus: response.status,
-      message: `VOXI 账户接口发生未支持的跳转（HTTP ${response.status}）`,
+      message: `VOXI ${label} 发生未支持的跳转（HTTP ${response.status}）`,
     });
   }
   if (response.status >= 400) {
     throw new CarrierProviderError({
       type: "unsupported",
       httpStatus: response.status,
-      message: `VOXI 账户接口请求失败（HTTP ${response.status}），接口可能已经变更`,
+      message: `VOXI ${label} 请求失败（HTTP ${response.status}），接口可能已经变更`,
     });
   }
   if (response.status === 204) {
     if (options.allowNoContent) return null;
     throw new CarrierProviderError({
       type: "unsupported",
-      message: `VOXI 账户接口 ${path} 未返回数据`,
+      message: `VOXI ${label} 未返回数据`,
     });
   }
 
@@ -357,14 +406,14 @@ async function requestVoxiApi<T>(
   if (Buffer.byteLength(text, "utf8") > MAX_RESPONSE_BYTES) {
     throw new CarrierProviderError({
       type: "unsupported",
-      message: `VOXI 账户接口 ${path} 响应过大，已停止解析`,
+      message: `VOXI ${label} 响应过大，已停止解析`,
     });
   }
   if (!text.trim()) {
     if (options.allowNoContent) return null;
     throw new CarrierProviderError({
       type: "unsupported",
-      message: `VOXI 账户接口 ${path} 返回了空响应`,
+      message: `VOXI ${label} 返回了空响应`,
     });
   }
 
@@ -373,12 +422,12 @@ async function requestVoxiApi<T>(
     if (/sign\s*in|forgot(?:ten)?\s+(?:your\s+)?(?:username|password)/i.test(text)) {
       throw new CarrierProviderError({
         type: "authentication",
-        message: "需要重新认证：VOXI 登录会话已失效，请重新登录 VOXI 后更新会话 Cookie",
+        message: `VOXI ${label} 返回登录页：当前会话已失效，请重新登录后更新登录凭据`,
       });
     }
     throw new CarrierProviderError({
       type: "unsupported",
-      message: `VOXI 账户接口 ${path} 返回了网页而不是 JSON，接口行为可能已经变更`,
+      message: `VOXI ${label} 返回了网页而不是 JSON，接口行为可能已经变更`,
     });
   }
 
@@ -387,7 +436,7 @@ async function requestVoxiApi<T>(
   } catch (error) {
     throw new CarrierProviderError({
       type: "unsupported",
-      message: `VOXI 账户接口 ${path} 返回的 JSON 无法解析`,
+      message: `VOXI ${label} 返回的 JSON 无法解析`,
       cause: error,
     });
   }
@@ -395,12 +444,16 @@ async function requestVoxiApi<T>(
 
 function accountRows(response: VoxiAccountsResponse | null) {
   if (!response || !Array.isArray(response.accountDetails)) return [];
-  return response.accountDetails.filter((item): item is VoxiAccount => Boolean(item) && typeof item === "object");
+  return response.accountDetails.filter(
+    (item): item is VoxiAccount => Boolean(item) && typeof item === "object",
+  );
 }
 
 function subscriptionRows(response: VoxiSubscriptionsResponse | null) {
   if (!response || !Array.isArray(response.subscriptionDetails)) return [];
-  return response.subscriptionDetails.filter((item): item is VoxiSubscription => Boolean(item) && typeof item === "object");
+  return response.subscriptionDetails.filter(
+    (item): item is VoxiSubscription => Boolean(item) && typeof item === "object",
+  );
 }
 
 function subscriptionScore(subscription: VoxiSubscription) {
@@ -416,14 +469,16 @@ async function selectVoxiSubscription(
   browserUserAgent: string,
   targetMsisdn: string,
 ): Promise<SelectedVoxiSubscription> {
-  await requestVoxiApi<unknown>("/auth/session", cookies, browserUserAgent, { allowNoContent: true });
+  await requestVoxiApi<unknown>("/auth/session", cookies, browserUserAgent, {
+    allowNoContent: true,
+  });
   const accounts = accountRows(
     await requestVoxiApi<VoxiAccountsResponse>("/auth/accounts", cookies, browserUserAgent),
   );
   if (accounts.length === 0) {
     throw new CarrierProviderError({
       type: "authentication",
-      message: "VOXI 登录会话可访问，但没有读取到账户；请重新登录后更新会话 Cookie",
+      message: "VOXI 登录会话可访问，但没有读取到账户；请重新登录后更新登录凭据",
     });
   }
 
@@ -511,9 +566,6 @@ async function readVoxiSubscriptionData(
 ) {
   const selected = await selectVoxiSubscription(cookies, browserUserAgent, targetMsisdn);
 
-  // The official payment page establishes account/subscription context through
-  // /auth/session before POST /subscription/get. That response exposes the
-  // displayed PAYG credit directly as the top-level simBalance field.
   await requestVoxiApi<unknown>("/auth/session", cookies, browserUserAgent, {
     allowNoContent: true,
     headers: {
@@ -549,7 +601,7 @@ async function readVoxiSubscriptionData(
 export const voxiCarrierConnectorProvider: CarrierConnectorProvider = {
   id: "voxi",
   label: "VOXI My Account",
-  description: "实验性集成。复用用户主动提供的 VOXI 登录会话，调用官方站点内部账户接口按手机号匹配订阅，并从 /subscription/get 的 simBalance 直接读取 Top up / PAYG credit。不会保存 VOXI 明文密码。",
+  description: "使用 VOXI 登录会话调用官方站点内部账户接口，按手机号匹配订阅，并从 /subscription/get 的 simBalance 直接读取 Top up / PAYG credit。不会保存 VOXI 明文密码。",
   minLinkedSims: 1,
   maxLinkedSims: 1,
   configFields: [
@@ -559,22 +611,50 @@ export const voxiCarrierConnectorProvider: CarrierConnectorProvider = {
       type: "text",
       required: false,
       placeholder: DEFAULT_BROWSER_USER_AGENT,
-      description: "默认使用当前适配测试的 Chrome User-Agent。仅在 VOXI 返回 403 时，建议复制登录 VOXI 的同一浏览器 User-Agent 填入这里。",
+      description: "默认使用当前适配测试的 Chrome User-Agent。若 VOXI 某一步返回 403，可填写登录 VOXI 的同一浏览器 User-Agent。",
     },
   ],
   credentialFields: [
     {
+      key: "session",
+      label: "VOXI Session",
+      required: false,
+      placeholder: "复制 Session 的 Value",
+      description: "Chrome → Application → Cookies → https://www.voxi.co.uk → Session，只复制 Value。请与下面两个 Token 使用同一次登录会话。",
+    },
+    {
+      key: "platformAccessToken",
+      label: "VOXI PlatformAccessToken",
+      required: false,
+      placeholder: "复制 PlatformAccessToken 的 Value",
+      description: "在同一 Cookie 列表中复制 PlatformAccessToken 的 Value；SIMKeeper 会加密保存。",
+    },
+    {
+      key: "platformAuthToken",
+      label: "VOXI PlatformAuthToken",
+      required: false,
+      placeholder: "复制 PlatformAuthToken 的 Value",
+      description: "在同一 Cookie 列表中复制 PlatformAuthToken 的 Value；alpha.53.3 起会随 Session 一起发送。",
+    },
+    {
+      key: "edgeCookies",
+      label: "边缘会话 Cookie（可选）",
+      required: false,
+      placeholder: "__cf_bm=...; ts=...; ts_c=...",
+      description: "仅在浏览器接口为 200、SIMKeeper 仍为 403 时使用。可填写 __cf_bm、ts、ts_c 等 name=value；不要加入统计/营销 Cookie。",
+    },
+    {
       key: "sessionCookie",
-      label: "VOXI 会话 Cookie",
-      required: true,
-      placeholder: "粘贴已登录 VOXI 请求中的 Cookie 值",
-      description: "先登录 www.voxi.co.uk 并打开 /account/payment，在开发者工具 → Network 中选择 /auth/accounts 或 /subscription/get，请仅复制 Request Headers 中 Cookie: 后面的完整值。SIMKeeper 会筛选并加密保存认证/会话相关 Cookie；会话失效后需要重新粘贴。不要把 Cookie 发给其他人。",
+      label: "完整 Cookie（旧版兼容，可选）",
+      required: false,
+      placeholder: "alpha.53.0-alpha.53.2 的完整 Cookie",
+      description: "仅用于兼容旧版已保存配置。新配置优先填写上面的 Session、PlatformAccessToken 和 PlatformAuthToken，不再要求从 Network 找完整 Cookie。",
     },
   ],
   async sync({ credentials, sim, config }): Promise<NormalizedCarrierSyncResult> {
     assertVoxiSim(sim);
     const targetMsisdn = normalizeVoxiNumber(sim.phoneNumber);
-    const cookies = parseCookieHeader(String(credentials.sessionCookie ?? ""));
+    const cookies = buildVoxiCookieJar(credentials);
     const browserUserAgent = normalizeBrowserUserAgent(config.browserUserAgent);
     const data = await readVoxiSubscriptionData(cookies, browserUserAgent, targetMsisdn);
 

@@ -81,15 +81,15 @@ function positiveId(value: string | null) {
 
 function providerRuntimeState(providerId: string) {
   if (providerId === "voxi") {
-    const availabilityNote = "VOXI 没有公开的第三方消费者余额 API。SIMKeeper 使用用户主动提供的已登录 VOXI 浏览器会话 Cookie 访问 My Account；会话失效后需要重新粘贴。";
+    const availabilityNote = "VOXI 没有公开的第三方消费者余额 API。SIMKeeper 复用浏览器中的 Session、PlatformAccessToken 和 PlatformAuthToken 调用官方站点内部账户接口；不再要求从 Network 查找完整 Cookie。会话失效后需要重新登录并更新这些凭据。";
     return {
       maturity: "experimental" as const,
       availabilityNote,
       runtimeReady: true,
       runtimeMessage: availabilityNote,
-      runtimeWarning: "VOXI 会话 Cookie 属于账户认证凭据；仅粘贴到自己的 SIMKeeper 实例，不要通过聊天、截图或日志分享。",
+      runtimeWarning: "Session 与 Platform Token 都属于 VOXI 账户认证凭据；只粘贴到自己的 SIMKeeper 实例，不要通过聊天、截图或日志分享 Value。",
       runtimeMode: null as "oauth" | "static-token" | null,
-      runtimeSource: "VOXI browser session" as string | null,
+      runtimeSource: "VOXI browser session cookies" as string | null,
       runtimeExpiresAt: null as string | null,
     };
   }

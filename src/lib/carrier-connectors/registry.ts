@@ -55,7 +55,7 @@ const PROVIDER_METADATA: Record<string, ProviderMetadata> = {
   },
   voxi: {
     maturity: "experimental",
-    availabilityNote: "VOXI 没有公开的第三方消费者余额 API。此连接复用用户主动提供的已登录 VOXI 浏览器会话，通过官方站点内部 /auth 与 /subscription/get 接口读取 simBalance；会话失效时需要重新登录并更新 Cookie。",
+    availabilityNote: "VOXI 没有公开的第三方消费者余额 API。此连接使用用户主动提供的 Session、PlatformAccessToken 和 PlatformAuthToken 复用已登录浏览器会话，通过官方站点内部 /auth 与 /subscription/get 接口读取 simBalance；会话失效时需要重新登录并更新这些凭据。",
     capabilities: {
       automaticSync: true,
       balance: true,
