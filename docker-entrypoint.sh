@@ -6,6 +6,7 @@ PGID="${PGID:-1000}"
 DATA_DIR="${SIMKEEPER_DATA_DIR:-/app/data}"
 RUNTIME_HOME="$DATA_DIR/runtime-home"
 VOXI_PROFILE_ROOT="$DATA_DIR/carrier-browser/voxi"
+XVFB_SCREEN="-screen 0 1365x900x24 -nolisten tcp"
 
 validate_id() {
   name="$1"
@@ -52,8 +53,6 @@ if [ "$(id -u)" -eq 0 ]; then
     fi
   fi
 
-  # Keep both the primary group and Unix account home aligned after UID/GID
-  # remapping. Chromium and some libc helpers may consult /etc/passwd directly.
   if ! usermod -g "$PGID" -d "$RUNTIME_HOME" simkeeper; then
     echo "SIMKeeper: cannot update the service account runtime home/group" >&2
     exit 1
@@ -76,19 +75,25 @@ if [ "$(id -u)" -eq 0 ]; then
     exit 1
   fi
 
-  # Set HOME/XDG after the privilege drop. This is deliberately later than
-  # `gosu simkeeper`: runtimes that restore HOME from /etc/passwd can no longer
-  # send Chromium back to an unwritable /home/* directory.
+  if [ -n "${DISPLAY:-}" ]; then
+    exec gosu simkeeper env \
+      HOME="$RUNTIME_HOME" \
+      XDG_CACHE_HOME="$RUNTIME_HOME/.cache" \
+      XDG_CONFIG_HOME="$RUNTIME_HOME/.config" \
+      TMPDIR="${TMPDIR:-/tmp}" \
+      DISPLAY="$DISPLAY" \
+      "$@"
+  fi
+
   exec gosu simkeeper env \
     HOME="$RUNTIME_HOME" \
     XDG_CACHE_HOME="$RUNTIME_HOME/.cache" \
     XDG_CONFIG_HOME="$RUNTIME_HOME/.config" \
     TMPDIR="${TMPDIR:-/tmp}" \
+    xvfb-run -a -s "$XVFB_SCREEN" \
     "$@"
 fi
 
-# Also support deployments that intentionally set Docker's `user:` option.
-# In that mode we cannot chown or remap IDs, but a writable bind mount is enough.
 prepare_runtime_dirs
 for dir in "$DATA_DIR" "$RUNTIME_HOME" "$VOXI_PROFILE_ROOT"; do
   if [ ! -w "$dir" ] || [ ! -x "$dir" ]; then
@@ -97,9 +102,20 @@ for dir in "$DATA_DIR" "$RUNTIME_HOME" "$VOXI_PROFILE_ROOT"; do
   fi
 done
 
+if [ -n "${DISPLAY:-}" ]; then
+  exec env \
+    HOME="$RUNTIME_HOME" \
+    XDG_CACHE_HOME="$RUNTIME_HOME/.cache" \
+    XDG_CONFIG_HOME="$RUNTIME_HOME/.config" \
+    TMPDIR="${TMPDIR:-/tmp}" \
+    DISPLAY="$DISPLAY" \
+    "$@"
+fi
+
 exec env \
   HOME="$RUNTIME_HOME" \
   XDG_CACHE_HOME="$RUNTIME_HOME/.cache" \
   XDG_CONFIG_HOME="$RUNTIME_HOME/.config" \
   TMPDIR="${TMPDIR:-/tmp}" \
+  xvfb-run -a -s "$XVFB_SCREEN" \
   "$@"
