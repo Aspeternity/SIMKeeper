@@ -4,7 +4,7 @@ import { cslCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/
 import { ditoCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/dito";
 import { globeCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/globe";
 import { mockCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/mock";
-import { voxiCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/voxi-browser";
+import { voxiCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/voxi-browser-otp-safe";
 import type {
   CarrierConnectorCapabilities,
   CarrierConnectorProvider,

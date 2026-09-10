@@ -7,7 +7,8 @@ import {
   encryptCarrierConnectorCredential,
 } from "@/lib/credential-crypto";
 
-const OTP_TTL_MS = 10 * 60_000;
+export const VOXI_OTP_TTL_MS = 20 * 60_000;
+export const VOXI_OTP_RESEND_COOLDOWN_MS = 60_000;
 
 export type VoxiCookieJar = Map<string, string>;
 
@@ -21,6 +22,7 @@ type VoxiSessionRow = {
 type StoredPendingAuth = {
   usernameHash: string;
   cookies: Array<[string, string]>;
+  sentAt?: string;
 };
 
 function usernameHash(username: string) {
@@ -101,10 +103,11 @@ export function saveVoxiPendingAuth(
 ) {
   ensureSessionTable();
   const now = new Date().toISOString();
-  const expiresAt = new Date(Date.now() + OTP_TTL_MS).toISOString();
+  const expiresAt = new Date(Date.now() + VOXI_OTP_TTL_MS).toISOString();
   const payload: StoredPendingAuth = {
     usernameHash: usernameHash(username),
     cookies: cookieEntries(cookies),
+    sentAt: now,
   };
   const encrypted = encryptJson(payload, "VOXI 验证状态");
   sqlite
@@ -125,8 +128,8 @@ export function saveVoxiPendingAuth(
 export function readVoxiPendingAuth(connectorId: number) {
   const row = getSessionRow(connectorId);
   if (!row?.pending_auth_encrypted || !row.pending_auth_expires_at) return null;
-  const expiresAt = Date.parse(row.pending_auth_expires_at);
-  if (!Number.isFinite(expiresAt) || Date.now() >= expiresAt) {
+  const expiresAtMs = Date.parse(row.pending_auth_expires_at);
+  if (!Number.isFinite(expiresAtMs) || Date.now() >= expiresAtMs) {
     clearVoxiPendingAuth(connectorId);
     return null;
   }
@@ -135,9 +138,13 @@ export function readVoxiPendingAuth(connectorId: number) {
   const record = parsed as Record<string, unknown>;
   const storedUsernameHash = typeof record.usernameHash === "string" ? record.usernameHash : "";
   if (!storedUsernameHash) return null;
+  const sentAtValue = typeof record.sentAt === "string" ? record.sentAt : "";
+  const sentAtMs = sentAtValue ? Date.parse(sentAtValue) : Number.NaN;
   return {
     usernameHash: storedUsernameHash,
     cookies: cookieJarFromUnknown(record.cookies),
+    sentAt: Number.isFinite(sentAtMs) ? new Date(sentAtMs).toISOString() : null,
+    expiresAt: new Date(expiresAtMs).toISOString(),
   };
 }
 
