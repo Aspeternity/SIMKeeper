@@ -65,7 +65,9 @@ jobs:
 
           grep -Fq 'playwright-core' package.json || fail "playwright-core dependency missing"
           grep -Fq 'chromium' Dockerfile || fail "Chromium runtime package missing from Dockerfile"
-          grep -Fq 'SIMKEEPER_VOXI_CHROMIUM_EXECUTABLE=/usr/bin/chromium' Dockerfile || fail "VOXI Chromium executable is not configured"
+          grep -Fq 'SIMKEEPER_VOXI_CHROMIUM_EXECUTABLE=/usr/local/bin/simkeeper-chromium' Dockerfile || fail "VOXI Chromium wrapper executable is not configured"
+          grep -Fq 'SIMKEEPER_REAL_CHROMIUM_EXECUTABLE=/usr/bin/chromium' Dockerfile || fail "Real Chromium executable is not configured"
+          grep -Fq 'COPY simkeeper-chromium.sh /usr/local/bin/simkeeper-chromium' Dockerfile || fail "VOXI Chromium wrapper is not copied into the image"
           grep -Fq 'providers/voxi-browser' src/lib/carrier-connectors/registry.ts || fail "VOXI browser provider is not active"
           grep -Fq 'id: "voxi"' src/lib/carrier-connectors/providers/voxi-browser.ts || fail "VOXI provider id missing"
           grep -Fq 'launchPersistentContext' src/lib/carrier-connectors/providers/voxi-browser.ts || fail "Persistent Chromium profile missing"
@@ -100,6 +102,8 @@ jobs:
           done
           [ "$ready" -eq 1 ] || fail "SIMKeeper did not become healthy"
 
+          docker exec "$container" test -x /usr/local/bin/simkeeper-chromium \
+            || fail "VOXI Chromium wrapper is not executable inside the published image"
           docker exec "$container" /usr/bin/chromium --version >/dev/null 2>&1 \
             || fail "Chromium is not executable inside the published image"
           docker exec "$container" node -e "require('playwright-core');" >/dev/null 2>&1 \
