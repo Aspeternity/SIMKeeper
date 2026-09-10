@@ -15,6 +15,7 @@ import {
   RefreshCw,
   ShieldCheck,
 } from "lucide-react";
+import { CredentialInput } from "@/components/sims/credential-input";
 import { Input } from "@/components/ui/input";
 import { CONNECTOR_SYNC_INTERVAL_OPTIONS } from "@/lib/carrier-connectors/types";
 import { CURRENCIES } from "@/lib/sim-options";
@@ -176,6 +177,7 @@ export const SimBalanceSourceEditor = forwardRef<
   const [providerId, setProviderId] = useState("");
   const [syncIntervalMinutes, setSyncIntervalMinutes] = useState(1440);
   const [credentials, setCredentials] = useState<Record<string, string>>({});
+  const [revealedCredentials, setRevealedCredentials] = useState<Record<string, boolean>>({});
   const [providerConfig, setProviderConfig] = useState<Record<string, string | boolean>>({});
   const [loading, setLoading] = useState(true);
   const [metadataError, setMetadataError] = useState("");
@@ -197,6 +199,7 @@ export const SimBalanceSourceEditor = forwardRef<
       setNotice("");
       setOtpSent(false);
       setOtpCode("");
+      setRevealedCredentials({});
       try {
         const query = editing ? `?simId=${editing.id}` : "";
         const response = await fetch(`/api/sims/balance-source${query}`, { cache: "no-store" });
@@ -252,6 +255,7 @@ export const SimBalanceSourceEditor = forwardRef<
       setProviderId(next.id);
       setProviderConfig(initialConfig(next));
       setCredentials({});
+      setRevealedCredentials({});
     }
   }, [loading, mode, providerId, supportedProviders]);
 
@@ -260,6 +264,7 @@ export const SimBalanceSourceEditor = forwardRef<
     setProviderId(id);
     setProviderConfig(initialConfig(provider));
     setCredentials({});
+    setRevealedCredentials({});
     setActionError("");
     setNotice("");
     setOtpSent(false);
@@ -338,6 +343,7 @@ export const SimBalanceSourceEditor = forwardRef<
     const nextSource = (data.source || null) as BalanceSource | null;
     setSource(nextSource);
     setCredentials({});
+    setRevealedCredentials({});
     return nextSource;
   }
 
@@ -511,10 +517,7 @@ export const SimBalanceSourceEditor = forwardRef<
   const showStoredConnectorStatus = Boolean(
     runtimeReady
     && sourceForSelectedProvider
-    && (
-      sourceForSelectedProvider.status !== "error"
-      || sourceForSelectedProvider.lastError
-    ),
+    && sourceForSelectedProvider.status !== "error",
   );
 
   return (
@@ -743,14 +746,24 @@ export const SimBalanceSourceEditor = forwardRef<
           <div className="grid gap-4 sm:grid-cols-2">
             {selectedProvider.credentialFields.map((field) => {
               const stored = Boolean(sourceForSelectedProvider?.hasCredentials);
+              const plainText = selectedProvider.id === "voxi" && field.key === "username";
+              const revealed = Boolean(revealedCredentials[field.key]);
               return (
                 <label key={field.key} className="space-y-1.5 text-sm">
                   <span className="font-medium text-slate-700">{field.label}</span>
-                  <Input
+                  <CredentialInput
                     value={credentials[field.key] || ""}
-                    onChange={(event) => setCredentials((current) => ({ ...current, [field.key]: event.target.value }))}
-                    type="password"
-                    autoComplete="new-password"
+                    onChange={(value) => {
+                      setCredentials((current) => ({ ...current, [field.key]: value }));
+                      setActionError("");
+                      setNotice("");
+                    }}
+                    plainText={plainText}
+                    revealed={revealed}
+                    onToggleReveal={() => setRevealedCredentials((current) => ({
+                      ...current,
+                      [field.key]: !current[field.key],
+                    }))}
                     placeholder={stored ? "已加密保存；留空保持不变" : field.placeholder || "请输入凭据"}
                     disabled={disabled}
                   />
@@ -834,10 +847,8 @@ export const SimBalanceSourceEditor = forwardRef<
               )}
             </div>
           ) : showStoredConnectorStatus && sourceForSelectedProvider ? (
-            <div className={`rounded-xl px-3 py-2.5 text-xs leading-5 ${sourceForSelectedProvider.status === "error" ? "border border-rose-100 bg-rose-50 text-rose-700" : "border border-emerald-100 bg-emerald-50 text-emerald-700"}`}>
-              {sourceForSelectedProvider.status === "error"
-                ? sourceForSelectedProvider.lastError
-                : `已启用 · 上次成功 ${formatDateTime(sourceForSelectedProvider.lastSuccessAt)} · 下次计划 ${formatDateTime(sourceForSelectedProvider.nextSyncAt)}`}
+            <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2.5 text-xs leading-5 text-emerald-700">
+              {`已启用 · 上次成功 ${formatDateTime(sourceForSelectedProvider.lastSuccessAt)} · 下次计划 ${formatDateTime(sourceForSelectedProvider.nextSyncAt)}`}
             </div>
           ) : null}
 
