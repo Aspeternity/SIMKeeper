@@ -31,10 +31,12 @@ ENV PGID=1000
 RUN apt-get update \
   && apt-get install -y --no-install-recommends gosu chromium fonts-liberation \
   && rm -rf /var/lib/apt/lists/* \
-  && groupadd --system --gid 1001 simkeeper \
-  && useradd --system --uid 1001 --gid simkeeper --home-dir /app/data/runtime-home --no-create-home simkeeper \
+  && groupmod -n simkeeper node \
+  && usermod -l simkeeper -d /app/data/runtime-home node \
   && mkdir -p /app/data/backups /app/data/carrier-browser/voxi /app/data/runtime-home/.cache /app/data/runtime-home/.config /app/data/runtime-home/tmp \
   && chown -R simkeeper:simkeeper /app/data \
+  && test "$(id -u simkeeper)" = "1000" \
+  && test "$(id -g simkeeper)" = "1000" \
   && test "$(getent passwd simkeeper | cut -d: -f6)" = "/app/data/runtime-home"
 COPY --from=builder --chown=simkeeper:simkeeper /app/public ./public
 COPY --from=builder --chown=simkeeper:simkeeper /app/.next/standalone ./

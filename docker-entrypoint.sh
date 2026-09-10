@@ -39,17 +39,25 @@ validate_id PGID "$PGID"
 
 if [ "$(id -u)" -eq 0 ]; then
   if [ "$(id -g simkeeper)" != "$PGID" ]; then
-    groupmod -o -g "$PGID" simkeeper
+    if ! groupmod -g "$PGID" simkeeper; then
+      echo "SIMKeeper: cannot change the service group to PGID=$PGID; the ID may already be used inside the container" >&2
+      exit 1
+    fi
   fi
 
   if [ "$(id -u simkeeper)" != "$PUID" ]; then
-    usermod -o -u "$PUID" simkeeper
+    if ! usermod -u "$PUID" simkeeper; then
+      echo "SIMKeeper: cannot change the service user to PUID=$PUID; the ID may already be used inside the container" >&2
+      exit 1
+    fi
   fi
 
-  # Keep the Unix account home aligned with Chromium's writable runtime home.
-  # Some privilege-drop/runtime paths rebuild HOME from /etc/passwd, so merely
-  # exporting HOME before gosu is not sufficient on every Docker host.
-  usermod -d "$RUNTIME_HOME" simkeeper
+  # Keep both the primary group and Unix account home aligned after UID/GID
+  # remapping. Chromium and some libc helpers may consult /etc/passwd directly.
+  if ! usermod -g "$PGID" -d "$RUNTIME_HOME" simkeeper; then
+    echo "SIMKeeper: cannot update the service account runtime home/group" >&2
+    exit 1
+  fi
 
   prepare_runtime_dirs
 
@@ -68,8 +76,9 @@ if [ "$(id -u)" -eq 0 ]; then
     exit 1
   fi
 
-  # Apply HOME/XDG after gosu changes identity. This prevents runtimes that
-  # restore HOME from /etc/passwd from sending Chromium back to /home/simkeeper.
+  # Set HOME/XDG after the privilege drop. This is deliberately later than
+  # `gosu simkeeper`: runtimes that restore HOME from /etc/passwd can no longer
+  # send Chromium back to an unwritable /home/* directory.
   exec gosu simkeeper env \
     HOME="$RUNTIME_HOME" \
     XDG_CACHE_HOME="$RUNTIME_HOME/.cache" \
