@@ -69,7 +69,7 @@ jobs:
           curl -fsS "$base/api/health" >/dev/null || fail "health check failed"
 
           curl -fsS -D "$tmp/root-uninitialized.headers" -o /dev/null "$base/" || fail "uninitialized root request failed"
-          grep -Eiq '^location: /setup\r?$' "$tmp/root-uninitialized.headers" || fail "uninitialized root did not redirect directly to /setup"
+          grep -Eiq '^location: /setup[[:space:]]*$' "$tmp/root-uninitialized.headers" || fail "uninitialized root did not redirect directly to /setup"
 
           curl -fsS "$base/setup" > "$tmp/setup.html" || fail "setup page failed"
           grep -Fq 'data-auth-shell="alpha.51.7"' "$tmp/setup.html" || fail "auth shell missing from setup runtime"
@@ -83,7 +83,7 @@ jobs:
             "$base/api/auth/setup" || fail "unable to create smoke administrator"
 
           curl -fsS -D "$tmp/root-guest.headers" -o /dev/null "$base/" || fail "guest root request failed"
-          grep -Eiq '^location: /login\r?$' "$tmp/root-guest.headers" || fail "unauthenticated root did not redirect directly to /login"
+          grep -Eiq '^location: /login[[:space:]]*$' "$tmp/root-guest.headers" || fail "unauthenticated root did not redirect directly to /login"
 
           curl -fsS "$base/login" > "$tmp/login.html" || fail "login page failed"
           grep -Fq 'data-auth-shell="alpha.51.7"' "$tmp/login.html" || fail "auth shell missing from login runtime"
