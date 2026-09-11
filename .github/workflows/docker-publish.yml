@@ -135,14 +135,20 @@ jobs:
           if grep -q 'href="/notifications"' "$tmp/dashboard.html"; then fail "Notification channels still appear as a primary navigation entry"; fi
           if grep -q 'href="/security"' "$tmp/dashboard.html"; then fail "Account security still appears as a primary navigation entry"; fi
 
-          echo "[6/17] Logging out and verifying unauthenticated gate"
+          echo "[6/17] Logging out and verifying unauthenticated redirect"
           : > "$headers"
           curl -sS --max-time 5 -D "$headers" -o /dev/null -b "$cookies" -c "$cookies" -X POST "$base/api/auth/logout" || fail "POST /api/auth/logout failed"
           expect_header '^HTTP/[^ ]+ 303' "Logout did not return HTTP 303"
           expect_header '^location: /login[[:space:]]*$' "Logout Location header is not /login"
-          status="$(curl -sS --max-time 5 -b "$cookies" -o "$tmp/gate.html" -w '%{http_code}' "$base/")" || fail "Unauthenticated GET / failed"
-          [ "$status" = "200" ] || fail "Unauthenticated GET / returned HTTP $status"
-          grep -q '需要登录' "$tmp/gate.html" || fail "Logged-out Dashboard did not render login gate"
+          : > "$headers"
+          status="$(curl -sS --max-time 5 -b "$cookies" -D "$headers" -o "$tmp/gate.html" -w '%{http_code}' "$base/")" || fail "Unauthenticated GET / failed"
+          case "$status" in
+            307|308) ;;
+            *) fail "Unauthenticated GET / returned HTTP $status instead of redirecting to login" ;;
+          esac
+          expect_header '^location: .*/login[[:space:]]*$' "Unauthenticated Dashboard did not redirect to /login"
+          status="$(curl -sS --max-time 5 -b "$cookies" -o "$tmp/login.html" -w '%{http_code}' "$base/login")" || fail "GET /login failed"
+          [ "$status" = "200" ] || fail "GET /login returned HTTP $status"
 
           echo "[7/17] Logging back in"
           : > "$headers"
