@@ -35,7 +35,8 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/* \
   && groupmod -n simkeeper node \
   && usermod -l simkeeper -d /app/data/runtime-home node \
-  && mkdir -p /app/data/backups /app/data/carrier-browser/voxi /app/data/runtime-home/.cache /app/data/runtime-home/.config /app/data/runtime-home/tmp \
+  && mkdir -p /app/data/backups /app/data/carrier-browser/voxi /app/data/runtime-home/.cache /app/data/runtime-home/.config /app/data/runtime-home/tmp /tmp/.X11-unix \
+  && chmod 1777 /tmp /tmp/.X11-unix \
   && chown -R simkeeper:simkeeper /app/data \
   && test "$(id -u simkeeper)" = "1000" \
   && test "$(id -g simkeeper)" = "1000" \
@@ -54,9 +55,10 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/simkeeper-chromi
        XDG_CACHE_HOME=/app/data/runtime-home/.cache \
        XDG_CONFIG_HOME=/app/data/runtime-home/.config \
        TMPDIR=/tmp \
-       xvfb-run -a -s "-screen 0 1365x900x24 -nolisten tcp" \
+       xvfb-run -a -s "-screen 0 1365x900x24 -nolisten tcp -nolock" \
        node -e "const { chromium } = require('playwright-core'); (async () => { const context = await chromium.launchPersistentContext('/app/data/carrier-browser/voxi/.image-selftest', { executablePath: '/usr/local/bin/simkeeper-chromium', headless: true, chromiumSandbox: false, args: ['--disable-dev-shm-usage','--no-sandbox','--disable-setuid-sandbox','--no-first-run','--no-default-browser-check'] }); const page = context.pages()[0] || await context.newPage(); await page.goto('data:text/html,<title>SIMKeeper Chromium self-test</title>'); const ua = await page.evaluate(() => navigator.userAgent); if (/HeadlessChrome/i.test(ua)) throw new Error('VOXI Chromium self-test still exposes a headless user agent'); await context.close(); })().catch((error) => { console.error(error); process.exit(1); });" \
-  && rm -rf /app/data/carrier-browser/voxi/.image-selftest
+  && rm -rf /app/data/carrier-browser/voxi/.image-selftest \
+  && rm -f /tmp/.X*-lock /tmp/.X11-unix/X*
 EXPOSE 3000
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["node", "server.js"]

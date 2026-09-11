@@ -59,10 +59,18 @@ prepare_runtime_dirs() {
   fi
 }
 
-xvfb_socket_path() {
+xvfb_display_number() {
   display_number="${XVFB_DISPLAY#:}"
   display_number="${display_number%%.*}"
-  printf '/tmp/.X11-unix/X%s' "$display_number"
+  printf '%s' "$display_number"
+}
+
+xvfb_socket_path() {
+  printf '/tmp/.X11-unix/X%s' "$(xvfb_display_number)"
+}
+
+xvfb_lock_path() {
+  printf '/tmp/.X%s-lock' "$(xvfb_display_number)"
 }
 
 wait_for_xvfb() {
@@ -88,12 +96,51 @@ wait_for_xvfb() {
   exit 1
 }
 
-prepare_x11_socket_dir_root() {
+remove_stale_xvfb_artifacts() {
+  lock_path="$(xvfb_lock_path)"
+  socket_path="$(xvfb_socket_path)"
+
+  if ! rm -f "$lock_path" "$socket_path" 2>/dev/null; then
+    echo "SIMKeeper: unable to remove stale Xvfb artifacts for $XVFB_DISPLAY" >&2
+    echo "SIMKeeper: lock=$lock_path socket=$socket_path uid=$(id -u) gid=$(id -g)" >&2
+    exit 1
+  fi
+}
+
+prepare_x11_runtime_root() {
+  if ! chmod 1777 /tmp; then
+    echo "SIMKeeper: unable to apply mode 1777 to /tmp" >&2
+    exit 1
+  fi
   if ! mkdir -p /tmp/.X11-unix; then
     echo "SIMKeeper: unable to create /tmp/.X11-unix" >&2
     exit 1
   fi
-  chmod 1777 /tmp/.X11-unix || true
+  if ! chmod 1777 /tmp/.X11-unix; then
+    echo "SIMKeeper: unable to apply mode 1777 to /tmp/.X11-unix" >&2
+    exit 1
+  fi
+  remove_stale_xvfb_artifacts
+}
+
+prepare_x11_runtime_current_user() {
+  if [ ! -d /tmp/.X11-unix ]; then
+    if ! mkdir -p /tmp/.X11-unix 2>/dev/null; then
+      echo "SIMKeeper: unable to create /tmp/.X11-unix as uid=$(id -u) gid=$(id -g)" >&2
+      exit 1
+    fi
+  fi
+
+  if [ ! -w /tmp ] || [ ! -x /tmp ]; then
+    echo "SIMKeeper: /tmp is not writable/executable by container uid=$(id -u) gid=$(id -g)" >&2
+    exit 1
+  fi
+  if [ ! -w /tmp/.X11-unix ] || [ ! -x /tmp/.X11-unix ]; then
+    echo "SIMKeeper: /tmp/.X11-unix is not writable/executable by container uid=$(id -u) gid=$(id -g)" >&2
+    exit 1
+  fi
+
+  remove_stale_xvfb_artifacts
 }
 
 start_xvfb_root() {
@@ -102,11 +149,15 @@ start_xvfb_root() {
   fi
 
   validate_xvfb_display "$XVFB_DISPLAY"
-  prepare_x11_socket_dir_root
+  prepare_x11_runtime_root
   : > "$XVFB_LOG"
   chown simkeeper:simkeeper "$XVFB_LOG"
 
+  # -nolock is deliberate. Docker images can otherwise retain an Xvfb lock
+  # owned by the image-time UID; after PUID remapping that stale lock is no
+  # longer removable by the service user even though /tmp itself is 1777.
   gosu simkeeper Xvfb "$XVFB_DISPLAY" \
+    -nolock \
     -screen 0 1365x900x24 \
     -nolisten tcp \
     -ac \
@@ -123,13 +174,11 @@ start_xvfb_current_user() {
   fi
 
   validate_xvfb_display "$XVFB_DISPLAY"
-  if ! mkdir -p /tmp/.X11-unix 2>/dev/null; then
-    echo "SIMKeeper: unable to prepare /tmp/.X11-unix for Xvfb as uid=$(id -u)" >&2
-    exit 1
-  fi
+  prepare_x11_runtime_current_user
   : > "$XVFB_LOG"
 
   Xvfb "$XVFB_DISPLAY" \
+    -nolock \
     -screen 0 1365x900x24 \
     -nolisten tcp \
     -ac \
