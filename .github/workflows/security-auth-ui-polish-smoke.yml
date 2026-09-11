@@ -52,6 +52,8 @@ jobs:
           grep -Fq 'data-auth-verify-polish="alpha.51.7"' 'src/app/(auth)/login/verify/page.tsx' || fail "2FA verify polish marker missing"
           grep -Fq 'data-auth-setup-polish="alpha.51.7"' 'src/app/(auth)/setup/page.tsx' || fail "setup polish marker missing"
           grep -Fq 'data-security-polish="alpha.51.7"' 'src/app/(dashboard)/security/page.tsx' || fail "security workspace polish marker missing"
+          grep -Fq 'redirect("/setup")' 'src/app/(dashboard)/layout.tsx' || fail "dashboard setup redirect missing"
+          grep -Fq 'redirect("/login")' 'src/app/(dashboard)/layout.tsx' || fail "dashboard login redirect missing"
           grep -Fq "APP_VERSION = \"$expected_version\"" src/components/layout/navigation.ts || fail "app version mismatch"
 
           mkdir -p "$tmp/data"
@@ -66,6 +68,9 @@ jobs:
           done
           curl -fsS "$base/api/health" >/dev/null || fail "health check failed"
 
+          curl -fsS -D "$tmp/root-uninitialized.headers" -o /dev/null "$base/" || fail "uninitialized root request failed"
+          grep -Eiq '^location: /setup\r?$' "$tmp/root-uninitialized.headers" || fail "uninitialized root did not redirect directly to /setup"
+
           curl -fsS "$base/setup" > "$tmp/setup.html" || fail "setup page failed"
           grep -Fq 'data-auth-shell="alpha.51.7"' "$tmp/setup.html" || fail "auth shell missing from setup runtime"
           grep -Fq 'data-auth-setup-polish="alpha.51.7"' "$tmp/setup.html" || fail "setup polish missing at runtime"
@@ -76,6 +81,9 @@ jobs:
             --data-urlencode "password=$password" \
             --data-urlencode "confirmPassword=$password" \
             "$base/api/auth/setup" || fail "unable to create smoke administrator"
+
+          curl -fsS -D "$tmp/root-guest.headers" -o /dev/null "$base/" || fail "guest root request failed"
+          grep -Eiq '^location: /login\r?$' "$tmp/root-guest.headers" || fail "unauthenticated root did not redirect directly to /login"
 
           curl -fsS "$base/login" > "$tmp/login.html" || fail "login page failed"
           grep -Fq 'data-auth-shell="alpha.51.7"' "$tmp/login.html" || fail "auth shell missing from login runtime"

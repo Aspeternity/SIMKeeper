@@ -1,9 +1,6 @@
-import Link from "next/link";
-import { LogIn, ShieldCheck } from "lucide-react";
-import { SiteMark } from "@/components/branding/site-mark";
+import { redirect } from "next/navigation";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
-import { Card } from "@/components/ui/card";
 import { buildAttentionItems, sortAttentionItems } from "@/lib/attention-items";
 import { getCurrentUser, hasAdmin } from "@/lib/auth";
 import { getUnifiedReminderItems } from "@/lib/current-reminders";
@@ -14,71 +11,17 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-function AuthGate({
-  mode,
-  siteName,
-  siteDescription,
-  logoUrl,
-}: {
-  mode: "setup" | "login";
-  siteName: string;
-  siteDescription: string;
-  logoUrl: string | null;
-}) {
-  const needsSetup = mode === "setup";
-
-  return (
-    <main className="flex min-h-screen items-center justify-center bg-[var(--background)] px-4 py-10">
-      <Card className="w-full max-w-md p-7 text-center">
-        <div className="mx-auto mb-4 flex justify-center">
-          <SiteMark logoUrl={logoUrl} className="h-14 w-14" iconClassName="h-7 w-7" />
-        </div>
-        <div className="mb-1 text-sm font-medium text-ink-secondary">{siteName}</div>
-        <h1 className="text-xl font-semibold tracking-tight text-ink">{needsSetup ? "需要完成首次初始化" : "需要登录"}</h1>
-        <p className="mt-2 text-sm leading-6 text-ink-secondary">
-          {needsSetup
-            ? "当前实例尚未创建管理员账户。完成初始化或从异地备份恢复后即可进入管理后台。"
-            : "当前浏览器没有有效的登录会话。"}
-        </p>
-        {siteDescription ? <p className="mt-2 text-xs leading-5 text-ink-muted">{siteDescription}</p> : null}
-        <Link
-          href={needsSetup ? "/setup" : "/login"}
-          className="mt-6 inline-flex h-10 w-full items-center justify-center rounded-lg bg-brand px-4 text-sm font-medium text-brand-foreground shadow-sm transition hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-focus"
-        >
-          {needsSetup ? <ShieldCheck className="mr-2 h-4 w-4" /> : <LogIn className="mr-2 h-4 w-4" />}
-          {needsSetup ? "初始化 / 恢复" : "前往登录"}
-        </Link>
-      </Card>
-    </main>
-  );
-}
-
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const siteSettings = getSiteSettings();
-
   if (!hasAdmin()) {
-    return (
-      <AuthGate
-        mode="setup"
-        siteName={siteSettings.siteName}
-        siteDescription={siteSettings.siteDescription}
-        logoUrl={siteSettings.logoUrl}
-      />
-    );
+    redirect("/setup");
   }
 
   const user = await getCurrentUser();
   if (!user) {
-    return (
-      <AuthGate
-        mode="login"
-        siteName={siteSettings.siteName}
-        siteDescription={siteSettings.siteDescription}
-        logoUrl={siteSettings.logoUrl}
-      />
-    );
+    redirect("/login");
   }
 
+  const siteSettings = getSiteSettings();
   const attentionItems = sortAttentionItems([
     ...buildAttentionItems(getUnifiedReminderItems()),
     ...getRemoteBackupAttentionItems(),
