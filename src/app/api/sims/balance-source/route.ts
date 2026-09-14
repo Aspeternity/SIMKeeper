@@ -38,6 +38,10 @@ const providerMatchers: Record<string, {
     supportedCountryCodes: ["PH"],
     carrierNameKeywords: ["globe", "tm", "touch mobile"],
   },
+  smart: {
+    supportedCountryCodes: ["PH"],
+    carrierNameKeywords: ["smart"],
+  },
   voxi: {
     supportedCountryCodes: ["GB"],
     carrierNameKeywords: ["voxi"],
@@ -81,12 +85,9 @@ function positiveId(value: string | null) {
 
 function providerRuntimeState(providerId: string) {
   if (providerId === "voxi") {
-    const availabilityNote = "VOXI 没有公开的第三方消费者余额 API。alpha.55.1 使用 SIMKeeper 容器内的 Playwright Chromium 打开 VOXI 官方网页，让 Cloudflare 在真实浏览器环境中正常运行，再完成邮箱/密码、短信 OTP 和 /subscription/get 余额读取。";
     return {
-      maturity: "experimental" as const,
-      availabilityNote,
       runtimeReady: true,
-      runtimeMessage: availabilityNote,
+      runtimeMessage: "VOXI 使用 SIMKeeper 容器内的 Playwright Chromium 完成官方网页登录和余额读取。",
       runtimeWarning: "VOXI 邮箱和密码继续由 SIMKeeper 凭据加密保存；Chromium Profile 位于 /app/data/carrier-browser/voxi，仅保存 VOXI / Cloudflare 浏览器会话状态。请将 /app/data 视为敏感数据并做好访问控制。",
       runtimeMode: null as "oauth" | "static-token" | null,
       runtimeSource: "Playwright Chromium (server-side persistent profile)" as string | null,
@@ -96,8 +97,6 @@ function providerRuntimeState(providerId: string) {
 
   if (providerId !== "globe") {
     return {
-      maturity: "stable" as const,
-      availabilityNote: null as string | null,
       runtimeReady: true,
       runtimeMessage: null as string | null,
       runtimeWarning: null as string | null,
@@ -106,13 +105,12 @@ function providerRuntimeState(providerId: string) {
       runtimeExpiresAt: null as string | null,
     };
   }
+
   const state = globeOneRuntimeAuthStatus();
-  const availabilityNote = "GlobeOne 当前没有面向第三方自托管应用的公开消费者余额认证入口。SIMKeeper 不内置 GlobeOne App 的内部凭据；仅在管理员自行提供受授权的运行时认证后开放自动同步。";
+  const unavailableMessage = "GlobeOne 当前没有面向第三方自托管应用的公开消费者余额认证入口。SIMKeeper 不内置 GlobeOne App 的内部凭据；仅在管理员自行提供受授权的运行时认证后开放自动同步。";
   return {
-    maturity: "experimental" as const,
-    availabilityNote,
     runtimeReady: state.configured,
-    runtimeMessage: state.configured ? state.message : availabilityNote,
+    runtimeMessage: state.configured ? state.message : unavailableMessage,
     runtimeWarning: state.warning,
     runtimeMode: state.mode,
     runtimeSource: state.source,
@@ -128,7 +126,7 @@ function listBalanceProviders() {
       const runtimeState = providerRuntimeState(provider.id);
       return {
         ...provider,
-        description: provider.id === "globe" || provider.id === "voxi"
+        description: provider.maturity === "experimental"
           ? `实验性集成。${provider.description}`
           : provider.description,
         ...matcher,

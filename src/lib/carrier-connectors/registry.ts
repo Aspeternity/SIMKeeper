@@ -4,6 +4,7 @@ import { cslCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/
 import { ditoCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/dito";
 import { globeCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/globe";
 import { mockCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/mock";
+import { smartCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/smart";
 import { voxiCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/voxi-browser-otp-safe";
 import type {
   CarrierConnectorCapabilities,
@@ -44,6 +45,18 @@ const PROVIDER_METADATA: Record<string, ProviderMetadata> = {
   globe: {
     maturity: "experimental",
     availabilityNote: "GlobeOne 自动同步仍依赖管理员自行提供受授权的运行时认证；未配置时应继续使用手动余额，不会启用自动低余额判断。",
+    capabilities: {
+      automaticSync: true,
+      balance: true,
+      balanceValidity: true,
+      simValidity: false,
+      accountStatus: true,
+      multiSim: false,
+    },
+  },
+  smart: {
+    maturity: "experimental",
+    availabilityNote: "My Smart 登录包含 reCAPTCHA。SIMKeeper 不保存账号密码也不绕过验证码：余额请求 cURL 用于读取 prepaidservicedashboard；另导入浏览器的 prompt=none 静默认证 cURL 后，可复用现有 My Smart SSO 会话为定时同步获取新 Bearer Token。SSO 本身失效时才需要重新登录并更新 cURL。",
     capabilities: {
       automaticSync: true,
       balance: true,
@@ -94,6 +107,7 @@ const PROVIDERS: Record<string, CarrierConnectorProvider> = {
   csl: withMetadata(cslCarrierConnectorProvider),
   dito: withMetadata(ditoCarrierConnectorProvider),
   globe: withMetadata(globeCarrierConnectorProvider),
+  smart: withMetadata(smartCarrierConnectorProvider),
   voxi: withMetadata(voxiCarrierConnectorProvider),
   mock: withMetadata(mockCarrierConnectorProvider),
 };
