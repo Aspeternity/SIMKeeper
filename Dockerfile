@@ -15,12 +15,10 @@ RUN npm run build
 
 FROM node:22-bookworm-slim AS runner
 WORKDIR /app
-ARG SIMKEEPER_REVISION=dev
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 ENV SIMKEEPER_DATA_DIR=/app/data
-ENV SIMKEEPER_REVISION=${SIMKEEPER_REVISION}
 ENV SIMKEEPER_VOXI_CHROMIUM_EXECUTABLE=/usr/local/bin/simkeeper-chromium
 ENV SIMKEEPER_REAL_CHROMIUM_EXECUTABLE=/usr/bin/chromium
 ENV SIMKEEPER_VOXI_BROWSER_MODE=headful-xvfb
@@ -41,9 +39,10 @@ RUN apt-get update \
   && test "$(id -u simkeeper)" = "1000" \
   && test "$(id -g simkeeper)" = "1000" \
   && test "$(getent passwd simkeeper | cut -d: -f6)" = "/app/data/runtime-home"
-COPY --from=builder --chown=simkeeper:simkeeper /app/public ./public
-COPY --from=builder --chown=simkeeper:simkeeper /app/.next/standalone ./
-COPY --from=builder --chown=simkeeper:simkeeper /app/.next/static ./.next/static
+
+# Browser runtime dependencies and the Chromium self-test are intentionally
+# placed before application build artifacts. Ordinary source changes can then
+# reuse this expensive layer from the BuildKit/GHA cache.
 COPY --from=deps --chown=simkeeper:simkeeper /app/node_modules/playwright-core ./node_modules/playwright-core
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 COPY simkeeper-chromium.sh /usr/local/bin/simkeeper-chromium
@@ -59,6 +58,16 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/simkeeper-chromi
        node -e "const { chromium } = require('playwright-core'); (async () => { const context = await chromium.launchPersistentContext('/app/data/carrier-browser/voxi/.image-selftest', { executablePath: '/usr/local/bin/simkeeper-chromium', headless: true, chromiumSandbox: false, args: ['--disable-dev-shm-usage','--no-sandbox','--disable-setuid-sandbox','--no-first-run','--no-default-browser-check'] }); const page = context.pages()[0] || await context.newPage(); await page.goto('data:text/html,<title>SIMKeeper Chromium self-test</title>'); const ua = await page.evaluate(() => navigator.userAgent); if (/HeadlessChrome/i.test(ua)) throw new Error('VOXI Chromium self-test still exposes a headless user agent'); await context.close(); })().catch((error) => { console.error(error); process.exit(1); });" \
   && rm -rf /app/data/carrier-browser/voxi/.image-selftest \
   && rm -f /tmp/.X*-lock /tmp/.X11-unix/X*
+
+COPY --from=builder --chown=simkeeper:simkeeper /app/public ./public
+COPY --from=builder --chown=simkeeper:simkeeper /app/.next/standalone ./
+COPY --from=builder --chown=simkeeper:simkeeper /app/.next/static ./.next/static
+
+# Revision changes on every commit. Keep it after all expensive, reusable
+# layers so a new SHA only invalidates this tiny metadata layer.
+ARG SIMKEEPER_REVISION=dev
+ENV SIMKEEPER_REVISION=${SIMKEEPER_REVISION}
+
 EXPOSE 3000
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["node", "server.js"]
