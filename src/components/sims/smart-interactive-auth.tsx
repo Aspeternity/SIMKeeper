@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type MouseEvent, type WheelEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent, type WheelEvent } from "react";
 import { CheckCircle2, ExternalLink, Loader2, RefreshCw, ShieldCheck, X } from "lucide-react";
 
 type InteractiveSession = {
@@ -20,6 +20,25 @@ type Props = {
   onAuthenticated?: () => Promise<void>;
 };
 
+type BalanceSourceStatus = {
+  connector?: {
+    provider?: string;
+    status?: string;
+    lastError?: string | null;
+    lastErrorType?: string | null;
+    lastErrorAt?: string | null;
+  } | null;
+};
+
+function smartNeedsInteractiveAuth(source: BalanceSourceStatus | null | undefined) {
+  const connector = source?.connector;
+  if (!connector || connector.provider !== "smart" || connector.status !== "error") return false;
+  if (connector.lastErrorType !== "authentication") return false;
+  return /recaptcha|人机验证|人工验证|人工认证|安全验证|浏览器登录状态没有建立成功/i.test(
+    connector.lastError ?? "",
+  );
+}
+
 export function SmartInteractiveAuth({
   simId,
   disabled = false,
@@ -30,9 +49,15 @@ export function SmartInteractiveAuth({
   const [starting, setStarting] = useState(false);
   const [session, setSession] = useState<InteractiveSession | null>(null);
   const [error, setError] = useState("");
-  const [frameVersion, setFrameVersion] = useState(0);
+  const [frameSrc, setFrameSrc] = useState("");
   const [syncingAfterAuth, setSyncingAfterAuth] = useState(false);
   const completedRef = useRef("");
+  const startingRef = useRef(false);
+  const frameLoadingRef = useRef(false);
+  const frameObjectUrlRef = useRef("");
+  const frameSessionRef = useRef("");
+  const sourceErrorMarkerRef = useRef<string | null>(null);
+  const autoStartedMarkerRef = useRef("");
 
   async function api(body: Record<string, unknown>) {
     const response = await fetch("/api/sims/balance-source/smart-auth", {
@@ -45,20 +70,59 @@ export function SmartInteractiveAuth({
     return data;
   }
 
-  async function start() {
-    if (starting || disabled) return;
+  const loadFrame = useCallback(async (sessionId: string) => {
+    if (!sessionId || frameLoadingRef.current) return;
+    frameLoadingRef.current = true;
+    try {
+      const response = await fetch(
+        `/api/sims/balance-source/smart-auth/frame?simId=${simId}&sessionId=${encodeURIComponent(sessionId)}&v=${Date.now()}`,
+        { cache: "no-store" },
+      );
+      if (!response.ok) return;
+      const blob = await response.blob();
+      if (!blob.size || frameSessionRef.current !== sessionId) return;
+
+      const nextUrl = URL.createObjectURL(blob);
+      const probe = new Image();
+      const loaded = await new Promise<boolean>((resolve) => {
+        probe.onload = () => resolve(true);
+        probe.onerror = () => resolve(false);
+        probe.src = nextUrl;
+      });
+      if (!loaded || frameSessionRef.current !== sessionId) {
+        URL.revokeObjectURL(nextUrl);
+        return;
+      }
+
+      const previous = frameObjectUrlRef.current;
+      frameObjectUrlRef.current = nextUrl;
+      setFrameSrc(nextUrl);
+      if (previous) window.setTimeout(() => URL.revokeObjectURL(previous), 1200);
+    } catch {
+      // Keep the previous frame visible if a single screenshot refresh fails.
+    } finally {
+      frameLoadingRef.current = false;
+    }
+  }, [simId]);
+
+  async function start(force = false) {
+    if (startingRef.current || (!force && disabled)) return;
+    startingRef.current = true;
     setStarting(true);
     setError("");
     completedRef.current = "";
     try {
       await onBeforeStart?.();
       const data = await api({ action: "start", simId });
-      setSession(data.session as InteractiveSession);
+      const nextSession = data.session as InteractiveSession;
+      frameSessionRef.current = nextSession.id;
+      setSession(nextSession);
       setOpen(true);
-      setFrameVersion((value) => value + 1);
+      void loadFrame(nextSession.id);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "无法启动 Smart 人工认证窗口");
     } finally {
+      startingRef.current = false;
       setStarting(false);
     }
   }
@@ -68,6 +132,11 @@ export function SmartInteractiveAuth({
     setOpen(false);
     setSession(null);
     setError("");
+    frameSessionRef.current = "";
+    setFrameSrc("");
+    const previous = frameObjectUrlRef.current;
+    frameObjectUrlRef.current = "";
+    if (previous) URL.revokeObjectURL(previous);
     if (current?.state === "waiting") {
       await api({ action: "close", simId, sessionId: current.id }).catch(() => undefined);
     }
@@ -83,7 +152,7 @@ export function SmartInteractiveAuth({
         ...payload,
       });
       if (data.session) setSession(data.session as InteractiveSession);
-      setFrameVersion((value) => value + 1);
+      void loadFrame(session.id);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "浏览器交互失败");
     }
@@ -123,9 +192,54 @@ export function SmartInteractiveAuth({
 
   useEffect(() => {
     if (!open || !session || session.state !== "waiting") return;
-    const timer = window.setInterval(() => setFrameVersion((value) => value + 1), 850);
+    frameSessionRef.current = session.id;
+    void loadFrame(session.id);
+    const timer = window.setInterval(() => void loadFrame(session.id), 850);
     return () => window.clearInterval(timer);
-  }, [open, session?.id, session?.state]);
+  }, [loadFrame, open, session?.id, session?.state]);
+
+  useEffect(() => {
+    if (open) return;
+    let active = true;
+    let checking = false;
+
+    const checkSource = async () => {
+      if (checking || startingRef.current || !active) return;
+      checking = true;
+      try {
+        const response = await fetch(`/api/sims/balance-source?simId=${simId}`, { cache: "no-store" });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !active) return;
+        const source = (data.source || null) as BalanceSourceStatus | null;
+        const connector = source?.connector;
+        const marker = connector?.lastErrorAt ?? "";
+
+        if (sourceErrorMarkerRef.current === null) {
+          sourceErrorMarkerRef.current = marker;
+          return;
+        }
+
+        if (marker === sourceErrorMarkerRef.current) return;
+        sourceErrorMarkerRef.current = marker;
+        if (!marker || autoStartedMarkerRef.current === marker || !smartNeedsInteractiveAuth(source)) return;
+
+        autoStartedMarkerRef.current = marker;
+        setError("");
+        await start(true);
+      } catch {
+        // This background detector is best-effort; normal status UI remains available.
+      } finally {
+        checking = false;
+      }
+    };
+
+    void checkSource();
+    const timer = window.setInterval(() => void checkSource(), 900);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [open, simId]);
 
   useEffect(() => {
     if (!session || session.state !== "success" || completedRef.current === session.id) return;
@@ -139,6 +253,11 @@ export function SmartInteractiveAuth({
       .finally(() => setSyncingAfterAuth(false));
   }, [session, onAuthenticated]);
 
+  useEffect(() => () => {
+    const current = frameObjectUrlRef.current;
+    if (current) URL.revokeObjectURL(current);
+  }, []);
+
   return (
     <>
       <div className="rounded-xl border border-sky-100 bg-sky-50/70 px-3 py-3 text-xs leading-5 text-sky-900">
@@ -146,7 +265,7 @@ export function SmartInteractiveAuth({
           <div>
             <div className="font-medium">Smart 人工认证</div>
             <div className="mt-0.5 text-sky-700">
-              如果 My Smart 要求人机验证，可直接打开服务器 Chromium 的真实官网画面。账号和密码会自动填写，你只需亲自完成 reCAPTCHA 并点击官方 Login，不需要再复制 cURL。
+              如果 My Smart 要求人机验证，可直接打开服务器 Chromium 的真实官网画面。账号和密码会自动填写，你只需亲自完成 reCAPTCHA 并点击官方 Login；如果直接“保存配置并立即同步”时检测到验证码，这个窗口也会自动打开。
             </div>
           </div>
           <button
@@ -222,15 +341,22 @@ export function SmartInteractiveAuth({
 
             <div className="min-h-0 flex-1 overflow-auto bg-slate-200 p-2">
               {session.state === "waiting" ? (
-                <img
-                  key={frameVersion}
-                  src={`/api/sims/balance-source/smart-auth/frame?simId=${simId}&sessionId=${encodeURIComponent(session.id)}&v=${frameVersion}`}
-                  alt="My Smart 服务器 Chromium 实时画面"
-                  draggable={false}
-                  onClick={onFrameClick}
-                  onWheel={onFrameWheel}
-                  className="mx-auto block h-auto max-h-[78vh] w-auto max-w-full cursor-crosshair select-none rounded-md bg-white shadow"
-                />
+                frameSrc ? (
+                  <img
+                    src={frameSrc}
+                    alt="My Smart 服务器 Chromium 实时画面"
+                    draggable={false}
+                    onClick={onFrameClick}
+                    onWheel={onFrameWheel}
+                    className="mx-auto block h-auto max-h-[78vh] w-auto max-w-full cursor-crosshair select-none rounded-md bg-white shadow"
+                  />
+                ) : (
+                  <div className="flex min-h-[420px] items-center justify-center rounded-lg bg-white">
+                    <div className="inline-flex items-center gap-2 text-sm text-slate-500">
+                      <Loader2 className="h-4 w-4 animate-spin" />正在加载 My Smart 官方页面…
+                    </div>
+                  </div>
+                )
               ) : (
                 <div className="flex min-h-[420px] items-center justify-center rounded-lg bg-white p-8 text-center">
                   <div>
