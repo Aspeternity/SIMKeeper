@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { sqlite } from "@/db";
 import { getCurrentUser } from "@/lib/auth";
+import { getCarrierConnectorStoredCredentialKeys, getCarrierConnectorStoredCredentials } from "@/lib/carrier-connectors/credentials";
 import { globeOneRuntimeAuthStatus } from "@/lib/carrier-connectors/providers/globe-transport";
 import { listCarrierConnectorProviders } from "@/lib/carrier-connectors/registry";
 import {
@@ -179,6 +180,7 @@ function sourcePayload(simId: number) {
           healthStatus: connector.healthStatus,
           syncIntervalMinutes: connector.syncIntervalMinutes,
           hasCredentials: connector.hasCredentials,
+          credentialKeys: getCarrierConnectorStoredCredentialKeys(connector.id),
           lastSyncedAt: connector.lastSyncedAt,
           lastAttemptAt: connector.lastAttemptAt,
           lastSuccessAt: connector.lastSuccessAt,
@@ -303,10 +305,12 @@ export async function PUT(request: NextRequest) {
     const sameProvider = Boolean(current && current.provider === provider.id);
     const providerConfig = normalizeProviderConfig(provider, parsed.data.providerConfig);
     const credentials = normalizeCredentials(provider, parsed.data.credentials);
-    const canReuseCredentials = Boolean(sameProvider && current?.hasCredentials);
+    const storedCredentials = sameProvider && current
+      ? getCarrierConnectorStoredCredentials(current.id)
+      : {};
 
     for (const field of provider.credentialFields) {
-      if (field.required && !canReuseCredentials && !credentials[field.key]) {
+      if (field.required && !credentials[field.key] && !storedCredentials[field.key]) {
         throw new Error(`请填写${field.label}`);
       }
     }
@@ -319,20 +323,26 @@ export async function PUT(request: NextRequest) {
       await deleteCarrierConnector(current.id);
     }
 
+    const mergedCredentials = Object.keys(credentials).length
+      ? { ...storedCredentials, ...credentials }
+      : undefined;
     const mutation = {
       name: `${sim.label} · ${provider.label}`.slice(0, 100),
       provider: provider.id,
       syncIntervalMinutes: parsed.data.syncIntervalMinutes,
       simIds: [sim.id],
       providerConfig,
-      credentials: Object.keys(credentials).length ? credentials : undefined,
+      credentials: mergedCredentials,
       clearCredentials: false,
     };
 
     if (current && sameProvider) {
       updateCarrierConnector(current.id, mutation);
     } else {
-      createCarrierConnector(mutation);
+      createCarrierConnector({
+        ...mutation,
+        credentials: Object.keys(credentials).length ? credentials : undefined,
+      });
     }
 
     rescheduleCarrierConnectorScheduler();

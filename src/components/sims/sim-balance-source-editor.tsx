@@ -16,6 +16,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { CredentialInput } from "@/components/sims/credential-input";
+import { SmartInteractiveAuth } from "@/components/sims/smart-interactive-auth";
 import { Input } from "@/components/ui/input";
 import { CONNECTOR_SYNC_INTERVAL_OPTIONS } from "@/lib/carrier-connectors/types";
 import { CURRENCIES } from "@/lib/sim-options";
@@ -63,6 +64,7 @@ type SourceConnector = {
   status: "connected" | "error";
   syncIntervalMinutes: number;
   hasCredentials: boolean;
+  credentialKeys?: string[];
   lastSyncedAt: string | null;
   lastSuccessAt: string | null;
   lastError: string | null;
@@ -309,13 +311,13 @@ export const SimBalanceSourceEditor = forwardRef<
       throw new Error("当前运营商暂不支持自动余额同步");
     }
 
-    const canReuseStoredCredentials = Boolean(
-      source?.connector
-      && source.connector.provider === selectedProvider.id
-      && source.connector.hasCredentials,
+    const storedCredentialKeys = new Set(
+      source?.connector?.provider === selectedProvider.id
+        ? source.connector.credentialKeys ?? []
+        : [],
     );
     for (const field of selectedProvider.credentialFields) {
-      if (field.required && !canReuseStoredCredentials && !credentials[field.key]?.trim()) {
+      if (field.required && !storedCredentialKeys.has(field.key) && !credentials[field.key]?.trim()) {
         throw new Error(`请填写${field.label}`);
       }
     }
@@ -665,7 +667,9 @@ export const SimBalanceSourceEditor = forwardRef<
   const voxiHasSession = Boolean(sourceForSelectedProvider?.lastSuccessAt);
 
   const renderCredentialField = (field: ProviderCredentialField) => {
-    const stored = Boolean(sourceForSelectedProvider?.hasCredentials);
+    const stored = sourceForSelectedProvider?.credentialKeys
+      ? sourceForSelectedProvider.credentialKeys.includes(field.key)
+      : Boolean(sourceForSelectedProvider?.hasCredentials);
     const plainText = (selectedProvider?.id === "voxi" || selectedProvider?.id === "smart")
       && field.key === "username";
     const revealed = Boolean(revealedCredentials[field.key]);
@@ -922,13 +926,32 @@ export const SimBalanceSourceEditor = forwardRef<
             </div>
           ) : null}
 
+          {selectedProvider.id === "smart" && editing ? (
+            <SmartInteractiveAuth
+              simId={editing.id}
+              disabled={disabled || actionBusy || authBusy || !runtimeReady}
+              onBeforeStart={async () => {
+                validate();
+                await persistAutoSource(editing.id);
+                await reloadSource(editing.id);
+              }}
+              onAuthenticated={async () => {
+                await syncSource(editing.id);
+                await reloadSource(editing.id);
+                setActionError("");
+                setNotice("My Smart 人工认证完成，余额已同步");
+                window.dispatchEvent(new CustomEvent("simkeeper:balance-synced", { detail: { simId: editing.id } }));
+              }}
+            />
+          ) : null}
+
           {smartAdvancedCredentialFields.length ? (
             <details className="rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2.5">
               <summary className="cursor-pointer select-none text-xs font-medium text-slate-600">
-                高级认证选项 · 导入已登录浏览器会话
+                高级救援选项 · 导入已登录浏览器会话
               </summary>
               <div className="mt-2 text-xs leading-5 text-slate-500">
-                正常情况下不需要填写。只有 Smart 要求人工 reCAPTCHA / 风控验证，或账号中存在多个预付费服务无法自动锁定目标号码时，才从你已经登录成功的电脑浏览器导入这两条 cURL。SIMKeeper 不会绕过验证码。
+                正常认证不需要 cURL。只有交互式人工认证窗口无法使用，或账号中存在多个预付费服务而 SIMKeeper 无法自动锁定目标号码时，才从你已经登录成功的电脑浏览器导入这两条 cURL。SIMKeeper 不会绕过验证码。
               </div>
               <div className="mt-3 grid gap-4 sm:grid-cols-2">
                 {smartAdvancedCredentialFields.map(renderCredentialField)}

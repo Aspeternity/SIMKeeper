@@ -56,7 +56,7 @@ const PROVIDER_METADATA: Record<string, ProviderMetadata> = {
   },
   smart: {
     maturity: "experimental",
-    availabilityNote: "My Smart 使用 SIMKeeper 服务器内置的持久化 Chromium 打开官方登录页。账号/密码由 SIMKeeper 加密保存并仅自动填写到官方页面，reCAPTCHA 由 Smart 官方脚本正常执行；若 Smart 要求人工验证码，SIMKeeper 不会绕过，可使用高级 cURL 会话导入作为兜底。登录成功后复用浏览器 Profile，并读取 prepaidservicedashboard 官方 JSON。",
+    availabilityNote: "My Smart 使用 SIMKeeper 服务器内置的持久化 Chromium 打开官方登录页。账号/密码由 SIMKeeper 加密保存并仅自动填写到官方页面；若 Smart 要求人机验证，可直接在 SIMKeeper 的交互式服务器浏览器窗口中由用户本人完成 reCAPTCHA，不需要复制 cURL。cURL 仅保留为高级救援和多服务路径锁定工具。登录成功后复用浏览器 Profile，并读取 prepaidservicedashboard 官方 JSON。",
     capabilities: {
       automaticSync: true,
       balance: true,
