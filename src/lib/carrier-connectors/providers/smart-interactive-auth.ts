@@ -3,7 +3,12 @@ import "server-only";
 import { constants as fsConstants } from "node:fs";
 import { access, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
-import { chromium, type BrowserContext, type Page } from "playwright-core";
+import {
+  chromium,
+  type BrowserContext,
+  type Page,
+  type Response as PlaywrightResponse,
+} from "playwright-core";
 import { registerInteractiveBrowserSession } from "@/lib/carrier-connectors/interactive-browser-runtime";
 
 const SMART_ORIGIN = "https://my.smart.com.ph";
@@ -66,6 +71,17 @@ function isSmartAppLocation(rawUrl: string) {
   }
 }
 
+function isAuthenticatedCustomerApiResponse(response: PlaywrightResponse) {
+  if (response.status() < 200 || response.status() >= 400) return false;
+  try {
+    const url = new URL(response.url());
+    return url.origin === SMART_ORIGIN
+      && url.pathname.startsWith("/rest/v1/customeraccounts/");
+  } catch {
+    return false;
+  }
+}
+
 function credentialLocators(page: Page) {
   return {
     username: page.locator('input[name="Username"], input[name="username"]').first(),
@@ -73,10 +89,22 @@ function credentialLocators(page: Page) {
   };
 }
 
+async function fillCredentialsWhenVisible(page: Page, username: string, password: string) {
+  const fields = credentialLocators(page);
+  const usernameVisible = await fields.username.isVisible().catch(() => false);
+  const passwordVisible = await fields.password.isVisible().catch(() => false);
+  if (!usernameVisible || !passwordVisible) return false;
+
+  const currentUsername = await fields.username.inputValue().catch(() => "");
+  const currentPassword = await fields.password.inputValue().catch(() => "");
+  if (!currentUsername) await fields.username.fill(username.trim());
+  if (!currentPassword) await fields.password.fill(password);
+  return true;
+}
+
 async function waitForCredentialForm(page: Page) {
   const deadline = Date.now() + 20_000;
   while (Date.now() < deadline) {
-    if (isSmartAppLocation(page.url())) return false;
     const fields = credentialLocators(page);
     const usernameVisible = await fields.username.isVisible().catch(() => false);
     const passwordVisible = await fields.password.isVisible().catch(() => false);
@@ -142,20 +170,39 @@ export async function startSmartInteractiveAuthentication(input: {
     page.setDefaultTimeout(20_000);
     page.setDefaultNavigationTimeout(45_000);
 
+    let authenticatedApiSeen = false;
+    const onResponse = (response: PlaywrightResponse) => {
+      if (!isAuthenticatedCustomerApiResponse(response)) return;
+      const request = response.request();
+      void request.allHeaders()
+        .then((headers) => {
+          if (/^bearer\s+\S+$/i.test(headers.authorization?.trim() ?? "")) {
+            authenticatedApiSeen = true;
+          }
+        })
+        .catch(() => undefined);
+    };
+    page.on("response", onResponse);
+
     await page.goto(SMART_SERVICES_URL, {
       waitUntil: "domcontentloaded",
       timeout: 45_000,
     }).catch(() => undefined);
 
-    if (!isSmartAppLocation(page.url())) {
+    // My Smart may briefly expose /smart/services before its SPA discovers that
+    // the SSO session is stale and redirects back to USSO. Do not treat that
+    // transient URL as authenticated. Give the official page time to settle and
+    // prefill credentials if the login form appears.
+    const settleDeadline = Date.now() + 8_000;
+    while (Date.now() < settleDeadline && !authenticatedApiSeen) {
+      if (await fillCredentialsWhenVisible(page, input.username, input.password)) break;
+      await page.waitForTimeout(300);
+    }
+
+    if (!authenticatedApiSeen && !isSmartAppLocation(page.url())) {
       const hasForm = await waitForCredentialForm(page);
-      if (!hasForm && !isSmartAppLocation(page.url())) {
-        throw new Error("My Smart 没有进入可交互的官方登录页面，请稍后重试");
-      }
       if (hasForm) {
-        const fields = credentialLocators(page);
-        await fields.username.fill(input.username.trim());
-        await fields.password.fill(input.password);
+        await fillCredentialsWhenVisible(page, input.username, input.password);
       }
     }
 
@@ -164,10 +211,20 @@ export async function startSmartInteractiveAuthentication(input: {
       connectorId: input.connectorId,
       context,
       page,
-      message: isSmartAppLocation(page.url())
-        ? "当前浏览器会话已经登录，正在确认状态"
-        : "账号和密码已自动填写。请在下方真实 My Smart 页面中亲自完成人机验证，然后点击官方 Login。",
+      message: authenticatedApiSeen
+        ? "当前浏览器会话已经通过 My Smart 官方账户 API 验证，正在确认状态"
+        : "账号和密码会自动填写。请在下方真实 My Smart 页面中亲自完成人机验证，然后点击官方 Login。",
       isComplete: async (currentPage) => {
+        // Login forms may appear only after the Smart SPA finishes its stale-session
+        // redirect. Keep the saved credentials filled throughout the interactive
+        // window so the user only needs to complete the official CAPTCHA/Login.
+        await fillCredentialsWhenVisible(currentPage, input.username, input.password).catch(() => false);
+
+        // A /smart/* URL alone is not proof of authentication: My Smart briefly
+        // shows that route even for an expired session. Only finish after the
+        // page has made a successful authenticated customeraccounts API request
+        // carrying a Bearer token.
+        if (!authenticatedApiSeen) return false;
         if (!isSmartAppLocation(currentPage.url())) return false;
         const fields = credentialLocators(currentPage);
         return !await fields.password.isVisible().catch(() => false);
