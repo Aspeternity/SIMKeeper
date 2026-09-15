@@ -27,7 +27,7 @@ const SMART_SSO_ORIGIN = "https://optimasso.smart.com.ph";
 const SMART_SERVICES_PATH = "/smart/services";
 const BROWSER_NAVIGATION_TIMEOUT_MS = 45_000;
 const BROWSER_ACTION_TIMEOUT_MS = 20_000;
-const API_CAPTURE_TIMEOUT_MS = 35_000;
+const API_CAPTURE_TIMEOUT_MS = 8_000;
 const POST_LOGIN_TIMEOUT_MS = 45_000;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const SESSION_METADATA_VERSION = 2;
@@ -294,8 +294,6 @@ async function readSessionMetadata(connectorId: number): Promise<SmartSessionMet
     const lastSuccessfulSyncAt = nullableString(value.lastSuccessfulSyncAt);
     if (!establishedAt || !lastSuccessfulSyncAt) return null;
 
-    // alpha.58.1 metadata is accepted as v1 and upgraded after the next
-    // successful sync. Its persistent Chromium profile remains reusable.
     if (version === 1) {
       return {
         version: 1,
@@ -491,7 +489,7 @@ async function visibleRecaptchaChallenge(page: Page) {
   const body = (await page.locator("body").innerText({ timeout: 1_500 }).catch(() => "")).toLowerCase();
   if (/verify you are human|select all images|recaptcha challenge|security check/.test(body)) return true;
   const challengeFrames = page.locator(
-    'iframe[title*="recaptcha challenge" i], iframe[src*="/recaptcha/api2/bframe"], iframe[src*="/recaptcha/enterprise/bframe"]',
+    'iframe[title*="recaptcha" i], iframe[src*="/recaptcha/api2/anchor"], iframe[src*="/recaptcha/enterprise/anchor"], iframe[src*="/recaptcha/api2/bframe"], iframe[src*="/recaptcha/enterprise/bframe"]',
   );
   const count = await challengeFrames.count().catch(() => 0);
   for (let index = 0; index < count; index += 1) {
@@ -536,6 +534,12 @@ async function loginOnOfficialPage(page: Page, login: SmartLoginCredentials) {
   await usernameInput.fill(login.username);
   await passwordInput.fill(login.password);
 
+  if (await visibleRecaptchaChallenge(page)) {
+    throw authenticationError(
+      "My Smart 要求人工 reCAPTCHA / 安全验证，请使用页面上的“进行人工认证”完成验证",
+    );
+  }
+
   const submit = page.locator(
     'form[action*="/usso/Account/Login" i] button[type="submit"], button[type="submit"], input[type="submit"]',
   ).first();
@@ -556,7 +560,7 @@ async function loginOnOfficialPage(page: Page, login: SmartLoginCredentials) {
       if (!credentialFormSeenAt) credentialFormSeenAt = Date.now();
       if (await visibleRecaptchaChallenge(page)) {
         throw authenticationError(
-          "My Smart 要求人工 reCAPTCHA / 安全验证。SIMKeeper 不会绕过验证码；请在“高级认证选项”中导入一次已登录浏览器会话",
+          "My Smart 要求人工 reCAPTCHA / 安全验证，请使用页面上的“进行人工认证”完成验证",
         );
       }
       if (Date.now() - credentialFormSeenAt > 8_000) {
@@ -565,7 +569,7 @@ async function loginOnOfficialPage(page: Page, login: SmartLoginCredentials) {
           throw authenticationError("My Smart 登录账号或密码被拒绝，请检查后重试");
         }
         throw authenticationError(
-          "My Smart 未完成登录。若浏览器要求人机验证，请使用“高级认证选项”导入一次已登录会话",
+          "My Smart 未完成登录；如果官网要求人机验证，请使用页面上的“进行人工认证”完成验证",
         );
       }
     } else {
@@ -576,7 +580,7 @@ async function loginOnOfficialPage(page: Page, login: SmartLoginCredentials) {
 
   if (await visibleRecaptchaChallenge(page)) {
     throw authenticationError(
-      "My Smart 登录等待人工 reCAPTCHA / 安全验证超时。SIMKeeper 不会绕过验证码，请使用高级会话导入",
+      "My Smart 登录等待人工 reCAPTCHA / 安全验证超时，请使用页面上的“进行人工认证”完成验证",
     );
   }
   throw new CarrierProviderError({
@@ -587,6 +591,10 @@ async function loginOnOfficialPage(page: Page, login: SmartLoginCredentials) {
 
 async function ensureSmartSession(page: Page, login: SmartLoginCredentials | null) {
   await openSmartServices(page);
+
+  if (isSmartAppLocation(page.url()) && !await pageHasCredentialForm(page)) {
+    await page.waitForTimeout(1_200);
+  }
   if (isSmartAppLocation(page.url()) && !await pageHasCredentialForm(page)) return;
 
   if (!await pageLooksLikeInteractiveLogin(page)) {
@@ -901,9 +909,6 @@ async function syncSmartBrowser(
     } catch (error) {
       if (!login || !bootstrap || !isManualChallengeError(error)) throw error;
 
-      // Advanced fallback: when Smart requires an interactive CAPTCHA that the
-      // server browser cannot complete, a fresh user-authorized cURL pair can
-      // seed the same persistent profile. No CAPTCHA is solved or bypassed.
       await context.clearCookies();
       await seedBootstrapCookies(context, bootstrap);
       await page.goto("about:blank").catch(() => undefined);
