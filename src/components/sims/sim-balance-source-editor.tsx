@@ -155,6 +155,10 @@ function voxiOtpPending(connector: SourceConnector | null | undefined) {
   );
 }
 
+function isSmartAdvancedCredential(field: ProviderCredentialField) {
+  return field.key === "requestCurl" || field.key === "silentAuthCurl";
+}
+
 export const SimBalanceSourceEditor = forwardRef<
   SimBalanceSourceEditorHandle,
   {
@@ -313,6 +317,19 @@ export const SimBalanceSourceEditor = forwardRef<
     for (const field of selectedProvider.credentialFields) {
       if (field.required && !canReuseStoredCredentials && !credentials[field.key]?.trim()) {
         throw new Error(`请填写${field.label}`);
+      }
+    }
+
+    if (selectedProvider.id === "smart") {
+      const username = credentials.username?.trim() ?? "";
+      const password = credentials.password ?? "";
+      const requestCurl = credentials.requestCurl?.trim() ?? "";
+      const silentAuthCurl = credentials.silentAuthCurl?.trim() ?? "";
+      if (Boolean(username) !== Boolean(password)) {
+        throw new Error("更新 My Smart 登录凭据时，请同时填写登录账号和密码");
+      }
+      if (Boolean(requestCurl) !== Boolean(silentAuthCurl)) {
+        throw new Error("Smart 高级会话导入需要同时填写余额请求 cURL 和 SSO cURL");
       }
     }
 
@@ -639,7 +656,42 @@ export const SimBalanceSourceEditor = forwardRef<
   const visibleConfigFields = selectedProvider?.configFields.filter((field) => (
     selectedProvider.id !== "voxi" || (field.key !== "requestOtp" && field.key !== "otpCode")
   )) ?? [];
+  const primaryCredentialFields = selectedProvider?.credentialFields.filter((field) => (
+    selectedProvider.id !== "smart" || !isSmartAdvancedCredential(field)
+  )) ?? [];
+  const smartAdvancedCredentialFields = selectedProvider?.id === "smart"
+    ? selectedProvider.credentialFields.filter(isSmartAdvancedCredential)
+    : [];
   const voxiHasSession = Boolean(sourceForSelectedProvider?.lastSuccessAt);
+
+  const renderCredentialField = (field: ProviderCredentialField) => {
+    const stored = Boolean(sourceForSelectedProvider?.hasCredentials);
+    const plainText = (selectedProvider?.id === "voxi" || selectedProvider?.id === "smart")
+      && field.key === "username";
+    const revealed = Boolean(revealedCredentials[field.key]);
+    return (
+      <label key={field.key} className="space-y-1.5 text-sm">
+        <span className="font-medium text-slate-700">{field.label}</span>
+        <CredentialInput
+          value={credentials[field.key] || ""}
+          onChange={(value) => {
+            setCredentials((current) => ({ ...current, [field.key]: value }));
+            setActionError("");
+            setNotice("");
+          }}
+          plainText={plainText}
+          revealed={revealed}
+          onToggleReveal={() => setRevealedCredentials((current) => ({
+            ...current,
+            [field.key]: !current[field.key],
+          }))}
+          placeholder={stored ? "已加密保存；留空保持不变" : field.placeholder || "请输入凭据"}
+          disabled={disabled}
+        />
+        {field.description ? <span className="block text-xs leading-5 text-slate-400">{field.description}</span> : null}
+      </label>
+    );
+  };
 
   return (
     <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50/50 p-4">
@@ -864,35 +916,25 @@ export const SimBalanceSourceEditor = forwardRef<
             )
           ))}
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            {selectedProvider.credentialFields.map((field) => {
-              const stored = Boolean(sourceForSelectedProvider?.hasCredentials);
-              const plainText = selectedProvider.id === "voxi" && field.key === "username";
-              const revealed = Boolean(revealedCredentials[field.key]);
-              return (
-                <label key={field.key} className="space-y-1.5 text-sm">
-                  <span className="font-medium text-slate-700">{field.label}</span>
-                  <CredentialInput
-                    value={credentials[field.key] || ""}
-                    onChange={(value) => {
-                      setCredentials((current) => ({ ...current, [field.key]: value }));
-                      setActionError("");
-                      setNotice("");
-                    }}
-                    plainText={plainText}
-                    revealed={revealed}
-                    onToggleReveal={() => setRevealedCredentials((current) => ({
-                      ...current,
-                      [field.key]: !current[field.key],
-                    }))}
-                    placeholder={stored ? "已加密保存；留空保持不变" : field.placeholder || "请输入凭据"}
-                    disabled={disabled}
-                  />
-                  {field.description ? <span className="block text-xs leading-5 text-slate-400">{field.description}</span> : null}
-                </label>
-              );
-            })}
-          </div>
+          {primaryCredentialFields.length ? (
+            <div className="grid gap-4 sm:grid-cols-2">
+              {primaryCredentialFields.map(renderCredentialField)}
+            </div>
+          ) : null}
+
+          {smartAdvancedCredentialFields.length ? (
+            <details className="rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2.5">
+              <summary className="cursor-pointer select-none text-xs font-medium text-slate-600">
+                高级认证选项 · 导入已登录浏览器会话
+              </summary>
+              <div className="mt-2 text-xs leading-5 text-slate-500">
+                正常情况下不需要填写。只有 Smart 要求人工 reCAPTCHA / 风控验证，或账号中存在多个预付费服务无法自动锁定目标号码时，才从你已经登录成功的电脑浏览器导入这两条 cURL。SIMKeeper 不会绕过验证码。
+              </div>
+              <div className="mt-3 grid gap-4 sm:grid-cols-2">
+                {smartAdvancedCredentialFields.map(renderCredentialField)}
+              </div>
+            </details>
+          ) : null}
 
           {selectedProvider.id !== "voxi" ? (
             <div className="flex flex-wrap items-center gap-2">

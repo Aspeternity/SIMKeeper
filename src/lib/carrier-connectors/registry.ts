@@ -56,7 +56,7 @@ const PROVIDER_METADATA: Record<string, ProviderMetadata> = {
   },
   smart: {
     maturity: "experimental",
-    availabilityNote: "My Smart 登录包含 reCAPTCHA。alpha.58.1 起，两条 cURL 只用于首次建立或重新认证服务器 Chromium Profile；正常定时同步由持久化浏览器会话自行维护 My Smart / Keycloak / OIDC 状态，并用官网当前 Bearer 读取 prepaidservicedashboard。只有完整浏览器登录会话真正失效时才需要重新登录并更新 cURL。",
+    availabilityNote: "My Smart 使用 SIMKeeper 服务器内置的持久化 Chromium 打开官方登录页。账号/密码由 SIMKeeper 加密保存并仅自动填写到官方页面，reCAPTCHA 由 Smart 官方脚本正常执行；若 Smart 要求人工验证码，SIMKeeper 不会绕过，可使用高级 cURL 会话导入作为兜底。登录成功后复用浏览器 Profile，并读取 prepaidservicedashboard 官方 JSON。",
     capabilities: {
       automaticSync: true,
       balance: true,

@@ -26,14 +26,22 @@ const SMART_ORIGIN = "https://my.smart.com.ph";
 const SMART_SSO_ORIGIN = "https://optimasso.smart.com.ph";
 const SMART_SERVICES_PATH = "/smart/services";
 const BROWSER_NAVIGATION_TIMEOUT_MS = 45_000;
-const API_TOKEN_WAIT_MS = 35_000;
 const BROWSER_ACTION_TIMEOUT_MS = 20_000;
+const API_CAPTURE_TIMEOUT_MS = 35_000;
+const POST_LOGIN_TIMEOUT_MS = 45_000;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
-const SESSION_METADATA_VERSION = 1;
+const SESSION_METADATA_VERSION = 2;
+const DEFAULT_BROWSER_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36";
 
 type JsonObject = Record<string, unknown>;
 
-type SmartBootstrap = {
+type SmartLoginCredentials = {
+  username: string;
+  password: string;
+};
+
+type SmartLegacyBootstrap = {
   fingerprint: string;
   requestPath: string;
   dashboardCookieHeader: string;
@@ -43,8 +51,9 @@ type SmartBootstrap = {
 
 type SmartSessionMetadata = {
   version: number;
-  bootstrapFingerprint: string;
-  requestPath: string;
+  loginIdentityHash: string | null;
+  bootstrapFingerprint: string | null;
+  requestPath: string | null;
   establishedAt: string;
   lastSuccessfulSyncAt: string;
 };
@@ -58,8 +67,13 @@ type BrowserFetchResult = {
   text: string;
 };
 
-type BearerCapture = {
-  promise: Promise<string | null>;
+type SmartApiObservation = {
+  bearer: string | null;
+  dashboardPaths: string[];
+};
+
+type ApiCapture = {
+  promise: Promise<SmartApiObservation>;
   cancel: () => void;
 };
 
@@ -82,6 +96,39 @@ function assertSmartSim(sim: CarrierConnectorSimContext) {
 
 function stringValue(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeUsername(value: unknown) {
+  const username = stringValue(value);
+  if (!username) return null;
+  if (username.length > 254 || /[\r\n]/.test(username)) {
+    throw configurationError("My Smart 登录账号格式不正确");
+  }
+  return username;
+}
+
+function normalizePassword(value: unknown) {
+  const password = typeof value === "string" ? value : "";
+  if (!password) return null;
+  if (password.length > 512 || /[\r\n]/.test(password)) {
+    throw configurationError("My Smart 密码格式不正确");
+  }
+  return password;
+}
+
+function loginCredentials(credentials: Record<string, string>): SmartLoginCredentials | null {
+  const username = normalizeUsername(credentials.username);
+  const password = normalizePassword(credentials.password);
+  if (!username && !password) return null;
+  if (!username || !password) {
+    throw configurationError("更新 My Smart 登录凭据时，请同时填写登录账号和密码");
+  }
+  return { username, password };
+}
+
+function identityHash(username: string | null | undefined) {
+  if (!username) return null;
+  return createHash("sha256").update(username.trim().toLowerCase()).digest("hex");
 }
 
 function dataDirectory() {
@@ -194,14 +241,12 @@ function isSmartSsoSessionCookie(name: string) {
     || lower.startsWith("awsalbapp-");
 }
 
-function smartBootstrap(credentials: Record<string, string>): SmartBootstrap {
+function legacyBootstrap(credentials: Record<string, string>): SmartLegacyBootstrap | null {
   const dashboardCurl = stringValue(credentials.requestCurl);
   const silentAuthCurl = stringValue(credentials.silentAuthCurl);
-
+  if (!dashboardCurl && !silentAuthCurl) return null;
   if (!dashboardCurl || !silentAuthCurl) {
-    throw authenticationError(
-      "Smart 浏览器会话尚未建立。请在已登录的 My Smart 浏览器中重新复制 prepaidservicedashboard cURL 和 prompt=none 静默认证 cURL，然后保存配置并立即同步",
-    );
+    throw configurationError("高级会话导入需要同时提供余额请求 cURL 和 SSO cURL");
   }
 
   const dashboard = parseSmartDashboardCurl(dashboardCurl);
@@ -212,19 +257,28 @@ function smartBootstrap(credentials: Record<string, string>): SmartBootstrap {
     );
   }
 
-  const fingerprint = createHash("sha256")
-    .update(dashboardCurl)
-    .update("\n---smart-sso---\n")
-    .update(silentAuthCurl)
-    .digest("hex");
-
   return {
-    fingerprint,
+    fingerprint: createHash("sha256")
+      .update(dashboardCurl)
+      .update("\n---smart-sso---\n")
+      .update(silentAuthCurl)
+      .digest("hex"),
     requestPath: dashboard.requestPath,
     dashboardCookieHeader: dashboard.cookieHeader,
     ssoCookieHeader: silentAuth.cookieHeader,
-    userAgent: dashboard.userAgent || silentAuth.userAgent,
+    userAgent: dashboard.userAgent || silentAuth.userAgent || DEFAULT_BROWSER_USER_AGENT,
   };
+}
+
+function nullableString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function validDashboardPath(value: string | null) {
+  return Boolean(
+    value
+    && /^\/rest\/v1\/customeraccounts\/\d+\/customerfacingservices\/[^/]+\/prepaidservicedashboard$/i.test(value),
+  );
 }
 
 async function readSessionMetadata(connectorId: number): Promise<SmartSessionMetadata | null> {
@@ -233,16 +287,33 @@ async function readSessionMetadata(connectorId: number): Promise<SmartSessionMet
     const parsed = JSON.parse(raw) as unknown;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
     const value = parsed as JsonObject;
-    if (value.version !== SESSION_METADATA_VERSION) return null;
-    if (typeof value.bootstrapFingerprint !== "string" || !/^[0-9a-f]{64}$/.test(value.bootstrapFingerprint)) return null;
-    if (typeof value.requestPath !== "string" || !value.requestPath.startsWith("/rest/v1/customeraccounts/")) return null;
-    if (typeof value.establishedAt !== "string" || typeof value.lastSuccessfulSyncAt !== "string") return null;
+    const version = typeof value.version === "number" ? value.version : 1;
+    const requestPath = nullableString(value.requestPath);
+    if (requestPath && !validDashboardPath(requestPath)) return null;
+    const establishedAt = nullableString(value.establishedAt);
+    const lastSuccessfulSyncAt = nullableString(value.lastSuccessfulSyncAt);
+    if (!establishedAt || !lastSuccessfulSyncAt) return null;
+
+    // alpha.58.1 metadata is accepted as v1 and upgraded after the next
+    // successful sync. Its persistent Chromium profile remains reusable.
+    if (version === 1) {
+      return {
+        version: 1,
+        loginIdentityHash: null,
+        bootstrapFingerprint: nullableString(value.bootstrapFingerprint),
+        requestPath,
+        establishedAt,
+        lastSuccessfulSyncAt,
+      };
+    }
+    if (version !== SESSION_METADATA_VERSION) return null;
     return {
-      version: SESSION_METADATA_VERSION,
-      bootstrapFingerprint: value.bootstrapFingerprint,
-      requestPath: value.requestPath,
-      establishedAt: value.establishedAt,
-      lastSuccessfulSyncAt: value.lastSuccessfulSyncAt,
+      version,
+      loginIdentityHash: nullableString(value.loginIdentityHash),
+      bootstrapFingerprint: nullableString(value.bootstrapFingerprint),
+      requestPath,
+      establishedAt,
+      lastSuccessfulSyncAt,
     };
   } catch {
     return null;
@@ -271,9 +342,9 @@ async function resetSmartProfile(connectorId: number) {
   await rm(profileDirectory(connectorId), { recursive: true, force: true }).catch(() => undefined);
 }
 
-async function seedBootstrapCookies(context: BrowserContext, bootstrap: SmartBootstrap) {
+async function seedBootstrapCookies(context: BrowserContext, bootstrap: SmartLegacyBootstrap) {
   const mySmartCookies = parseCookieHeader(bootstrap.dashboardCookieHeader, "余额请求 cURL");
-  const ssoCookies = parseCookieHeader(bootstrap.ssoCookieHeader, "静默认证 cURL");
+  const ssoCookies = parseCookieHeader(bootstrap.ssoCookieHeader, "SSO cURL");
 
   const cookies = [
     ...Array.from(mySmartCookies.entries())
@@ -292,10 +363,9 @@ async function seedBootstrapCookies(context: BrowserContext, bootstrap: SmartBoo
     cookie.url === SMART_SSO_ORIGIN
     && cookie.name.toLowerCase().startsWith("keycloak_")
   ));
-
   if (!hasMySmartIdentity || !hasSsoIdentity) {
     throw configurationError(
-      "两条 cURL 没有包含完整的 My Smart / Keycloak 登录会话；请确认它们来自同一次已成功登录的浏览器会话",
+      "高级会话导入没有包含完整的 My Smart / Keycloak 登录状态；请确认两条 cURL 来自同一次已成功登录的浏览器会话",
     );
   }
 
@@ -331,7 +401,6 @@ async function withSmartBrowser<T>(
   }
 
   await removeStaleChromiumLocks(profileDir);
-
   let context: BrowserContext;
   try {
     context = await chromium.launchPersistentContext(profileDir, {
@@ -340,7 +409,7 @@ async function withSmartBrowser<T>(
       chromiumSandbox: false,
       locale: "en-PH",
       timezoneId: "Asia/Manila",
-      userAgent,
+      userAgent: userAgent || DEFAULT_BROWSER_USER_AGENT,
       viewport: { width: 1365, height: 900 },
       env: {
         ...process.env,
@@ -355,12 +424,12 @@ async function withSmartBrowser<T>(
         "--disable-setuid-sandbox",
         "--no-first-run",
         "--no-default-browser-check",
+        "--disable-features=PasswordManagerOnboarding,PasswordLeakDetection",
       ],
     });
   } catch (error) {
-    const reason = chromiumLaunchError(error);
     throw configurationError(
-      `SIMKeeper 无法启动 Smart Chromium 浏览器运行时${reason ? `：${reason}` : ""}`,
+      `SIMKeeper 无法启动 Smart Chromium 浏览器运行时${chromiumLaunchError(error) ? `：${chromiumLaunchError(error)}` : ""}`,
       error,
     );
   }
@@ -372,6 +441,15 @@ async function withSmartBrowser<T>(
     return await operation(context, page);
   } finally {
     await context.close().catch(() => undefined);
+  }
+}
+
+function isSmartAppLocation(rawUrl: string) {
+  try {
+    const url = new URL(rawUrl);
+    return url.origin === SMART_ORIGIN && url.pathname.startsWith("/smart/");
+  } catch {
+    return false;
   }
 }
 
@@ -393,62 +471,36 @@ function isSmartLoginLocation(rawUrl: string) {
   }
 }
 
+async function pageHasCredentialForm(page: Page) {
+  const username = page.locator('input[name="Username"], input[name="username"]').first();
+  const password = page.locator('input[name="Password"], input[name="password"], input[type="password"]').first();
+  return (await username.isVisible().catch(() => false)) && (await password.isVisible().catch(() => false));
+}
+
 async function pageLooksLikeInteractiveLogin(page: Page) {
+  if (await pageHasCredentialForm(page)) return true;
   const current = page.url();
-  if (isSmartLoginLocation(current)) return true;
+  if (isSmartLoginLocation(current) && !isSmartAppLocation(current)) return true;
   const body = await page.locator("body").innerText({ timeout: 2_000 }).catch(() => "");
   const value = body.slice(0, 10_000).toLowerCase();
   return (value.includes("recaptcha") || value.includes("verify you are human"))
     && (value.includes("password") || value.includes("sign in") || value.includes("login"));
 }
 
-function createBearerCapture(page: Page): BearerCapture {
-  let settled = false;
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  let resolvePromise: (value: string | null) => void = () => undefined;
-
-  const finish = (value: string | null) => {
-    if (settled) return;
-    settled = true;
-    if (timer) clearTimeout(timer);
-    page.off("request", onRequest);
-    resolvePromise(value);
-  };
-
-  const onRequest = (request: PlaywrightRequest) => {
-    try {
-      const url = new URL(request.url());
-      if (
-        url.origin !== SMART_ORIGIN
-        || request.method() !== "GET"
-        || !url.pathname.startsWith("/rest/v1/customeraccounts")
-      ) return;
-    } catch {
-      return;
-    }
-
-    void request.allHeaders()
-      .then((headers) => {
-        const authorization = headers.authorization?.trim() ?? "";
-        const match = authorization.match(/^bearer\s+([^\s]+)$/i);
-        if (match?.[1]) finish(match[1]);
-      })
-      .catch(() => undefined);
-  };
-
-  const promise = new Promise<string | null>((resolve) => {
-    resolvePromise = resolve;
-    page.on("request", onRequest);
-    timer = setTimeout(() => finish(null), API_TOKEN_WAIT_MS);
-  });
-
-  return {
-    promise,
-    cancel: () => finish(null),
-  };
+async function visibleRecaptchaChallenge(page: Page) {
+  const body = (await page.locator("body").innerText({ timeout: 1_500 }).catch(() => "")).toLowerCase();
+  if (/verify you are human|select all images|recaptcha challenge|security check/.test(body)) return true;
+  const challengeFrames = page.locator(
+    'iframe[title*="recaptcha challenge" i], iframe[src*="/recaptcha/api2/bframe"], iframe[src*="/recaptcha/enterprise/bframe"]',
+  );
+  const count = await challengeFrames.count().catch(() => 0);
+  for (let index = 0; index < count; index += 1) {
+    if (await challengeFrames.nth(index).isVisible().catch(() => false)) return true;
+  }
+  return false;
 }
 
-async function navigateToSmartServices(page: Page) {
+async function openSmartServices(page: Page) {
   try {
     await page.goto(`${SMART_ORIGIN}${SMART_SERVICES_PATH}`, {
       waitUntil: "domcontentloaded",
@@ -464,54 +516,225 @@ async function navigateToSmartServices(page: Page) {
       });
     }
   }
-
-  if (await pageLooksLikeInteractiveLogin(page)) {
-    throw authenticationError(
-      "My Smart 浏览器会话已经失效。请在电脑浏览器重新登录 My Smart，然后更新两项“重新认证 cURL”并点击保存配置并立即同步",
-    );
-  }
 }
 
-async function freshSmartBearer(page: Page) {
-  const capture = createBearerCapture(page);
+async function loginOnOfficialPage(page: Page, login: SmartLoginCredentials) {
+  const usernameInput = page.locator('input[name="Username"], input[name="username"]').first();
+  const passwordInput = page.locator('input[name="Password"], input[name="password"], input[type="password"]').first();
+
   try {
-    await navigateToSmartServices(page);
-    const token = await capture.promise;
-    if (token) return token;
-  } finally {
-    capture.cancel();
+    await usernameInput.waitFor({ state: "visible", timeout: 12_000 });
+    await passwordInput.waitFor({ state: "visible", timeout: 12_000 });
+  } catch (error) {
+    throw new CarrierProviderError({
+      type: "unsupported",
+      message: "My Smart 已进入登录流程，但没有找到官方账号/密码输入框；登录页面结构可能已经变化",
+      cause: error,
+    });
   }
 
-  if (await pageLooksLikeInteractiveLogin(page)) {
+  await usernameInput.fill(login.username);
+  await passwordInput.fill(login.password);
+
+  const submit = page.locator(
+    'form[action*="/usso/Account/Login" i] button[type="submit"], button[type="submit"], input[type="submit"]',
+  ).first();
+  if (!await submit.isVisible().catch(() => false)) {
+    throw new CarrierProviderError({
+      type: "unsupported",
+      message: "My Smart 登录页没有找到官方登录按钮；页面结构可能已经变化",
+    });
+  }
+
+  await submit.click();
+  const deadline = Date.now() + POST_LOGIN_TIMEOUT_MS;
+  let credentialFormSeenAt = 0;
+  while (Date.now() < deadline) {
+    if (isSmartAppLocation(page.url()) && !await pageHasCredentialForm(page)) return;
+
+    if (await pageHasCredentialForm(page)) {
+      if (!credentialFormSeenAt) credentialFormSeenAt = Date.now();
+      if (await visibleRecaptchaChallenge(page)) {
+        throw authenticationError(
+          "My Smart 要求人工 reCAPTCHA / 安全验证。SIMKeeper 不会绕过验证码；请在“高级认证选项”中导入一次已登录浏览器会话",
+        );
+      }
+      if (Date.now() - credentialFormSeenAt > 8_000) {
+        const body = await page.locator("body").innerText({ timeout: 1_500 }).catch(() => "");
+        if (/invalid|incorrect|wrong password|username.*password|account.*not found|登录失败|密码.*错误/i.test(body)) {
+          throw authenticationError("My Smart 登录账号或密码被拒绝，请检查后重试");
+        }
+        throw authenticationError(
+          "My Smart 未完成登录。若浏览器要求人机验证，请使用“高级认证选项”导入一次已登录会话",
+        );
+      }
+    } else {
+      credentialFormSeenAt = 0;
+    }
+    await page.waitForTimeout(500);
+  }
+
+  if (await visibleRecaptchaChallenge(page)) {
     throw authenticationError(
-      "My Smart 浏览器会话已经失效。请在电脑浏览器重新登录 My Smart，然后更新两项“重新认证 cURL”并重新同步",
+      "My Smart 登录等待人工 reCAPTCHA / 安全验证超时。SIMKeeper 不会绕过验证码，请使用高级会话导入",
     );
   }
-
-  const retryCapture = createBearerCapture(page);
-  try {
-    await page.reload({ waitUntil: "domcontentloaded", timeout: BROWSER_NAVIGATION_TIMEOUT_MS }).catch(() => undefined);
-    const token = await retryCapture.promise;
-    if (token) return token;
-  } finally {
-    retryCapture.cancel();
-  }
-
-  if (await pageLooksLikeInteractiveLogin(page)) {
-    throw authenticationError(
-      "My Smart 浏览器会话已经失效，需要重新认证",
-    );
-  }
-
   throw new CarrierProviderError({
     type: "temporary",
-    message: "My Smart 页面已打开，但没有观察到官方 customeraccounts API 的 Bearer Token；可能是官网加载异常，请稍后重试",
+    message: "My Smart 登录跳转超时，请稍后重试",
   });
 }
 
+async function ensureSmartSession(page: Page, login: SmartLoginCredentials | null) {
+  await openSmartServices(page);
+  if (isSmartAppLocation(page.url()) && !await pageHasCredentialForm(page)) return;
+
+  if (!await pageLooksLikeInteractiveLogin(page)) {
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      if (isSmartAppLocation(page.url()) && !await pageHasCredentialForm(page)) return;
+      if (await pageHasCredentialForm(page)) break;
+      await page.waitForTimeout(350);
+    }
+  }
+
+  if (!await pageHasCredentialForm(page)) {
+    throw authenticationError(
+      "My Smart 浏览器会话已经失效，但官方登录页没有进入可自动填写账号密码的状态",
+    );
+  }
+  if (!login) {
+    throw authenticationError(
+      "My Smart 浏览器会话已经失效。请保存 My Smart 登录账号和密码，或在高级认证选项中重新导入已登录浏览器会话",
+    );
+  }
+  await loginOnOfficialPage(page, login);
+}
+
+function dashboardPathFromUrl(rawUrl: string) {
+  try {
+    const url = new URL(rawUrl);
+    if (url.origin !== SMART_ORIGIN) return null;
+    if (!/^\/rest\/v1\/customeraccounts\/\d+\/customerfacingservices\/[^/]+\/prepaidservicedashboard$/i.test(url.pathname)) {
+      return null;
+    }
+    return url.pathname;
+  } catch {
+    return null;
+  }
+}
+
+function createApiCapture(page: Page, knownRequestPath: string | null): ApiCapture {
+  let settled = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let settleTimer: ReturnType<typeof setTimeout> | null = null;
+  let resolvePromise: (value: SmartApiObservation) => void = () => undefined;
+  let bearer: string | null = null;
+  const dashboardPaths = new Set<string>();
+
+  const finish = () => {
+    if (settled) return;
+    settled = true;
+    if (timer) clearTimeout(timer);
+    if (settleTimer) clearTimeout(settleTimer);
+    page.off("request", onRequest);
+    resolvePromise({ bearer, dashboardPaths: Array.from(dashboardPaths) });
+  };
+
+  const onRequest = (request: PlaywrightRequest) => {
+    let url: URL;
+    try {
+      url = new URL(request.url());
+      if (
+        url.origin !== SMART_ORIGIN
+        || request.method() !== "GET"
+        || !url.pathname.startsWith("/rest/v1/customeraccounts")
+      ) return;
+    } catch {
+      return;
+    }
+
+    const dashboardPath = dashboardPathFromUrl(url.toString());
+    if (dashboardPath) dashboardPaths.add(dashboardPath);
+
+    void request.allHeaders()
+      .then((headers) => {
+        const authorization = headers.authorization?.trim() ?? "";
+        const match = authorization.match(/^bearer\s+([^\s]+)$/i);
+        if (match?.[1]) bearer = match[1];
+        if (!bearer) return;
+
+        if (knownRequestPath) {
+          finish();
+          return;
+        }
+        if (dashboardPaths.size > 0 && !settleTimer) {
+          settleTimer = setTimeout(finish, 1_000);
+        }
+      })
+      .catch(() => undefined);
+  };
+
+  const promise = new Promise<SmartApiObservation>((resolve) => {
+    resolvePromise = resolve;
+    page.on("request", onRequest);
+    timer = setTimeout(finish, API_CAPTURE_TIMEOUT_MS);
+  });
+
+  return { promise, cancel: finish };
+}
+
+async function acquireSmartApiContext(
+  page: Page,
+  login: SmartLoginCredentials | null,
+  knownRequestPath: string | null,
+) {
+  const attempt = async (reload: boolean) => {
+    const capture = createApiCapture(page, knownRequestPath);
+    try {
+      if (reload) {
+        await page.reload({ waitUntil: "domcontentloaded", timeout: BROWSER_NAVIGATION_TIMEOUT_MS }).catch(() => undefined);
+        if (await pageHasCredentialForm(page)) await ensureSmartSession(page, login);
+      } else {
+        await ensureSmartSession(page, login);
+      }
+      return await capture.promise;
+    } finally {
+      capture.cancel();
+    }
+  };
+
+  let observation = await attempt(false);
+  if (!observation.bearer) observation = await attempt(true);
+  if (!observation.bearer) {
+    if (await pageLooksLikeInteractiveLogin(page)) {
+      throw authenticationError("My Smart 浏览器登录状态没有建立成功，需要重新认证");
+    }
+    throw new CarrierProviderError({
+      type: "temporary",
+      message: "My Smart 页面已打开，但没有观察到官方 customeraccounts API 的 Bearer Token；可能是官网加载异常，请稍后重试",
+    });
+  }
+  return observation;
+}
+
+function chooseRequestPath(knownRequestPath: string | null, observation: SmartApiObservation) {
+  if (knownRequestPath && validDashboardPath(knownRequestPath)) return knownRequestPath;
+  const paths = Array.from(new Set(observation.dashboardPaths));
+  if (paths.length === 1) return paths[0];
+  if (paths.length > 1) {
+    throw configurationError(
+      "当前 My Smart 账号同时加载了多个预付费服务，SIMKeeper 无法安全判断目标号码。请在高级认证选项中导入这张号码的 prepaidservicedashboard cURL 一次以锁定服务",
+    );
+  }
+  throw configurationError(
+    "My Smart 登录成功，但没有自动发现 prepaidservicedashboard 服务路径。请在高级认证选项中导入目标号码的余额请求 cURL 一次",
+  );
+}
+
 async function browserDashboardRequest(page: Page, requestPath: string, bearer: string): Promise<BrowserFetchResult> {
-  if (!/^\/rest\/v1\/customeraccounts\/\d+\/customerfacingservices\/[^/]+\/prepaidservicedashboard$/i.test(requestPath)) {
-    throw configurationError("Smart 余额请求路径格式异常，请重新导入 prepaidservicedashboard cURL");
+  if (!validDashboardPath(requestPath)) {
+    throw configurationError("Smart 余额请求路径格式异常，请重新认证或导入目标号码的 prepaidservicedashboard cURL");
   }
 
   try {
@@ -573,10 +796,7 @@ async function parseDashboardBrowserResponse(response: BrowserFetchResult): Prom
     });
   }
   if (response.status === 401 || response.status === 403 || isSmartLoginLocation(response.url)) {
-    throw authenticationError(
-      "My Smart 官方 API 拒绝了当前浏览器会话，需要重新认证",
-      response.status || null,
-    );
+    throw authenticationError("My Smart 官方 API 拒绝了当前浏览器会话，需要重新认证", response.status || null);
   }
   if (response.status === 429) {
     throw new CarrierProviderError({
@@ -607,9 +827,7 @@ async function parseDashboardBrowserResponse(response: BrowserFetchResult): Prom
   }
   const contentType = response.contentType.toLowerCase();
   if (contentType.includes("text/html") || /^\s*</.test(response.text)) {
-    throw authenticationError(
-      "My Smart 返回了登录网页而不是余额 JSON，浏览器会话需要重新认证",
-    );
+    throw authenticationError("My Smart 返回了登录网页而不是余额 JSON，浏览器会话需要重新认证");
   }
 
   let payload: unknown;
@@ -625,44 +843,84 @@ async function parseDashboardBrowserResponse(response: BrowserFetchResult): Prom
   return parseSmartPrepaidDashboard(payload);
 }
 
+function isManualChallengeError(error: unknown) {
+  return error instanceof CarrierProviderError
+    && error.type === "authentication"
+    && /reCAPTCHA|人机验证|安全验证/i.test(error.message);
+}
+
 async function syncSmartBrowser(
   connectorId: number,
   credentials: Record<string, string>,
 ) {
-  const bootstrap = smartBootstrap(credentials);
-  const metadata = await readSessionMetadata(connectorId);
-  const initialized = await profileLooksInitialized(connectorId);
-  const bootstrapChanged = !metadata
-    || metadata.bootstrapFingerprint !== bootstrap.fingerprint
-    || metadata.requestPath !== bootstrap.requestPath;
-  const shouldBootstrap = bootstrapChanged || !initialized;
-
-  if (shouldBootstrap) {
-    await resetSmartProfile(connectorId);
+  const login = loginCredentials(credentials);
+  const bootstrap = legacyBootstrap(credentials);
+  if (!login && !bootstrap) {
+    throw authenticationError(
+      "尚未保存 My Smart 登录账号和密码。请填写账号/密码；若官网要求人工验证，可改用高级认证选项导入已登录浏览器会话",
+    );
   }
 
-  const result = await withSmartBrowser(
-    connectorId,
-    bootstrap.userAgent,
-    async (context, page) => {
-      if (shouldBootstrap) {
-        await seedBootstrapCookies(context, bootstrap);
-      }
-      const bearer = await freshSmartBearer(page);
-      const response = await browserDashboardRequest(page, bootstrap.requestPath, bearer);
-      return parseDashboardBrowserResponse(response);
-    },
+  const metadata = await readSessionMetadata(connectorId);
+  const wasInitialized = await profileLooksInitialized(connectorId);
+  const currentIdentityHash = identityHash(login?.username);
+  const identityChanged = Boolean(
+    login
+    && metadata?.loginIdentityHash
+    && currentIdentityHash !== metadata.loginIdentityHash,
   );
+  const bootstrapChanged = Boolean(
+    bootstrap
+    && metadata?.bootstrapFingerprint
+    && bootstrap.fingerprint !== metadata.bootstrapFingerprint,
+  );
+  const shouldReset = identityChanged || (!login && bootstrapChanged);
+  if (shouldReset) await resetSmartProfile(connectorId);
+
+  const initialized = shouldReset ? false : wasInitialized;
+  const knownRequestPath = bootstrap?.requestPath ?? metadata?.requestPath ?? null;
+  const shouldSeedLegacy = Boolean(
+    bootstrap
+    && !login
+    && (!initialized || !metadata || bootstrap.fingerprint !== metadata.bootstrapFingerprint),
+  );
+  const userAgent = bootstrap?.userAgent || DEFAULT_BROWSER_USER_AGENT;
+
+  const syncWithinBrowser = async (context: BrowserContext, page: Page, seedLegacy: boolean) => {
+    if (seedLegacy && bootstrap) await seedBootstrapCookies(context, bootstrap);
+    const observation = await acquireSmartApiContext(page, login, knownRequestPath);
+    const requestPath = chooseRequestPath(knownRequestPath, observation);
+    const response = await browserDashboardRequest(page, requestPath, observation.bearer as string);
+    const result = await parseDashboardBrowserResponse(response);
+    return { result, requestPath };
+  };
+
+  const synced = await withSmartBrowser(connectorId, userAgent, async (context, page) => {
+    try {
+      return await syncWithinBrowser(context, page, shouldSeedLegacy);
+    } catch (error) {
+      if (!login || !bootstrap || !isManualChallengeError(error)) throw error;
+
+      // Advanced fallback: when Smart requires an interactive CAPTCHA that the
+      // server browser cannot complete, a fresh user-authorized cURL pair can
+      // seed the same persistent profile. No CAPTCHA is solved or bypassed.
+      await context.clearCookies();
+      await seedBootstrapCookies(context, bootstrap);
+      await page.goto("about:blank").catch(() => undefined);
+      return syncWithinBrowser(context, page, false);
+    }
+  });
 
   const now = new Date().toISOString();
   await writeSessionMetadata(connectorId, {
     version: SESSION_METADATA_VERSION,
-    bootstrapFingerprint: bootstrap.fingerprint,
-    requestPath: bootstrap.requestPath,
-    establishedAt: shouldBootstrap ? now : metadata?.establishedAt ?? now,
+    loginIdentityHash: currentIdentityHash ?? metadata?.loginIdentityHash ?? null,
+    bootstrapFingerprint: bootstrap?.fingerprint ?? metadata?.bootstrapFingerprint ?? null,
+    requestPath: synced.requestPath,
+    establishedAt: shouldReset || !initialized ? now : metadata?.establishedAt ?? now,
     lastSuccessfulSyncAt: now,
   });
-  return result;
+  return synced.result;
 }
 
 async function deleteSmartBrowserState(connectorId: number) {
@@ -672,24 +930,38 @@ async function deleteSmartBrowserState(connectorId: number) {
 export const smartBrowserCarrierConnectorProvider: CarrierConnectorProvider = {
   id: "smart",
   label: "Smart My Smart",
-  description: "使用 SIMKeeper 服务器内置的持久化 Chromium Profile 保存 My Smart / Keycloak 浏览器登录状态。两条 cURL 只用于首次建立或重新认证会话；日常定时同步由官方网页自行完成 USSO / OIDC 认证，再读取 prepaidservicedashboard 的官方 JSON 余额、余额有效期和账户状态。",
+  description: "使用 SIMKeeper 服务器内置的持久化 Chromium 打开 My Smart 官方登录页。账号和密码由 SIMKeeper 加密保存，仅自动填写到官方页面；reCAPTCHA 由 Smart 官方脚本正常执行。登录成功后复用浏览器 Profile，并从 prepaidservicedashboard 官方 JSON 读取余额、余额有效期和账户状态。",
   minLinkedSims: 1,
   maxLinkedSims: 1,
   configFields: [],
   credentialFields: [
     {
-      key: "requestCurl",
-      label: "重新认证：余额请求 cURL",
+      key: "username",
+      label: "My Smart 登录账号",
       required: true,
-      placeholder: "My Smart → Network → prepaidservicedashboard → Copy as cURL (bash)",
-      description: "仅用于首次/重新认证时确定这张号码对应的官方余额路径并注入 My Smart 浏览器会话。成功建立 Chromium Profile 后，定时同步不会继续重放这里的旧 Bearer Token。",
+      placeholder: "My Smart 邮箱或手机号",
+      description: "与密码一起使用 SIMKeeper 凭据加密保存；只会在服务器 Chromium 中自动填写到 My Smart 官方登录页。",
+    },
+    {
+      key: "password",
+      label: "My Smart 密码",
+      required: true,
+      placeholder: "输入 My Smart 密码",
+      description: "使用 SIMKeeper 凭据加密保存，不写入代码或日志；仅提交给 My Smart 官方登录页。",
+    },
+    {
+      key: "requestCurl",
+      label: "高级认证：余额请求 cURL",
+      required: false,
+      placeholder: "prepaidservicedashboard → Copy as cURL (bash)",
+      description: "通常留空。仅当 Smart 要求人工 reCAPTCHA / 风控验证，或账号下有多个预付费服务无法自动锁定目标号码时，用于导入已登录浏览器会话并锁定这张号码的余额接口。",
     },
     {
       key: "silentAuthCurl",
-      label: "重新认证：SSO cURL",
-      required: true,
-      placeholder: "Network → protocol/openid-connect/auth?…prompt=none → Copy as cURL (bash)",
-      description: "仅用于首次/重新认证时把当前 Keycloak SSO 登录状态导入服务器 Chromium。之后由持久化浏览器 Profile 接收和保存官网后续 Cookie/Storage 更新；不保存 My Smart 密码，也不绕过 reCAPTCHA。",
+      label: "高级认证：SSO cURL",
+      required: false,
+      placeholder: "protocol/openid-connect/auth?…prompt=none → Copy as cURL (bash)",
+      description: "通常留空。与上面的余额请求 cURL 成对使用，只作为人工验证后的会话导入兜底；SIMKeeper 不绕过 reCAPTCHA。",
     },
   ],
   async disconnect({ connectorId }) {
@@ -697,18 +969,6 @@ export const smartBrowserCarrierConnectorProvider: CarrierConnectorProvider = {
   },
   async sync({ connectorId, credentials, sim }) {
     assertSmartSim(sim);
-    try {
-      return await syncSmartBrowser(connectorId, credentials);
-    } catch (error) {
-      if (error instanceof CarrierProviderError && error.type === "authentication") {
-        throw new CarrierProviderError({
-          type: "authentication",
-          httpStatus: error.httpStatus,
-          message: `${error.message}。正常情况下不需要每天复制 cURL；只有完整 My Smart 浏览器登录会话真正失效时才需要更新一次`,
-          cause: error,
-        });
-      }
-      throw error;
-    }
+    return syncSmartBrowser(connectorId, credentials);
   },
 };
