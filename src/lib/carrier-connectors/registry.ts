@@ -4,7 +4,7 @@ import { cslCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/
 import { ditoCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/dito";
 import { globeCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/globe";
 import { mockCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/mock";
-import { smartCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/smart";
+import { smartBrowserCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/smart-browser";
 import { voxiCarrierConnectorProvider } from "@/lib/carrier-connectors/providers/voxi-browser-otp-safe";
 import type {
   CarrierConnectorCapabilities,
@@ -56,7 +56,7 @@ const PROVIDER_METADATA: Record<string, ProviderMetadata> = {
   },
   smart: {
     maturity: "experimental",
-    availabilityNote: "My Smart 登录包含 reCAPTCHA。SIMKeeper 不保存账号密码也不绕过验证码：余额请求 cURL 用于读取 prepaidservicedashboard；另导入浏览器的 prompt=none 静默认证 cURL 后，可复用现有 My Smart SSO 会话为定时同步获取新 Bearer Token。SSO 本身失效时才需要重新登录并更新 cURL。",
+    availabilityNote: "My Smart 登录包含 reCAPTCHA。alpha.58.1 起，两条 cURL 只用于首次建立或重新认证服务器 Chromium Profile；正常定时同步由持久化浏览器会话自行维护 My Smart / Keycloak / OIDC 状态，并用官网当前 Bearer 读取 prepaidservicedashboard。只有完整浏览器登录会话真正失效时才需要重新登录并更新 cURL。",
     capabilities: {
       automaticSync: true,
       balance: true,
@@ -107,7 +107,7 @@ const PROVIDERS: Record<string, CarrierConnectorProvider> = {
   csl: withMetadata(cslCarrierConnectorProvider),
   dito: withMetadata(ditoCarrierConnectorProvider),
   globe: withMetadata(globeCarrierConnectorProvider),
-  smart: withMetadata(smartCarrierConnectorProvider),
+  smart: withMetadata(smartBrowserCarrierConnectorProvider),
   voxi: withMetadata(voxiCarrierConnectorProvider),
   mock: withMetadata(mockCarrierConnectorProvider),
 };
